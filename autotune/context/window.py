@@ -320,20 +320,19 @@ class ContextWindow:
             )
             compressed_recent.append({"role": m["role"], "content": new_content})
 
-        # Emergency summary: one-liners only
-        all_old = older + turns[:max(0, len(turns) - window)]
-        facts   = extract_facts(all_old) if all_old else None
-        summary_block = _make_summary_block(all_old, facts, compact=True)
+        # Emergency summary: one-liners only from the older (non-recent) turns
+        facts         = extract_facts(older) if older else None
+        summary_block = _make_summary_block(older, facts, compact=True)
 
         body        = summary_block + compressed_recent
         body_tokens = sum(estimate_tokens(m["content"]) for m in body)
         used        = overhead + body_tokens
 
         logger.warning(
-            "ContextWindow EMERGENCY: %d turns dropped, %d summarised, budget %.0f%% used",
-            dropped_recent + len(older),
+            "ContextWindow EMERGENCY: %d turns dropped, %d summarised, %.0f%% of context used",
+            dropped_recent,
             len(older),
-            used / max(budget, 1) * 100,
+            used / max(self.max_ctx, 1) * 100,
         )
 
         return BuiltContext(
@@ -344,8 +343,8 @@ class ContextWindow:
             tier=BudgetTier.EMERGENCY,
             turns_total=len(turns),
             turns_kept=len(compressed_recent),
-            turns_dropped=dropped_recent + len(older) - (len(older) if all_old else 0),
-            turns_summarized=len(all_old),
+            turns_dropped=dropped_recent,
+            turns_summarized=len(older),
             summary_injected=bool(summary_block),
             facts=facts,
         )
