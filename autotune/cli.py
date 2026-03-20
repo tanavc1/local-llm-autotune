@@ -12,6 +12,9 @@ Commands
   autotune db                   Show database stats
   autotune db-models            List all models cached in the local DB
   autotune log-run              Manually log a real inference observation
+  autotune mlx list             List locally cached MLX models (Apple Silicon)
+  autotune mlx pull <model>     Download MLX-quantized model from mlx-community
+  autotune mlx resolve <model>  Show which MLX model ID would be used
 """
 
 from __future__ import annotations
@@ -1411,6 +1414,157 @@ def chat(model: str, profile: str, system: Optional[str], conv_id: Optional[str]
     """
     from autotune.api.chat import start_chat
     start_chat(model_id=model, profile=profile, system_prompt=system, conv_id=conv_id)
+
+
+# ---------------------------------------------------------------------------
+# `autotune mlx` — MLX model management (Apple Silicon only)
+# ---------------------------------------------------------------------------
+
+@cli.group("mlx")
+def mlx_group() -> None:
+    """Manage MLX models for Apple Silicon acceleration.
+
+    MLX runs LLMs entirely on-chip using Apple's unified memory and Metal GPU
+    kernels — typically 10–40% faster than Ollama on the same model.
+
+    \b
+    Examples:
+      autotune mlx list               Show cached MLX models
+      autotune mlx pull phi4-mini     Pull the MLX version of phi4-mini
+      autotune mlx resolve llama3.2   Show which MLX model would be used
+    """
+
+
+@mlx_group.command("list")
+def mlx_list() -> None:
+    """List MLX models available locally (already downloaded)."""
+    from autotune.api.backends.mlx_backend import (
+        IS_APPLE_SILICON, mlx_available, list_cached_mlx_models,
+    )
+
+    if not IS_APPLE_SILICON:
+        console.print("[yellow]MLX is only available on Apple Silicon (arm64) Macs.[/yellow]")
+        return
+
+    if not mlx_available():
+        console.print(
+            "[yellow]mlx-lm is not installed.[/yellow]\n"
+            "Install it with:  [bold]pip install mlx-lm[/bold]"
+        )
+        return
+
+    models = list_cached_mlx_models()
+    if not models:
+        console.print(
+            "[dim]No MLX models cached locally.[/dim]\n"
+            "Pull one with:  [bold]autotune mlx pull <model>[/bold]"
+        )
+        return
+
+    from rich.table import Table
+    table = Table(title="Cached MLX Models", header_style="bold magenta")
+    table.add_column("Model ID", style="cyan", no_wrap=True)
+    table.add_column("Size", justify="right", style="green")
+
+    for m in sorted(models, key=lambda x: x["id"]):
+        size = f"{m['size_gb']:.1f} GB" if m["size_gb"] else "–"
+        table.add_row(m["id"], size)
+
+    console.print(table)
+    console.print(f"[dim]{len(models)} model(s) cached locally[/dim]")
+
+
+@mlx_group.command("pull")
+@click.argument("model")
+@click.option(
+    "--quant", "-q",
+    default="4bit",
+    show_default=True,
+    type=click.Choice(["4bit", "8bit", "bf16"]),
+    help="Quantization level to pull.",
+)
+def mlx_pull(model: str, quant: str) -> None:
+    """Pull an MLX-quantized model from mlx-community on HuggingFace.
+
+    MODEL can be an Ollama model name (e.g. phi4-mini, llama3.2:3b) or a
+    full HuggingFace model ID (e.g. mlx-community/Phi-4-mini-instruct-4bit).
+
+    \b
+    Examples:
+      autotune mlx pull phi4-mini
+      autotune mlx pull llama3.2:3b
+      autotune mlx pull qwen2.5-coder:14b --quant 8bit
+    """
+    from autotune.api.backends.mlx_backend import (
+        IS_APPLE_SILICON, mlx_available, resolve_mlx_model_id,
+    )
+
+    if not IS_APPLE_SILICON:
+        console.print("[yellow]MLX is only available on Apple Silicon Macs.[/yellow]")
+        raise SystemExit(1)
+
+    if not mlx_available():
+        console.print(
+            "[yellow]mlx-lm is not installed.[/yellow]\n"
+            "Install it with:  [bold]pip install mlx-lm[/bold]"
+        )
+        raise SystemExit(1)
+
+    # Resolve model ID
+    mlx_id = resolve_mlx_model_id(model)
+    if mlx_id is None:
+        # Build a best-guess ID from the model name + quant
+        base = model.split(":")[0].split("/")[-1]
+        # Normalise common names: capitalise first char of each word
+        words = [w.capitalize() for w in base.replace("-", " ").replace("_", " ").split()]
+        guess = f"mlx-community/{''.join(words)}-instruct-{quant}"
+        console.print(
+            f"[yellow]No known MLX mapping for '{model}'.[/yellow]\n"
+            f"Trying:  [cyan]{guess}[/cyan]\n"
+            "[dim](If this fails, browse https://huggingface.co/mlx-community for the exact name)[/dim]"
+        )
+        mlx_id = guess
+    else:
+        console.print(f"Resolved  [cyan]{model}[/cyan]  →  [cyan]{mlx_id}[/cyan]")
+
+    console.print(f"[bold]Downloading {mlx_id}…[/bold]  (this may take a while)")
+
+    try:
+        from huggingface_hub import snapshot_download
+        local_dir = snapshot_download(repo_id=mlx_id, ignore_patterns=["*.md", "*.txt"])
+        console.print(f"[green]✓ Downloaded to:[/green] {local_dir}")
+        console.print(
+            f"\nRun inference with:  [bold]autotune chat --model {model}[/bold]"
+        )
+    except Exception as exc:
+        console.print(f"[red]Download failed:[/red] {exc}")
+        console.print(
+            "[dim]Tip: You may need to accept the model's license on HuggingFace first.[/dim]"
+        )
+        raise SystemExit(1)
+
+
+@mlx_group.command("resolve")
+@click.argument("model")
+def mlx_resolve(model: str) -> None:
+    """Show which MLX model ID would be used for MODEL."""
+    from autotune.api.backends.mlx_backend import (
+        IS_APPLE_SILICON, mlx_available, resolve_mlx_model_id,
+    )
+
+    if not IS_APPLE_SILICON:
+        console.print("[yellow]Not on Apple Silicon — MLX not active.[/yellow]")
+        return
+
+    mlx_id = resolve_mlx_model_id(model)
+    if mlx_id:
+        console.print(f"[cyan]{model}[/cyan]  →  [green]{mlx_id}[/green]")
+    else:
+        console.print(
+            f"[yellow]No MLX mapping for '{model}'.[/yellow]\n"
+            f"Will fall back to Ollama.\n"
+            f"Pull an MLX version with:  [bold]autotune mlx pull {model}[/bold]"
+        )
 
 
 # ---------------------------------------------------------------------------

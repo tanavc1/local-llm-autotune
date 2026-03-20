@@ -17,6 +17,10 @@ dependencies = [
     "httpx>=0.27",
 ]
 
+[project.optional-dependencies]
+# Apple Silicon acceleration — install with: pip install autotune[mlx]
+mlx = ["mlx-lm>=0.21"]
+
 [project.scripts]
 autotune = "autotune.cli:cli"
 

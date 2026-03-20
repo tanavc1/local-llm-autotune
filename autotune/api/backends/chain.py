@@ -3,12 +3,15 @@ Backend chain: discovers available inference backends and routes requests
 to the best one for a given model.
 
 Priority (first available wins):
-  1. Ollama          – best local experience, handles KV caching natively
-  2. LM Studio       – alternative local runtime
-  3. HuggingFace API – always available with HF_TOKEN, rate-limited without
-  4. (error)         – helpful message if none work
+  1. MLX             – Apple Silicon only; fastest local option (unified memory,
+                       Metal GPU, ~10-40% higher tok/s than Ollama on same model)
+  2. Ollama          – best local experience, handles KV caching natively
+  3. LM Studio       – alternative local runtime
+  4. HuggingFace API – always available with HF_TOKEN, rate-limited without
+  5. (error)         – helpful message if none work
 
 Model discovery:
+  - MLX: HF cache (~/.cache/huggingface/hub) for mlx-community models
   - Ollama /api/tags
   - LM Studio /v1/models
   - HuggingFace cache ~/.cache/huggingface/hub
@@ -27,6 +30,13 @@ from typing import AsyncGenerator, Optional
 import httpx
 
 from .base import Backend, ChatChunk
+from .mlx_backend import (
+    IS_APPLE_SILICON,
+    mlx_available,
+    resolve_mlx_model_id,
+    get_mlx_backend,
+    list_cached_mlx_models,
+)
 from .openai_compat import ModelNotAvailableError, OpenAICompatBackend
 
 # ---------------------------------------------------------------------------
@@ -187,9 +197,18 @@ class BackendChain:
         hf_cache = _scan_hf_cache()
         gguf = _scan_gguf()
 
+        # MLX models (Apple Silicon only)
+        mlx_models: list[ModelInfo] = []
+        if mlx_available():
+            for m in list_cached_mlx_models():
+                mlx_models.append(ModelInfo(
+                    id=m["id"], name=m["name"], source="mlx",
+                    available_locally=True, size_gb=m["size_gb"], backend_hint="mlx",
+                ))
+
         seen: set[str] = set()
         all_models: list[ModelInfo] = []
-        for m in ollama + lms + hf_cache + gguf:
+        for m in mlx_models + ollama + lms + hf_cache + gguf:
             if m.id not in seen:
                 seen.add(m.id)
                 all_models.append(m)
@@ -258,26 +277,43 @@ class BackendChain:
     # Resolution                                                           #
     # ------------------------------------------------------------------ #
 
-    async def resolve(self, model_id: str) -> tuple[OpenAICompatBackend, str]:
+    async def resolve(self, model_id: str) -> tuple[Backend, str]:
         """
         Return (backend, canonical_model_id) for the given model.
 
+        On Apple Silicon, MLX is tried first — it outperforms Ollama by 10–40%
+        on the same model using native Metal GPU kernels and unified memory.
+        Falls back to Ollama/LM Studio/HF when no MLX equivalent exists.
+
         Raises ModelNotAvailableError if nothing can serve the model.
         """
-        # 1. Ollama
+        # 1. MLX — Apple Silicon only, highest throughput
+        if IS_APPLE_SILICON and mlx_available():
+            mlx_id = resolve_mlx_model_id(model_id)
+            if mlx_id is not None:
+                return get_mlx_backend(), mlx_id
+
+        # 2. Ollama
         if await self.ollama_running():
             if self._ollama_has_model(model_id):
                 return _make_ollama_backend(model_id), model_id
             # Ollama is running but doesn't have the model — still try it
             # (user may have it under a different name)
 
-        # 2. LM Studio
+        # 3. LM Studio
         if await self.lmstudio_running() and self._lmstudio_has_model(model_id):
             return _make_lmstudio_backend(), model_id
 
-        # 3. HuggingFace Inference API
+        # 4. HuggingFace Inference API
         token = _hf_token()
         if not token:
+            mlx_hint = ""
+            if IS_APPLE_SILICON:
+                base = model_id.split(":")[0].split("/")[-1].lower()
+                mlx_hint = (
+                    f"\nFor Apple Silicon, pull a pre-quantized MLX model:\n"
+                    f"  autotune mlx pull {base}\n"
+                )
             instructions = (
                 f"\n\nModel '{model_id}' not found locally.\n"
                 "To use HuggingFace models:\n"
@@ -285,6 +321,7 @@ class BackendChain:
                 "Get a free token at https://huggingface.co/settings/tokens\n\n"
                 "To load a model locally:\n"
                 f"  ollama pull {model_id.split('/')[-1].lower()}\n"
+                f"{mlx_hint}"
                 "Or run `autotune fetch-many` to see available models."
             )
             raise ModelNotAvailableError(instructions)
@@ -310,6 +347,21 @@ class BackendChain:
     ) -> AsyncGenerator[ChatChunk, None]:
         backend, canonical_id = await self.resolve(model_id)
 
+        if backend.name == "mlx":
+            # MLX backend: pass generation params directly; it manages memory itself
+            async for chunk in backend.stream(
+                canonical_id,
+                messages,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                timeout=timeout,
+            ):
+                yield chunk
+            return
+
+        # Ollama / LM Studio / HF — OpenAI-compatible path
         extra_body = {}
         if backend.name == "ollama":
             # Build Ollama options — num_ctx is the single most impactful setting:
@@ -349,5 +401,5 @@ def get_chain() -> BackendChain:
     return _chain
 
 
-async def resolve_backend(model_id: str) -> tuple[OpenAICompatBackend, str]:
+async def resolve_backend(model_id: str) -> tuple[Backend, str]:
     return await get_chain().resolve(model_id)
