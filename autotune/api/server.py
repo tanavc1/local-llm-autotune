@@ -134,34 +134,132 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Inference task scheduler
+# Inference task scheduler — bounded FIFO queue
 #
-# A single local model can only efficiently process one request at a time.
-# Allowing more than ~2 concurrent requests causes memory contention, context
-# fragmentation, and mutual slowdown with no throughput benefit.
+# Local LLMs are single-threaded on the hardware (GPU/ANE/unified memory).
+# Allowing concurrent requests causes:
+#   • memory contention  (KV caches compete for the same physical RAM)
+#   • context fragmentation (Ollama allocates separate KV arenas per request)
+#   • mutual slowdown  (both requests take 2× longer — zero net throughput gain)
 #
-# Strategy: semaphore with a short acquisition timeout.
-#   - If the semaphore is free → proceed immediately.
-#   - If busy → wait up to QUEUE_TIMEOUT_SEC for a slot.
-#   - If still busy → return HTTP 429 (Too Many Requests).
+# Design: true first-in-first-out queue with a hard depth limit.
+#   1. Up to MAX_CONCURRENT requests run at the same time (default: 1).
+#   2. Up to MAX_QUEUED additional requests wait in strict arrival order.
+#   3. If the queue is full → 429 immediately (caller retries; no further wait).
+#   4. If a waiting request times out → its slot is passed to the next waiter.
 #
-# MAX_CONCURRENT can be overridden via the AUTOTUNE_MAX_CONCURRENT env var.
+# Env overrides:
+#   AUTOTUNE_MAX_CONCURRENT   (default: 1)   — parallel inference slots
+#   AUTOTUNE_MAX_QUEUED       (default: 8)   — max waiting requests
+#   AUTOTUNE_WAIT_TIMEOUT     (default: 120) — seconds a request waits for a slot
 # ---------------------------------------------------------------------------
 
 import asyncio as _asyncio
 import os as _os
+from collections import deque as _deque
 
-_MAX_CONCURRENT = int(_os.environ.get("AUTOTUNE_MAX_CONCURRENT", "2"))
-_QUEUE_TIMEOUT  = float(_os.environ.get("AUTOTUNE_QUEUE_TIMEOUT", "5.0"))
-_inference_semaphore: _asyncio.Semaphore | None = None
+_MAX_CONCURRENT  = int(_os.environ.get("AUTOTUNE_MAX_CONCURRENT", "1"))
+_MAX_QUEUED      = int(_os.environ.get("AUTOTUNE_MAX_QUEUED",     "8"))
+_WAIT_TIMEOUT    = float(_os.environ.get("AUTOTUNE_WAIT_TIMEOUT", "120.0"))
 
 
-def _get_semaphore() -> _asyncio.Semaphore:
-    """Return the module-level semaphore, creating it lazily in the event loop."""
-    global _inference_semaphore
-    if _inference_semaphore is None:
-        _inference_semaphore = _asyncio.Semaphore(_MAX_CONCURRENT)
-    return _inference_semaphore
+class _QueueFullError(Exception):
+    def __init__(self, depth: int) -> None:
+        self.depth = depth
+
+
+class _InferenceQueue:
+    """
+    Bounded FIFO queue for inference requests.
+
+    Callers must call ``await release()`` in a ``finally`` block after every
+    successful ``await acquire()``.
+    """
+
+    def __init__(self, max_concurrent: int, max_queued: int) -> None:
+        self._slots  = max_concurrent
+        self._max_q  = max_queued
+        self._active = 0
+        self._waiters: _deque[_asyncio.Future] = _deque()
+        self._lock   = _asyncio.Lock()
+
+    @property
+    def active(self) -> int:
+        return self._active
+
+    @property
+    def queued(self) -> int:
+        """Number of requests currently waiting for a slot (excludes active)."""
+        return sum(1 for f in self._waiters if not f.done())
+
+    async def acquire(self, timeout: float = 120.0) -> None:
+        """
+        Wait for a slot in strict FIFO order.
+
+        Raises
+        ------
+        _QueueFullError   — immediately, if the waiting queue is already at capacity.
+        asyncio.TimeoutError — if ``timeout`` seconds elapse before a slot is granted.
+        """
+        loop = _asyncio.get_running_loop()
+        fut: _asyncio.Future | None = None
+
+        async with self._lock:
+            if self._active < self._slots:
+                self._active += 1
+                return                          # fast path — slot free immediately
+
+            live = sum(1 for f in self._waiters if not f.done())
+            if live >= self._max_q:
+                raise _QueueFullError(live)     # queue full — reject right away
+
+            fut = loop.create_future()
+            self._waiters.append(fut)
+
+        # Wait outside the lock.  asyncio.shield keeps the inner future alive
+        # even when wait_for cancels the wrapper on timeout.
+        try:
+            await _asyncio.wait_for(_asyncio.shield(fut), timeout=timeout)
+        except _asyncio.TimeoutError:
+            # Two scenarios:
+            #  (a) fut is still in the deque  → remove it; no slot was granted.
+            #  (b) release() already popped fut and set_result'd it → we hold a
+            #      slot we cannot use; pass it to the next waiter or free it.
+            async with self._lock:
+                try:
+                    self._waiters.remove(fut)
+                    # Scenario (a): cleanly removed, no slot to give back.
+                except ValueError:
+                    # Scenario (b): slot was handed to us; we must pass it on.
+                    self._pass_slot_locked()
+            raise
+
+    def _pass_slot_locked(self) -> None:
+        """Pass the current slot to the next non-done waiter, or decrement active.
+        Must be called while self._lock is held."""
+        while self._waiters:
+            nxt = self._waiters[0]
+            self._waiters.popleft()
+            if not nxt.done():
+                nxt.set_result(None)
+                return          # active count stays the same — handed off
+        self._active -= 1       # nobody left waiting
+
+    async def release(self) -> None:
+        """Release the current slot.  Must be called after every successful acquire()."""
+        async with self._lock:
+            self._pass_slot_locked()
+
+
+_inference_queue: _InferenceQueue | None = None
+
+
+def _get_queue() -> _InferenceQueue:
+    """Return the module-level queue, creating it lazily."""
+    global _inference_queue
+    if _inference_queue is None:
+        _inference_queue = _InferenceQueue(_MAX_CONCURRENT, _MAX_QUEUED)
+    return _inference_queue
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -280,24 +378,40 @@ async def chat_completions(
     x_autotune_profile: Optional[str] = Header(None),
     x_conversation_id: Optional[str] = Header(None),
 ):
-    # ── Task scheduler: limit concurrent inference to prevent contention ─
-    sem = _get_semaphore()
+    # ── Bounded FIFO inference queue ─────────────────────────────────────
+    queue = _get_queue()
     try:
-        acquired = await _asyncio.wait_for(sem.acquire(), timeout=_QUEUE_TIMEOUT)
+        await queue.acquire(timeout=_WAIT_TIMEOUT)
+    except _QueueFullError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "queue_full",
+                "message": (
+                    f"Request queue is full ({exc.depth}/{_MAX_QUEUED} waiting). "
+                    "Retry when a slot is available."
+                ),
+                "queue_depth": exc.depth,
+                "max_queued": _MAX_QUEUED,
+            },
+        )
     except _asyncio.TimeoutError:
         raise HTTPException(
             status_code=429,
-            detail=(
-                f"Server busy: {_MAX_CONCURRENT} inference request(s) already in progress. "
-                f"Retry after the current request completes.  "
-                f"Set AUTOTUNE_MAX_CONCURRENT to allow more parallel requests."
-            ),
+            detail={
+                "error": "queue_timeout",
+                "message": (
+                    f"Request waited {_WAIT_TIMEOUT:.0f}s for an inference slot "
+                    "but none became available. Retry later."
+                ),
+                "wait_timeout_sec": _WAIT_TIMEOUT,
+            },
         )
 
     try:
         return await _chat_completions_inner(req, x_autotune_profile, x_conversation_id)
     finally:
-        sem.release()
+        await queue.release()
 
 
 async def _chat_completions_inner(
@@ -497,11 +611,13 @@ async def _chat_completions_inner(
 
 @app.get("/health")
 async def health():
+    from autotune.api.kv_manager import memory_pressure_snapshot
     chain = get_chain()
     ollama = await chain.ollama_running()
     lms = await chain.lmstudio_running()
     hf_token = bool(os.environ.get("HF_TOKEN"))
-    vm = psutil.virtual_memory()
+    q = _get_queue()
+    mem = memory_pressure_snapshot()
     return {
         "status": "ok",
         "version": "0.1.0",
@@ -510,9 +626,17 @@ async def health():
             "lmstudio": lms,
             "hf_api": hf_token,
         },
-        "hardware": {
-            "ram_pct": round(vm.percent, 1),
-            "ram_available_gb": round(vm.available / 1024**3, 2),
+        "queue": {
+            "active":        q.active,
+            "queued":        q.queued,
+            "max_concurrent": _MAX_CONCURRENT,
+            "max_queued":     _MAX_QUEUED,
+        },
+        "memory": {
+            "ram_pct":        mem["ram_pct"],
+            "available_gb":   mem["available_gb"],
+            "swap_used_gb":   mem["swap_used_gb"],
+            "pressure_level": mem["pressure_level"],
         },
         "profiles": list(PROFILES.keys()),
     }

@@ -80,6 +80,7 @@ def build_ollama_options(
     messages: list[dict],
     profile: "Profile",
     context_ceiling: Optional[int] = None,
+    kv_precision_override: Optional[str] = None,
 ) -> dict:
     """
     Return the complete Ollama `options` dict for this request.
@@ -88,7 +89,11 @@ def build_ollama_options(
     ----------
     num_ctx   — dynamic minimum that fits input + max_new_tokens + buffer,
                 further capped by context_ceiling and live RAM pressure
-    f16_kv    — False (Q8 KV) for fast profile; True (F16) otherwise
+    f16_kv    — KV cache precision (F16 or Q8), determined by:
+                  1. Profile default (fast=Q8, balanced/quality=F16)
+                  2. kv_precision_override from ModelSelector pre-flight
+                  3. Live RAM pressure: HIGH/CRITICAL force Q8 regardless
+                Only Q8 and F16 are supported by Ollama's f16_kv flag.
     num_keep  — system-prompt prefix tokens to pin in KV (if profile wants it)
 
     Parameters
@@ -98,9 +103,23 @@ def build_ollama_options(
                       exceeding what the model selector determined is safe
                       for this model on this hardware.  When None, only live
                       RAM pressure governs the ceiling.
+    kv_precision_override : "Q8_0" or "F16" from ModelSelector.recommended_kv.
+                      Overrides the profile default before pressure checks.
+                      Useful when ModelSelector assessed MARGINAL/SWAP_RISK fit
+                      and recommends Q8 to halve KV memory consumption.
     """
-    # Start with the base options (num_ctx + f16_kv)
+    # Start with the base options (num_ctx + f16_kv from profile)
     opts = ollama_options_for_profile(messages, profile)
+
+    # Apply ModelSelector KV precision override (pre-flight assessment).
+    # This takes priority over profile default but can still be further
+    # overridden by live RAM pressure below.
+    if kv_precision_override == "Q8_0":
+        if opts.get("f16_kv", True):
+            logger.debug("KV precision: F16 → Q8 (model selector override)")
+            opts["f16_kv"] = False
+    elif kv_precision_override == "F16":
+        opts["f16_kv"] = True
 
     # Apply ModelSelector ceiling BEFORE pressure reduction so pressure
     # reduction can only further reduce, never expand beyond the safe limit.
@@ -118,7 +137,11 @@ def build_ollama_options(
         opts["num_keep"] = num_keep
         logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
 
-    # Apply live memory-pressure reduction to num_ctx
+    # Apply live memory-pressure reductions.
+    # num_ctx is reduced first (cheap, immediate).  KV precision is downgraded
+    # from F16 to Q8 under HIGH/CRITICAL pressure — this halves the KV cache
+    # memory footprint and is more effective than a num_ctx reduction alone
+    # because it applies across all future tokens, not just the current window.
     vm = psutil.virtual_memory()
     ram_pct = vm.percent
     original_ctx = opts["num_ctx"]
@@ -129,18 +152,37 @@ def build_ollama_options(
             "Critical memory pressure %.1f%% — halving num_ctx: %d → %d",
             ram_pct, original_ctx, opts["num_ctx"],
         )
+        if opts.get("f16_kv", True):
+            opts["f16_kv"] = False
+            logger.warning(
+                "Critical memory pressure %.1f%% — KV precision downgraded F16 → Q8",
+                ram_pct,
+            )
     elif ram_pct >= _PRESSURE_HIGH_PCT:
         opts["num_ctx"] = max(512, int(original_ctx * 0.75))
         logger.debug(
             "High memory pressure %.1f%% — reducing num_ctx: %d → %d",
             ram_pct, original_ctx, opts["num_ctx"],
         )
+        if opts.get("f16_kv", True):
+            opts["f16_kv"] = False
+            logger.info(
+                "High memory pressure %.1f%% — KV precision downgraded F16 → Q8",
+                ram_pct,
+            )
     elif ram_pct >= _PRESSURE_MODERATE_PCT:
         opts["num_ctx"] = max(512, int(original_ctx * 0.90))
         logger.debug(
             "Moderate memory pressure %.1f%% — reducing num_ctx: %d → %d",
             ram_pct, original_ctx, opts["num_ctx"],
         )
+        # Moderate pressure: keep KV precision but log a heads-up
+        if opts.get("f16_kv", True):
+            logger.debug(
+                "Moderate memory pressure %.1f%% — KV still F16; "
+                "will downgrade at %.1f%%",
+                ram_pct, _PRESSURE_HIGH_PCT,
+            )
 
     return opts
 
