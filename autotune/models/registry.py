@@ -1,0 +1,300 @@
+"""Model profile registry with quantization specs for common OSS LLMs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+# ---------------------------------------------------------------------------
+# Quantization specifications
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class QuantizationSpec:
+    name: str
+    bits_per_weight: float   # effective bits after quantization
+    bytes_per_param: float   # storage bytes per parameter
+    quality_score: float     # 0–1 relative quality vs F16 baseline
+    speed_multiplier: float  # relative throughput vs F16 (higher = faster)
+    description: str
+
+
+# Ordered from most-compressed → least-compressed
+QUANTIZATIONS: dict[str, QuantizationSpec] = {
+    "Q2_K": QuantizationSpec(
+        name="Q2_K",
+        bits_per_weight=2.63,
+        bytes_per_param=0.329,
+        quality_score=0.50,
+        speed_multiplier=3.2,
+        description="2-bit K-quant – very small, noticeable quality loss",
+    ),
+    "Q4_K_S": QuantizationSpec(
+        name="Q4_K_S",
+        bits_per_weight=4.37,
+        bytes_per_param=0.546,
+        quality_score=0.78,
+        speed_multiplier=2.6,
+        description="4-bit K-quant small – good balance for constrained RAM",
+    ),
+    "Q4_K_M": QuantizationSpec(
+        name="Q4_K_M",
+        bits_per_weight=4.85,
+        bytes_per_param=0.606,
+        quality_score=0.84,
+        speed_multiplier=2.4,
+        description="4-bit K-quant medium – recommended sweet spot",
+    ),
+    "Q5_K_M": QuantizationSpec(
+        name="Q5_K_M",
+        bits_per_weight=5.68,
+        bytes_per_param=0.710,
+        quality_score=0.91,
+        speed_multiplier=2.0,
+        description="5-bit K-quant medium – near-lossless with good speed",
+    ),
+    "Q6_K": QuantizationSpec(
+        name="Q6_K",
+        bits_per_weight=6.57,
+        bytes_per_param=0.821,
+        quality_score=0.95,
+        speed_multiplier=1.7,
+        description="6-bit K-quant – excellent quality, moderate size",
+    ),
+    "Q8_0": QuantizationSpec(
+        name="Q8_0",
+        bits_per_weight=8.50,
+        bytes_per_param=1.063,
+        quality_score=0.99,
+        speed_multiplier=1.3,
+        description="8-bit – nearly lossless, large footprint",
+    ),
+    "F16": QuantizationSpec(
+        name="F16",
+        bits_per_weight=16.0,
+        bytes_per_param=2.000,
+        quality_score=1.00,
+        speed_multiplier=1.0,
+        description="Full 16-bit half-precision – reference quality",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Model profile
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ModelProfile:
+    id: str
+    name: str
+    family: str
+    parameters_b: float          # total parameter count in billions
+    n_layers: int
+    hidden_size: int             # embedding / residual stream dimension
+    n_heads: int                 # attention heads
+    n_kv_heads: int              # KV heads (< n_heads when GQA is used)
+    vocab_size: int
+    context_window: int          # maximum trained context length (tokens)
+    quantization_options: list[str]
+    description: str
+    hf_repo: str = ""            # Hugging Face repo for reference
+
+    # ------------------------------------------------------------------ #
+    # Derived helpers                                                      #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def head_dim(self) -> int:
+        return self.hidden_size // self.n_heads
+
+    def weight_bytes(self, quant: str) -> float:
+        """Estimated weight storage in bytes for a given quantization."""
+        spec = QUANTIZATIONS[quant]
+        params = self.parameters_b * 1e9
+        return params * spec.bytes_per_param
+
+    def weight_gb(self, quant: str) -> float:
+        return self.weight_bytes(quant) / 1024**3
+
+    def kv_cache_bytes(self, context_len: int, quant: str = "F16") -> float:
+        """
+        KV-cache bytes for *one* sequence of `context_len` tokens.
+
+        Formula (standard attention):
+          2 * n_layers * n_kv_heads * head_dim * context_len * element_bytes
+        """
+        # KV cache is typically stored in F16 regardless of weight quant,
+        # unless the runtime uses quantised KV (rare). Default to F16.
+        element_bytes = 2  # float16
+        return (
+            2
+            * self.n_layers
+            * self.n_kv_heads
+            * self.head_dim
+            * context_len
+            * element_bytes
+        )
+
+    def kv_cache_gb(self, context_len: int) -> float:
+        return self.kv_cache_bytes(context_len) / 1024**3
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+MODEL_REGISTRY: dict[str, ModelProfile] = {
+    m.id: m
+    for m in [
+        # ── Tiny / edge ────────────────────────────────────────────────
+        ModelProfile(
+            id="llama-3.2-1b",
+            name="Llama 3.2 1B",
+            family="llama",
+            parameters_b=1.24,
+            n_layers=16,
+            hidden_size=2048,
+            n_heads=32,
+            n_kv_heads=8,
+            vocab_size=128256,
+            context_window=131072,
+            quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
+            description="Ultra-light Llama 3.2 model, ideal for CPU or low-VRAM devices",
+            hf_repo="meta-llama/Llama-3.2-1B",
+        ),
+        ModelProfile(
+            id="llama-3.2-3b",
+            name="Llama 3.2 3B",
+            family="llama",
+            parameters_b=3.21,
+            n_layers=28,
+            hidden_size=3072,
+            n_heads=24,
+            n_kv_heads=8,
+            vocab_size=128256,
+            context_window=131072,
+            quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
+            description="Compact Llama 3.2 with solid performance on 4–8 GB systems",
+            hf_repo="meta-llama/Llama-3.2-3B",
+        ),
+        # ── Small / mainstream ─────────────────────────────────────────
+        ModelProfile(
+            id="mistral-7b-v0.3",
+            name="Mistral 7B v0.3",
+            family="mistral",
+            parameters_b=7.25,
+            n_layers=32,
+            hidden_size=4096,
+            n_heads=32,
+            n_kv_heads=8,
+            vocab_size=32768,
+            context_window=32768,
+            quantization_options=["Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
+            description="Fast, capable 7B model; the community workhorse",
+            hf_repo="mistralai/Mistral-7B-v0.3",
+        ),
+        ModelProfile(
+            id="llama-3.1-8b",
+            name="Llama 3.1 8B",
+            family="llama",
+            parameters_b=8.03,
+            n_layers=32,
+            hidden_size=4096,
+            n_heads=32,
+            n_kv_heads=8,
+            vocab_size=128256,
+            context_window=131072,
+            quantization_options=["Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
+            description="Meta's frontier 8B model with 128k context support",
+            hf_repo="meta-llama/Meta-Llama-3.1-8B",
+        ),
+        ModelProfile(
+            id="gemma-2-9b",
+            name="Gemma 2 9B",
+            family="gemma",
+            parameters_b=9.24,
+            n_layers=42,
+            hidden_size=3584,
+            n_heads=16,
+            n_kv_heads=8,
+            vocab_size=256000,
+            context_window=8192,
+            quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
+            description="Google Gemma 2 9B – strong reasoning for its size",
+            hf_repo="google/gemma-2-9b",
+        ),
+        # ── Medium ─────────────────────────────────────────────────────
+        ModelProfile(
+            id="qwen2.5-14b",
+            name="Qwen 2.5 14B",
+            family="qwen",
+            parameters_b=14.77,
+            n_layers=48,
+            hidden_size=5120,
+            n_heads=40,
+            n_kv_heads=8,
+            vocab_size=152064,
+            context_window=131072,
+            quantization_options=["Q2_K", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
+            description="Alibaba Qwen 2.5 14B – excellent multilingual + code quality",
+            hf_repo="Qwen/Qwen2.5-14B",
+        ),
+        ModelProfile(
+            id="mistral-nemo-12b",
+            name="Mistral NeMo 12B",
+            family="mistral",
+            parameters_b=12.25,
+            n_layers=40,
+            hidden_size=5120,
+            n_heads=32,
+            n_kv_heads=8,
+            vocab_size=131072,
+            context_window=131072,
+            quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
+            description="12B Mistral model with 128k context and large vocab",
+            hf_repo="mistralai/Mistral-Nemo-Base-2407",
+        ),
+        # ── Large ──────────────────────────────────────────────────────
+        ModelProfile(
+            id="llama-3.1-70b",
+            name="Llama 3.1 70B",
+            family="llama",
+            parameters_b=70.55,
+            n_layers=80,
+            hidden_size=8192,
+            n_heads=64,
+            n_kv_heads=8,
+            vocab_size=128256,
+            context_window=131072,
+            quantization_options=["Q2_K", "Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K"],
+            description="Meta's flagship 70B – near-GPT-4 quality when quantised to Q4",
+            hf_repo="meta-llama/Meta-Llama-3.1-70B",
+        ),
+        ModelProfile(
+            id="qwen2.5-72b",
+            name="Qwen 2.5 72B",
+            family="qwen",
+            parameters_b=72.71,
+            n_layers=80,
+            hidden_size=8192,
+            n_heads=64,
+            n_kv_heads=8,
+            vocab_size=152064,
+            context_window=131072,
+            quantization_options=["Q2_K", "Q4_K_S", "Q4_K_M", "Q5_K_M"],
+            description="Alibaba's 72B model with top-tier multilingual and coding scores",
+            hf_repo="Qwen/Qwen2.5-72B",
+        ),
+    ]
+}
+
+
+def get_model(model_id: str) -> ModelProfile:
+    if model_id not in MODEL_REGISTRY:
+        raise KeyError(f"Unknown model: {model_id!r}. Run `autotune models` for the list.")
+    return MODEL_REGISTRY[model_id]
+
+
+def list_models() -> list[ModelProfile]:
+    return sorted(MODEL_REGISTRY.values(), key=lambda m: m.parameters_b)

@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.env
+.venv
+venv/
+env/
+
+# Database files (contain machine-specific data)
+*.db
+*.db-shm
+*.db-wal
+
+# Benchmark output (generated, not source)
+benchmark_results.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# autotune data dir (runtime)
+data/
