@@ -93,7 +93,18 @@ class OpenAICompatBackend(Backend):
 
         url = f"{self.base_url}/v1/chat/completions"
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # Use a structured timeout: short connect/write, no read timeout.
+        # The read timeout must be None for streaming — a fixed value would
+        # kill long-running generations mid-stream when the model is slow.
+        # The caller's `timeout` parameter is respected as the connect timeout.
+        connect_timeout = min(float(timeout), 15.0)
+        client_timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=None,     # no read timeout — stream until done or disconnect
+            write=10.0,
+            pool=5.0,
+        )
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
             async with client.stream(
                 "POST", url, json=payload, headers=self._headers()
             ) as resp:

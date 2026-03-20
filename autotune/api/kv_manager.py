@@ -166,7 +166,7 @@ def build_ollama_options(
         )
         if opts.get("f16_kv", True):
             opts["f16_kv"] = False
-            logger.info(
+            logger.warning(
                 "High memory pressure %.1f%% — KV precision downgraded F16 → Q8",
                 ram_pct,
             )

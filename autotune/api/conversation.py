@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from autotune.api.ctx_utils import estimate_tokens as _estimate_tokens
 from autotune.db.store import _db_path
 
 CONVERSATIONS_DB = _db_path().parent / "conversations.db"
@@ -59,10 +60,6 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id, created_at);
 """
 
-
-def _estimate_tokens(text: str) -> int:
-    """Fast token count estimate: ~4 chars/token."""
-    return max(1, len(text) // 4)
 
 
 def _hash_system_prompt(prompt: Optional[str]) -> Optional[str]:

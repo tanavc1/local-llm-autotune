@@ -215,11 +215,11 @@ class BackendChain:
 
         self._ollama_models = ollama
         self._lmstudio_models = lms
-        # Ollama is considered running if discover_all was called (probes succeeded).
-        # We set True unconditionally here because _probe_ollama returns [] on
-        # connection failure — but discover_all is not called as an availability check.
-        self._ollama_ok = True
-        self._ollama_probed_at = _time.monotonic()
+        # Don't assume Ollama availability from model list alone (could be empty
+        # even when Ollama is running).  Let ollama_running() do a real probe.
+        # Reset the TTL so the next resolve() call re-probes properly.
+        self._ollama_ok = None
+        self._ollama_probed_at = 0.0
 
         return sorted(all_models, key=lambda m: (m.source, m.id))
 

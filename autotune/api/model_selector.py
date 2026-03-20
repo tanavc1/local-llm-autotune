@@ -358,7 +358,9 @@ class ModelSelector:
             cur_idx  = _quant_idx(norm_quant)
             min_idx  = _quant_idx(_MIN_ACCEPTABLE_QUANT)
 
-            for q in _QUANT_ORDER[min_idx:cur_idx]:
+            # Iterate heaviest → lightest so we suggest the best quality quant
+            # that still fits safely in RAM (not the smallest possible).
+            for q in reversed(_QUANT_ORDER[min_idx:cur_idx]):
                 est_w    = f16_size * (_QUANT_BPP[q] / _QUANT_BPP["F16"])
                 est_base = est_w + overhead_gb
                 est_kv   = arch.kv_cache_gb(ref_ctx, "Q8_0") if arch else est_w * 0.10

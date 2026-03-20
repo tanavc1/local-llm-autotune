@@ -16,11 +16,14 @@ KV-cache strategy:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional
+
+logger = logging.getLogger(__name__)
 
 import psutil
 from fastapi import FastAPI, Header, HTTPException
@@ -303,8 +306,8 @@ def _make_completion_json(
         }],
         "usage": {
             "prompt_tokens": prompt_tokens,
-            "completion_tokens": max(1, len(content) // 4),
-            "total_tokens": prompt_tokens + max(1, len(content) // 4),
+            "completion_tokens": estimate_tokens(content),
+            "total_tokens": prompt_tokens + estimate_tokens(content),
         },
         "autotune": {
             "profile": profile,
@@ -409,9 +412,30 @@ async def chat_completions(
         )
 
     try:
-        return await _chat_completions_inner(req, x_autotune_profile, x_conversation_id)
-    finally:
+        response = await _chat_completions_inner(req, x_autotune_profile, x_conversation_id)
+    except Exception:
+        # Release slot immediately on any error (generator never runs)
         await queue.release()
+        raise
+
+    if req.stream:
+        # For streaming: the response body is iterated lazily by the ASGI server
+        # AFTER this function returns.  The queue slot must stay held until the
+        # last byte has been sent — wrap the body iterator to release on completion
+        # or client disconnect.
+        orig_iter = response.body_iterator
+        async def _stream_and_release():
+            try:
+                async for chunk in orig_iter:
+                    yield chunk
+            finally:
+                await queue.release()
+        response.body_iterator = _stream_and_release()
+        return response
+    else:
+        # Non-streaming: response is fully collected, safe to release now
+        await queue.release()
+        return response
 
 
 async def _chat_completions_inner(
@@ -525,7 +549,7 @@ async def _chat_completions_inner(
             # Log metrics to DB + conversation
             elapsed = time.time() - start_time
             content = "".join(full_content)
-            comp_tokens = max(1, len(content) // 4)
+            comp_tokens = estimate_tokens(content)
             ttft_ms = (first_token_time - start_time) * 1000 if first_token_time else 0
             tps = comp_tokens / max(elapsed, 0.01)
 
@@ -557,8 +581,8 @@ async def _chat_completions_inner(
                             f"f16_kv={ollama_opts.get('f16_kv', True)}"
                         ),
                     })
-            except Exception:
-                pass
+            except Exception as _db_exc:
+                logger.debug("metrics DB log failed: %s", _db_exc)
 
         yield b"data: [DONE]\n\n"
 
@@ -566,12 +590,11 @@ async def _chat_completions_inner(
         return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
     # ── Non-streaming: collect full response ─────────────────────────────
-    # tuner is applied once here (NOT in generate_stream path above).
-    tuner._apply(profile_name)
     collected: list[str] = []
     backend_used = "unknown"
     t0 = time.time()
     ttft = 0.0
+    tuner._apply(profile_name)
     try:
         async for chunk in chain.stream(
             req.model, messages,
@@ -582,7 +605,8 @@ async def _chat_completions_inner(
         ):
             if not collected and chunk.content:
                 ttft = (time.time() - t0) * 1000
-            collected.append(chunk.content)
+            if chunk.content:
+                collected.append(chunk.content)
             backend_used = chunk.backend
     except (ModelNotAvailableError, AuthError, BackendError) as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -591,7 +615,7 @@ async def _chat_completions_inner(
 
     content_out = "".join(collected)
     elapsed2 = time.time() - t0
-    comp_tokens = max(1, len(content_out) // 4)
+    comp_tokens = estimate_tokens(content_out)
     tps2 = comp_tokens / max(elapsed2, 0.01)
     prompt_tokens = estimate_tokens("".join(m.get("content", "") for m in messages))
 

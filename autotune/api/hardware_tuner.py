@@ -166,12 +166,16 @@ class HardwareTuner:
         if _OS not in ("Darwin", "Linux"):
             return
         try:
+            import getpass
+            current_user = getpass.getuser()
             for proc in psutil.process_iter(["name", "pid", "username"]):
                 if proc.info["name"] and "ollama" in proc.info["name"].lower():
                     # Only renice processes owned by the current user
-                    import getpass
-                    if proc.info["username"] == getpass.getuser():
-                        os.system(f"renice -n {niceness} -p {proc.info['pid']} 2>/dev/null")
+                    if proc.info["username"] == current_user:
+                        subprocess.run(
+                            ["renice", "-n", str(niceness), "-p", str(proc.info["pid"])],
+                            capture_output=True,
+                        )
                         break
         except Exception as e:
             logger.debug("Could not renice Ollama: %s", e)

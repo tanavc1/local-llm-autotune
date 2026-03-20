@@ -28,6 +28,7 @@ import time
 import uuid
 from typing import Optional
 
+import rich.box as _rich_box
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -36,6 +37,7 @@ from rich.text import Text
 from .backends.chain import get_chain
 from .backends.openai_compat import AuthError, BackendError, ModelNotAvailableError
 from .conversation import get_conv_manager
+from .ctx_utils import estimate_tokens
 from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
@@ -106,7 +108,7 @@ class ChatSession:
             f"[yellow]{profile.label}[/yellow]  │  "
             f"[dim]conv:{self.conv_id}[/dim]  │  "
             f"[dim]Type [/dim][cyan]/help[/cyan][dim] for commands[/dim]",
-            box=__import__("rich.box", fromlist=["HORIZONTALS"]).HORIZONTALS,
+            box=_rich_box.HORIZONTALS,
             padding=(0, 1),
         ))
         console.print()
@@ -206,7 +208,7 @@ class ChatSession:
         content = "".join(collected)
         elapsed = time.time() - t_start
         ttft_ms = (first_token_t - t_start) * 1000 if first_token_t else 0
-        comp_tokens = max(1, len(content) // 4)
+        comp_tokens = estimate_tokens(content)
         tps = comp_tokens / max(elapsed, 0.01)
 
         self._total_tokens += comp_tokens

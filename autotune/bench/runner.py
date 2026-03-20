@@ -28,8 +28,9 @@ from typing import Optional
 import psutil
 
 from autotune.api.backends.chain import get_chain
+from autotune.api.ctx_utils import estimate_tokens
 from autotune.api.hardware_tuner import get_tuner
-from autotune.api.kv_manager import build_ollama_options, memory_pressure_snapshot
+from autotune.api.kv_manager import build_ollama_options
 from autotune.api.profiles import get_profile
 from autotune.db.fingerprint import hardware_to_db_dict
 from autotune.db.store import get_db
@@ -200,7 +201,7 @@ async def run_bench(
     swap_before = sw_before.used / 1024**3
 
     # Estimate input tokens
-    prompt_tokens = sum(len(m.get("content", "")) // 4 for m in messages)
+    prompt_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
 
     # Start background sampler (samples before apply so we get accurate before)
     # Prime psutil CPU measurement — first call after process start returns 0.0
@@ -250,7 +251,7 @@ async def run_bench(
     ttft_ms = (first_token_t - t_start) * 1000 if first_token_t else 0.0
 
     content = "".join(collected)
-    comp_tokens = max(1, len(content) // 4)
+    comp_tokens = estimate_tokens(content)
     tps = comp_tokens / max(elapsed, 0.01)
 
     # Snapshot after
@@ -306,7 +307,7 @@ async def run_raw_ollama(
     sw_before = psutil.swap_memory()
     ram_before = vm_before.used / 1024**3
     swap_before = sw_before.used / 1024**3
-    prompt_tokens = sum(len(m.get("content", "")) // 4 for m in messages)
+    prompt_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
 
     sampler = _SystemSampler(interval_sec=0.25)
     sampler.start()
@@ -315,17 +316,6 @@ async def run_raw_ollama(
     first_token_t: Optional[float] = None
     collected: list[str] = []
     error_msg: Optional[str] = None
-
-    # Pure raw Ollama call — no autotune options injected at all
-    payload = {
-        "model": model_id,
-        "messages": messages,
-        "stream": True,
-        # num_predict caps output so we don't run forever, but we do NOT set
-        # num_ctx, temperature, top_p, or any Ollama options — those all stay
-        # at Ollama's own defaults.
-        "options": {"num_predict": 2048},
-    }
 
     try:
         async with httpx.AsyncClient(timeout=360.0) as client:
@@ -370,7 +360,7 @@ async def run_raw_ollama(
     elapsed = t_end - t_start
     ttft_ms = (first_token_t - t_start) * 1000 if first_token_t else 0.0
     content = "".join(collected)
-    comp_tokens = max(1, len(content) // 4)
+    comp_tokens = estimate_tokens(content)
     tps = comp_tokens / max(elapsed, 0.01)
 
     vm_after = psutil.virtual_memory()
