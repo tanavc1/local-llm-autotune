@@ -25,7 +25,7 @@ pass messages in, get an options dict out.  No global state is mutated.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import psutil
 
@@ -76,21 +76,41 @@ def compute_num_keep(messages: list[dict], profile: "Profile") -> int:
     return kept
 
 
-def build_ollama_options(messages: list[dict], profile: "Profile") -> dict:
+def build_ollama_options(
+    messages: list[dict],
+    profile: "Profile",
+    context_ceiling: Optional[int] = None,
+) -> dict:
     """
     Return the complete Ollama `options` dict for this request.
 
     Fields set
     ----------
-    num_ctx   — dynamic minimum that fits input + max_new_tokens + buffer
+    num_ctx   — dynamic minimum that fits input + max_new_tokens + buffer,
+                further capped by context_ceiling and live RAM pressure
     f16_kv    — False (Q8 KV) for fast profile; True (F16) otherwise
     num_keep  — system-prompt prefix tokens to pin in KV (if profile wants it)
 
-    Additionally, memory pressure is checked and num_ctx is reduced if RAM
-    headroom is low to avoid OOM before the request even starts.
+    Parameters
+    ----------
+    context_ceiling : hard upper bound on num_ctx, set by ModelSelector from
+                      pre-flight fit analysis.  Prevents the context from
+                      exceeding what the model selector determined is safe
+                      for this model on this hardware.  When None, only live
+                      RAM pressure governs the ceiling.
     """
     # Start with the base options (num_ctx + f16_kv)
     opts = ollama_options_for_profile(messages, profile)
+
+    # Apply ModelSelector ceiling BEFORE pressure reduction so pressure
+    # reduction can only further reduce, never expand beyond the safe limit.
+    if context_ceiling is not None and context_ceiling > 0:
+        if opts["num_ctx"] > context_ceiling:
+            logger.debug(
+                "num_ctx capped by model selector: %d → %d",
+                opts["num_ctx"], context_ceiling,
+            )
+            opts["num_ctx"] = context_ceiling
 
     # Add prefix-cache pinning
     num_keep = compute_num_keep(messages, profile)
@@ -98,7 +118,7 @@ def build_ollama_options(messages: list[dict], profile: "Profile") -> dict:
         opts["num_keep"] = num_keep
         logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
 
-    # Apply memory-pressure reduction to num_ctx
+    # Apply live memory-pressure reduction to num_ctx
     vm = psutil.virtual_memory()
     ram_pct = vm.percent
     original_ctx = opts["num_ctx"]

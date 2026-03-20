@@ -812,13 +812,14 @@ def bench(
 def ls(as_json: bool) -> None:
     """List locally downloaded Ollama models with hardware fitness scores.
 
-    Shows which models fit in available memory, their recommended profile,
-    and an estimated fitness score based on your hardware.
+    Shows which models fit in available memory, their safe context limit,
+    recommended profile, and quantization warnings based on your hardware.
+    KV cache is included in all memory estimates.
     """
-    import asyncio
     import json as _json
     import httpx
     from autotune.hardware.profiler import profile_hardware
+    from autotune.api.model_selector import ModelSelector
     from rich.table import Table
     from rich import box
 
@@ -846,8 +847,9 @@ def ls(as_json: bool) -> None:
 
     available_gb = hw.effective_memory_gb
     total_gb     = hw.memory.total_gb
+    sel          = ModelSelector(available_gb=available_gb, total_ram_gb=total_gb)
 
-    # ── 3. Enrich each model with details from /api/show ────────────────
+    # ── 3. Enrich each model from /api/show ──────────────────────────────
     def _show(model_name: str) -> dict:
         try:
             r = httpx.post(
@@ -864,76 +866,105 @@ def ls(as_json: bool) -> None:
         name    = m.get("name", "")
         size_gb = m.get("size", 0) / 1024**3
 
-        details = _show(name)
-        params_b: Optional[float] = None
-        quant_level = "unknown"
-        modelfile = details.get("modelfile", "") or ""
-        for line in modelfile.splitlines():
-            if "FROM" in line.upper():
-                # e.g. "FROM /path/to/model.gguf"
-                pass
-        # Ollama /api/show returns 'details' dict with parameter_size, quantization_level
+        details      = _show(name)
         detail_block = details.get("details", {}) or {}
-        param_str    = detail_block.get("parameter_size", "")   # e.g. "3.8B"
-        quant_level  = detail_block.get("quantization_level", "unknown")
+        modelinfo    = details.get("model_info") or details.get("modelinfo") or {}
+
+        param_str   = detail_block.get("parameter_size", "")   # e.g. "3.8B"
+        quant_level = detail_block.get("quantization_level", "unknown")
+
+        params_b: Optional[float] = None
         if param_str:
             try:
-                params_b = float(param_str.rstrip("Bb").rstrip("M").strip())
+                params_b = float(param_str.rstrip("Bb").strip())
                 if "M" in param_str.upper():
-                    params_b = params_b / 1000
+                    params_b /= 1000
             except ValueError:
                 pass
 
-        # ── Fitness scoring ──────────────────────────────────────────────
-        # We use the actual disk size as a RAM proxy (GGUF size ≈ VRAM use).
-        # Add 10 % overhead for KV cache + runtime.
-        model_ram_est = size_gb * 1.10
-        fits_gpu      = model_ram_est <= available_gb
-        fits_total    = model_ram_est <= total_gb * 0.90
+        # ── KV-aware fit analysis ────────────────────────────────────────
+        report = sel.assess(
+            model_name=name,
+            size_gb=size_gb,
+            params_b=params_b,
+            quant=quant_level,
+            modelinfo=modelinfo,
+        )
 
-        if not fits_total:
-            status  = "[red]⛔ too large[/red]"
-            rec_profile = "—"
-            score   = 0.0
-        elif not fits_gpu:
-            status  = "[yellow]⚠ needs swap[/yellow]"
-            rec_profile = "quality"
-            score   = max(0.1, (total_gb * 0.9 - model_ram_est) / total_gb * 5)
-        else:
-            remaining = available_gb - model_ram_est
-            util      = model_ram_est / available_gb
-            # Prefer models that use 30–70 % of available memory (best perf/quality trade-off)
+        # Score: 10 = perfect fit; penalise swap/OOM heavily
+        fc = report.fit_class
+        from autotune.api.model_selector import FitClass
+        if fc == FitClass.OOM:
+            score = 0.0
+        elif fc == FitClass.SWAP_RISK:
+            score = max(1.0, 3.0 - (report.ram_util_pct - 92) * 0.3)
+        elif fc == FitClass.MARGINAL:
+            score = 5.0 + (92 - report.ram_util_pct) * 0.3
+        else:   # SAFE
+            util = report.ram_util_pct / 100
             if util < 0.15:
-                rec_profile = "quality"    # tiny model — push quality
-                score = 6.0 + util * 10
+                score = 6.0 + util * 15
             elif util <= 0.70:
-                rec_profile = "balanced"
-                score = 10.0 - abs(util - 0.50) * 6
+                score = 10.0 - abs(util - 0.50) * 5
             else:
-                rec_profile = "fast"       # large model — prioritise speed
-                score = max(4.0, 10.0 - (util - 0.70) * 20)
-            status = "[green]✓ GPU[/green]"
+                score = max(5.0, 10.0 - (util - 0.70) * 12)
+
+        # Status label
+        if fc == FitClass.OOM:
+            status = "[red]⛔ OOM[/red]"
+        elif fc == FitClass.SWAP_RISK:
+            status = "[red]⚠ swap risk[/red]"
+        elif fc == FitClass.MARGINAL:
+            status = "[yellow]~ marginal[/yellow]"
+        else:
+            status = "[green]✓ fits[/green]"
+
+        # Safe context string
+        safe_ctx = report.safe_max_context
+        if safe_ctx >= 32768:
+            ctx_str = f"[green]{safe_ctx//1024}k[/green]"
+        elif safe_ctx >= 8192:
+            ctx_str = f"[yellow]{safe_ctx//1024}k[/yellow]"
+        elif safe_ctx >= 1024:
+            ctx_str = f"[red]{safe_ctx//1024}k[/red]"
+        else:
+            ctx_str = "[red]—[/red]"
+
+        # Quant warning
+        quant_note = ""
+        if report.quant_too_heavy and report.suggested_quant:
+            quant_note = f"→ try {report.suggested_quant}"
 
         rows.append({
-            "name":         name,
-            "size_gb":      round(size_gb, 2),
-            "params":       param_str or "?",
-            "quant":        quant_level,
-            "status":       status,
-            "rec_profile":  rec_profile,
-            "score":        round(score, 1),
-            "ram_est_gb":   round(model_ram_est, 2),
+            "name":        name,
+            "size_gb":     round(size_gb, 2),
+            "params":      param_str or "?",
+            "quant":       quant_level,
+            "total_gb":    report.total_est_gb,
+            "util_pct":    report.ram_util_pct,
+            "safe_ctx":    ctx_str,
+            "status":      status,
+            "rec_profile": report.recommended_profile,
+            "rec_kv":      report.recommended_kv,
+            "score":       round(min(10.0, score), 1),
+            "quant_note":  quant_note,
+            "warning":     report.warning or "",
+            "fatal":       report.fatal,
+            # raw for JSON
+            "fit_class":   fc.value,
+            "safe_ctx_tokens": safe_ctx,
+            "arch_source": report.arch.source if report.arch else "none",
         })
 
     rows.sort(key=lambda r: -r["score"])
 
     if as_json:
-        # Strip Rich markup for JSON output
         import re
         clean = []
         for r in rows:
             cr = dict(r)
-            cr["status"] = re.sub(r"\[.*?\]", "", cr["status"]).strip()
+            for k in ("status", "safe_ctx", "score"):
+                cr[k] = re.sub(r"\[.*?\]", "", str(cr[k])).strip()
             clean.append(cr)
         console.print(_json.dumps(clean, indent=2))
         return
@@ -942,8 +973,9 @@ def ls(as_json: bool) -> None:
     console.print()
     console.print(
         f"[bold]Ollama models[/bold]  "
-        f"[dim]available RAM: {available_gb:.1f} GB / {total_gb:.0f} GB total[/dim]"
-        f"  [dim](machine: {hw.cpu.brand.split('@')[0].strip()})[/dim]"
+        f"[dim]available: {available_gb:.1f} GB / {total_gb:.0f} GB  "
+        f"(safe limit: {available_gb * 0.85:.1f} GB)[/dim]"
+        f"  [dim]{hw.cpu.brand.split('@')[0].strip()}[/dim]"
     )
     console.print()
 
@@ -952,33 +984,56 @@ def ls(as_json: bool) -> None:
     t.add_column("Size",        justify="right")
     t.add_column("Params",      justify="right")
     t.add_column("Quant",       justify="center")
-    t.add_column("RAM est",     justify="right")
+    t.add_column("Total+KV",    justify="right")
+    t.add_column("RAM%",        justify="right")
+    t.add_column("Safe ctx",    justify="center")
     t.add_column("Fits?",       justify="center")
     t.add_column("Profile",     justify="center", style="yellow")
+    t.add_column("KV prec",     justify="center")
     t.add_column("Score",       justify="right")
 
     for r in rows:
         score_str = (
-            f"[green]{r['score']}/10[/green]"  if r["score"] >= 8 else
+            f"[green]{r['score']}/10[/green]"   if r["score"] >= 8 else
             f"[yellow]{r['score']}/10[/yellow]" if r["score"] >= 5 else
             f"[red]{r['score']}/10[/red]"
         )
+        util_str = f"{r['util_pct']:.0f}%"
+        if r["util_pct"] > 92:
+            util_str = f"[red]{util_str}[/red]"
+        elif r["util_pct"] > 85:
+            util_str = f"[yellow]{util_str}[/yellow]"
+
+        quant_display = r["quant"]
+        if r["quant_note"]:
+            quant_display = f"{r['quant']} [dim]{r['quant_note']}[/dim]"
+
         t.add_row(
             r["name"],
             f"{r['size_gb']:.1f} GB",
             r["params"],
-            r["quant"],
-            f"{r['ram_est_gb']:.1f} GB",
+            quant_display,
+            f"{r['total_gb']:.1f} GB",
+            util_str,
+            r["safe_ctx"],
             r["status"],
             r["rec_profile"],
+            r["rec_kv"],
             score_str,
         )
 
     console.print(t)
     console.print(
-        f"[dim]Score = fitness for this machine.  "
-        f"Run: [cyan]autotune run <model>[/cyan] to start optimised chat.[/dim]\n"
+        "[dim]Total+KV = weights + KV cache (8k ctx) + runtime overhead.  "
+        "Safe ctx = max context before swap.  "
+        "Run: [cyan]autotune run <model>[/cyan][/dim]\n"
     )
+
+    # Print warnings for problematic models
+    for r in rows:
+        if r["warning"]:
+            icon = "[red]✗[/red]" if r["fatal"] else "[yellow]⚠[/yellow]"
+            console.print(f"  {icon} [bold]{r['name']}[/bold]: {r['warning']}")
 
 
 # ---------------------------------------------------------------------------
@@ -990,14 +1045,16 @@ def ls(as_json: bool) -> None:
 @click.option("--profile", "-p",
               type=click.Choice(["fast", "balanced", "quality", "auto"]),
               default="auto", show_default=True,
-              help="Profile to use. 'auto' selects based on model size vs available RAM.")
+              help="Profile to use. 'auto' selects based on memory fit analysis.")
 @click.option("--system", "-s", default=None, metavar="TEXT",
               help="System prompt to use for the session.")
-def run(model_name: str, profile: str, system: Optional[str]) -> None:
+@click.option("--force", is_flag=True, default=False,
+              help="Start even if memory analysis predicts swap risk (not recommended).")
+def run(model_name: str, profile: str, system: Optional[str], force: bool) -> None:
     """Launch an optimised chat session with a locally downloaded Ollama model.
 
-    autotune automatically selects the best profile for this model on your
-    hardware unless you specify --profile explicitly.
+    Runs a pre-flight memory analysis (weights + KV cache + runtime) to select
+    the correct profile and safe context window before loading the model.
 
     \b
     Examples:
@@ -1008,41 +1065,115 @@ def run(model_name: str, profile: str, system: Optional[str]) -> None:
     import httpx
     from autotune.hardware.profiler import profile_hardware
     from autotune.api.chat import start_chat
+    from autotune.api.model_selector import ModelSelector, FitClass
 
-    # ── Auto-select profile ──────────────────────────────────────────────
-    if profile == "auto":
-        hw = profile_hardware()
-        available_gb = hw.effective_memory_gb
+    hw           = profile_hardware()
+    available_gb = hw.effective_memory_gb
+    total_gb     = hw.memory.total_gb
+    sel          = ModelSelector(available_gb=available_gb, total_ram_gb=total_gb)
 
-        try:
-            r = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
-            models = r.json().get("models", [])
-        except Exception:
-            models = []
+    # ── Fetch model info from Ollama ─────────────────────────────────────
+    size_gb:   float          = 0.0
+    params_b:  Optional[float] = None
+    quant_str: str            = "unknown"
+    modelinfo: dict           = {}
 
-        size_gb = 0.0
-        for m in models:
+    try:
+        tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+        for m in tags_resp.json().get("models", []):
             if m.get("name", "").lower() == model_name.lower():
                 size_gb = m.get("size", 0) / 1024**3
                 break
+    except Exception:
+        console.print("[red]Ollama is not running.[/red]  Start with: ollama serve")
+        raise SystemExit(1)
 
-        model_ram = size_gb * 1.10
-        util = model_ram / available_gb if available_gb > 0 else 1.0
+    try:
+        show_resp = httpx.post(
+            "http://localhost:11434/api/show",
+            json={"name": model_name},
+            timeout=5.0,
+        )
+        if show_resp.status_code == 200:
+            show_data    = show_resp.json()
+            detail_block = show_data.get("details", {}) or {}
+            modelinfo    = show_data.get("model_info") or show_data.get("modelinfo") or {}
+            param_str    = detail_block.get("parameter_size", "")
+            quant_str    = detail_block.get("quantization_level", "unknown")
+            if param_str:
+                try:
+                    params_b = float(param_str.rstrip("Bb").strip())
+                    if "M" in param_str.upper():
+                        params_b /= 1000
+                except ValueError:
+                    pass
+    except Exception:
+        pass
 
-        if util > 0.80:
-            chosen = "fast"
-        elif util > 0.45:
-            chosen = "balanced"
-        else:
-            chosen = "quality"
-
+    if size_gb == 0.0:
         console.print(
-            f"[dim]Auto-selected profile: [yellow]{chosen}[/yellow]  "
-            f"(model ~{size_gb:.1f} GB, available {available_gb:.1f} GB, "
-            f"utilisation {util*100:.0f}%)[/dim]"
+            f"[yellow]Model {model_name!r} not found in Ollama.[/yellow]  "
+            f"Pull it first: [cyan]ollama pull {model_name}[/cyan]"
+        )
+        raise SystemExit(1)
+
+    # ── Pre-flight fit analysis ──────────────────────────────────────────
+    report = sel.assess(
+        model_name=model_name,
+        size_gb=size_gb,
+        params_b=params_b,
+        quant=quant_str,
+        modelinfo=modelinfo,
+    )
+
+    arch_note = f"arch from {report.arch.source}" if report.arch else "arch: estimated"
+
+    if report.fatal and not force:
+        console.print(
+            f"\n[bold red]✗ Cannot load model safely[/bold red]\n"
+            f"  {report.warning}\n"
+            f"  Use --force to override (will likely OOM or swap severely)."
+        )
+        raise SystemExit(1)
+
+    if report.fit_class == FitClass.SWAP_RISK and not force:
+        console.print(
+            f"\n[bold yellow]⚠ Swap risk detected[/bold yellow]\n"
+            f"  {report.warning}\n"
+            f"  Use --force to proceed anyway."
+        )
+        raise SystemExit(1)
+
+    if report.warning:
+        console.print(f"[yellow]⚠[/yellow] {report.warning}")
+
+    # ── Select profile ───────────────────────────────────────────────────
+    if profile == "auto":
+        chosen = report.recommended_profile
+        if chosen == "—":
+            chosen = "fast"
+        console.print(
+            f"[dim]Pre-flight:  {size_gb:.1f} GB weights  "
+            f"+ {report.kv_q8_gb:.2f} GB KV (Q8, 8k ctx)  "
+            f"+ {report.overhead_gb:.2f} GB overhead  "
+            f"= {report.total_est_gb:.1f} GB / {available_gb:.1f} GB available "
+            f"({report.ram_util_pct:.0f}%)  [{arch_note}][/dim]"
+        )
+        console.print(
+            f"[dim]Auto-profile: [yellow]{chosen}[/yellow]  "
+            f"safe context: {report.safe_max_context:,} tokens  "
+            f"KV precision: {report.recommended_kv}[/dim]"
         )
     else:
         chosen = profile
+
+    # ── Warn about quant downgrade opportunity ───────────────────────────
+    if report.quant_too_heavy and report.suggested_quant:
+        console.print(
+            f"[dim]Tip: pull [cyan]{report.suggested_quant}[/cyan] "
+            f"(~{report.suggested_quant_gb:.1f} GB) for "
+            f"+{report.suggested_headroom_gb:.1f} GB headroom.[/dim]"
+        )
 
     start_chat(model_id=model_name, profile=chosen, system_prompt=system)
 
