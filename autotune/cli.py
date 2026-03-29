@@ -203,6 +203,78 @@ def pull(model: Optional[str], show_list: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `autotune benchmark`
+# ---------------------------------------------------------------------------
+
+@cli.command("benchmark")
+@click.argument("model")
+@click.option(
+    "--runs", "-n",
+    type=int, default=2,
+    help="Runs per prompt per condition (default: 2; use 1 for a quick check).",
+    show_default=True,
+)
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced",
+    help="autotune profile to compare against raw Ollama defaults.",
+    show_default=True,
+)
+@click.option(
+    "--output", "-o",
+    default=None,
+    metavar="FILE.json",
+    help="Save full results to a JSON file.",
+)
+@click.option(
+    "--no-save",
+    is_flag=True, default=False,
+    help="Do not persist results to the autotune DB.",
+)
+def benchmark(model: str, runs: int, profile: str, output: Optional[str], no_save: bool) -> None:
+    """Honest 1-vs-1: raw Ollama defaults vs autotune optimizer.
+
+    Runs a curated 6-prompt suite (factual Q&A, code, math, long output,
+    multi-turn conversation, code review) through both conditions and reports
+    tok/s, TTFT, peak RAM, CPU load, and swap — with color-coded deltas.
+
+    If the optimizer makes something WORSE it shows that too.
+
+    \b
+    Examples:
+      autotune benchmark phi4-mini          # 2 runs × 6 prompts × 2 conditions
+      autotune benchmark llama3.2:3b -n 1   # quick single-pass
+      autotune benchmark qwen2.5:7b -p fast --output results.json
+    """
+    import asyncio
+
+    from autotune.bench.compare import run_comparison, print_report, export_json
+
+    # Estimate duration so user isn't surprised
+    est_min = runs * 6 * 2 * 1.5 / 60   # rough: 1.5 min per inference call
+    console.print(
+        f"\n[bold]autotune benchmark[/bold]  ·  [cyan]{model}[/cyan]  ·  "
+        f"profile=[bold]{profile}[/bold]  ·  {runs} run(s) per condition\n"
+        f"[dim]Estimated time: {est_min:.0f}–{est_min*2:.0f} min  "
+        f"(depends on model size and hardware)[/dim]\n"
+    )
+
+    try:
+        report = asyncio.run(
+            run_comparison(model, runs, profile, console, save_db=not no_save)
+        )
+        print_report(report, console)
+        if output:
+            export_json(report, output, console)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Benchmark cancelled.[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Benchmark failed:[/red] {e}")
+        raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
 # `autotune session`
 # ---------------------------------------------------------------------------
 
