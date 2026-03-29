@@ -147,11 +147,121 @@ def hardware() -> None:
 # ---------------------------------------------------------------------------
 
 @cli.command()
-def models() -> None:
-    """List all models in the registry with their specifications."""
-    from autotune.output.formatter import print_model_table
+@click.option(
+    "--registry", is_flag=True, default=False,
+    help="Show the internal model registry instead of locally downloaded models.",
+)
+def models(registry: bool) -> None:
+    """List all models available on this machine (Ollama, MLX, LM Studio).
 
-    print_model_table()
+    Shows size on disk, architecture, quantization, and quality tier based on
+    public benchmarks (MMLU, HumanEval) so you can pick the right model.
+
+    Use --registry to show autotune's internal pre-configured model list.
+    """
+    if registry:
+        from autotune.output.formatter import print_model_table
+        print_model_table()
+        return
+
+    from autotune.api.local_models import list_local_models, is_ollama_running
+    from autotune.models.quality import tier_badge, tier_markup
+    from rich.table import Table
+    from rich import box as _box
+    from rich.text import Text
+
+    with console.status("[cyan]Scanning for local models…[/cyan]", spinner="dots"):
+        local = list_local_models()
+
+    if not local:
+        if not is_ollama_running():
+            console.print(
+                "[yellow]No models found.[/yellow]\n"
+                "Ollama does not appear to be running.  Start it first:\n"
+                "  [bold]ollama serve[/bold]\n\n"
+                "Or pull a model directly:\n"
+                "  [bold]autotune pull phi4-mini[/bold]"
+            )
+        else:
+            console.print(
+                "[yellow]No models found.[/yellow]\n"
+                "Pull one to get started:\n"
+                "  [bold]autotune pull[/bold]  (browse popular models)\n"
+                "  [bold]autotune pull phi4-mini[/bold]"
+            )
+        return
+
+    # Group by source
+    by_source: dict[str, list] = {}
+    for m in local:
+        by_source.setdefault(m.source, []).append(m)
+
+    source_order = ["ollama", "mlx", "lmstudio"]
+    source_labels = {
+        "ollama":   "Ollama  (via Ollama runtime)",
+        "mlx":      "MLX  (Apple Silicon native — fastest)",
+        "lmstudio": "LM Studio",
+    }
+
+    for source in source_order:
+        group = by_source.get(source, [])
+        if not group:
+            continue
+
+        label = source_labels.get(source, source)
+        t = Table(
+            title=f"[bold]{label}[/bold]",
+            box=_box.SIMPLE_HEAD,
+            show_lines=False,
+            title_justify="left",
+            pad_edge=False,
+            min_width=72,
+        )
+        t.add_column("Model",    style="cyan bold", no_wrap=True)
+        t.add_column("Size",     justify="right",   no_wrap=True,  style="dim", min_width=6)
+        t.add_column("Params",   justify="right",   no_wrap=True,  style="dim", min_width=5)
+        t.add_column("Quant",    justify="center",  no_wrap=True,  style="dim", min_width=7)
+        t.add_column("Ctx",      justify="right",   no_wrap=True,  style="dim", min_width=5)
+        t.add_column("Tier",     justify="center",  no_wrap=True,  min_width=4)
+        t.add_column("MMLU",     justify="right",   no_wrap=True,  min_width=5)
+        t.add_column("Code",     justify="right",   no_wrap=True,  min_width=5)
+        t.add_column("Note",     no_wrap=True,      style="dim")
+
+        for m in sorted(group, key=lambda x: x.id):
+            q = m.quality
+
+            tier_cell = Text.from_markup(tier_badge(q.tier)) if q else Text("?", style="dim")
+            mmlu_str  = f"{q.mmlu:.0f}%" if (q and q.mmlu)      else "—"
+            code_str  = f"{q.humaneval:.0f}%" if (q and q.humaneval) else "—"
+            note_str  = (q.note[:52] + "…") if (q and len(q.note) > 53) else (q.note if q else "")
+            size_str  = f"{m.size_gb:.1f}G"  if m.size_gb         else "—"
+            param_str = m.parameter_size      or "—"
+            quant_str = m.quantization        or "—"
+            ctx_str   = (
+                f"{m.context_length // 1000}K" if (m.context_length and m.context_length >= 1000)
+                else (str(m.context_length) if m.context_length else "—")
+            )
+
+            model_cell = m.id
+            if m.mlx_available and source == "ollama":
+                model_cell += "  [dim green]✦MLX[/dim green]"
+
+            t.add_row(model_cell, size_str, param_str, quant_str, ctx_str,
+                      tier_cell, mmlu_str, code_str, note_str)
+
+        console.print(t)
+        console.print()
+
+    total = len(local)
+    console.print(
+        f"[dim]{total} model(s) on device  ·  "
+        f"[bold]autotune pull[/bold] to add more  ·  "
+        f"[bold]autotune chat --model <id>[/bold] to chat[/dim]"
+    )
+    console.print(
+        "[dim]Tier S→D, MMLU = broad knowledge %, Code = HumanEval pass@1  "
+        "(public benchmarks, ~4-bit quant unless noted)[/dim]\n"
+    )
 
 
 # ---------------------------------------------------------------------------

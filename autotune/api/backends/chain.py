@@ -370,6 +370,12 @@ class BackendChain:
             options: dict = dict(ollama_options or {})
             if num_ctx is not None:
                 options["num_ctx"] = num_ctx
+            # repeat_penalty must live inside the Ollama options dict — Ollama
+            # does NOT honor the top-level OpenAI `repetition_penalty` parameter.
+            # Without this, any repetition_penalty setting (including the fast
+            # profile's value) is silently ignored, causing infinite repeat loops.
+            if repetition_penalty != 1.0:
+                options["repeat_penalty"] = repetition_penalty
             if options:
                 extra_body["options"] = options
             extra_body["keep_alive"] = "-1"   # keep model in VRAM/unified-memory
