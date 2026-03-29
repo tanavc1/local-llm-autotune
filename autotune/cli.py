@@ -155,6 +155,54 @@ def models() -> None:
 
 
 # ---------------------------------------------------------------------------
+# `autotune pull`
+# ---------------------------------------------------------------------------
+
+@cli.command("pull")
+@click.argument("model", required=False, default=None)
+@click.option(
+    "--list", "show_list",
+    is_flag=True, default=False,
+    help="Show popular models you can pull instead of downloading one.",
+)
+def pull(model: Optional[str], show_list: bool) -> None:
+    """Download an Ollama model directly from within autotune.
+
+    MODEL is an Ollama model tag, e.g. llama3.2, phi4-mini, qwen2.5:14b.
+    After downloading you can chat with it immediately:
+
+    \b
+      autotune pull llama3.2
+      autotune chat --model llama3.2
+
+    Run without arguments (or with --list) to browse popular models.
+    """
+    from autotune.api.ollama_pull import (
+        OllamaNotRunningError, PullError,
+        print_popular_models, pull_model,
+    )
+
+    if show_list or not model:
+        print_popular_models(console)
+        if not model:
+            return
+
+    try:
+        pull_model(model, console)
+        console.print(
+            f"[dim]Start chatting:  [bold]autotune chat --model {model}[/bold][/dim]"
+        )
+    except OllamaNotRunningError as e:
+        console.print(f"[red]Ollama not running:[/red] {e}")
+        raise SystemExit(1)
+    except PullError as e:
+        console.print(f"[red]Pull failed:[/red] {e}")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
 # `autotune session`
 # ---------------------------------------------------------------------------
 
@@ -1400,20 +1448,42 @@ def serve(host: str, port: int, reload: bool) -> None:
 )
 @click.option("--system", "-s", default=None, metavar="TEXT", help="System prompt.")
 @click.option("--conv-id", default=None, metavar="ID", help="Resume an existing conversation.")
-def chat(model: str, profile: str, system: Optional[str], conv_id: Optional[str]) -> None:
+@click.option(
+    "--no-optimize", "no_optimize",
+    is_flag=True, default=False,
+    help="Disable real-time hardware/context optimization (use static profile settings).",
+)
+def chat(
+    model: str,
+    profile: str,
+    system: Optional[str],
+    conv_id: Optional[str],
+    no_optimize: bool,
+) -> None:
     """Start an optimized terminal chat session with any model.
 
     The chat connects directly to Ollama / LM Studio / HuggingFace Inference API
     (whichever is available) without needing `autotune serve` to be running.
+
+    Real-time optimization runs by default: the session monitors RAM, thermals,
+    and token throughput, and adjusts context size and KV precision automatically
+    when pressure builds.  Use --no-optimize to disable this.
 
     \b
     Examples:
       autotune chat --model llama3.2
       autotune chat --model Qwen/Qwen2.5-7B-Instruct --profile fast
       autotune chat --model llama3.2 --system "You are a concise assistant"
+      autotune chat --model phi4-mini --no-optimize
     """
     from autotune.api.chat import start_chat
-    start_chat(model_id=model, profile=profile, system_prompt=system, conv_id=conv_id)
+    start_chat(
+        model_id=model,
+        profile=profile,
+        system_prompt=system,
+        conv_id=conv_id,
+        optimize=not no_optimize,
+    )
 
 
 # ---------------------------------------------------------------------------

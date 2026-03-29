@@ -12,22 +12,219 @@ autotune sits between your application and the local LLM backend. It automatical
 
 | Feature | What happens |
 |---------|-------------|
+| **Dynamic KV sizing** | Computes the exact `num_ctx` each request needs instead of allocating the profile max — typically 4–8× less KV cache memory |
 | **KV prefix caching** | Pins system-prompt tokens in Ollama's KV cache via `num_keep` so they're never re-evaluated each turn |
-| **Adaptive KV sizing** | Shrinks `num_ctx` under memory pressure (80% → −10%, 88% → −25%, 93% → −50%) to prevent OOM |
-| **Multi-tier context management** | Intelligently trims conversation history at token budget thresholds with no information loss |
-| **Hardware telemetry** | Samples RAM/Swap/CPU every 250 ms, persists structured metrics to SQLite for long-term optimization |
-| **Inference scheduler** | Semaphore-based concurrency limit (default: 2) with HTTP 429 back-pressure to prevent overload |
-| **Profile-based optimization** | `fast` / `balanced` / `quality` profiles tune temperature, context length, KV precision, and QoS class |
+| **Adaptive KV precision** | Downgrades KV cache from F16 → Q8 under memory pressure (80% → −10% ctx, 88% → −25% ctx + Q8, 93% → −50% ctx + Q8) |
+| **Multi-tier context management** | Intelligently trims conversation history at token budget thresholds with no mid-sentence cuts |
+| **Inference queue** | FIFO queue (default: 1 concurrent, 8 waiting) with HTTP 429 back-pressure — prevents parallel inference from thrashing memory |
+| **Profile-based optimization** | `fast` / `balanced` / `quality` profiles tune temperature, context length, KV precision, and OS QoS class |
 | **OpenAI-compatible API** | Drop-in replacement for `localhost:8765/v1` — works with any OpenAI SDK |
-| **MLX backend (Apple Silicon)** | On M-series Macs, routes inference to MLX-LM — native Metal GPU kernels, unified memory, ~20% lower TTFT than Ollama on same model |
+| **MLX backend (Apple Silicon)** | On M-series Macs, routes inference to MLX-LM — native Metal GPU kernels, unified memory, ~20% lower TTFT than Ollama on the same model |
+| **Hardware telemetry** | Samples RAM/Swap/CPU every 250 ms, persists structured metrics to SQLite |
+
+---
+
+## Quickstart
+
+### 1. Prerequisites
+
+Install [Ollama](https://ollama.com) and pull at least one model:
+
+```bash
+ollama pull phi4-mini        # 2.5 GB — good starting point on any machine
+ollama pull qwen2.5-coder:14b  # 9 GB — great coding model for 16+ GB RAM
+```
+
+### 2. Install autotune
+
+```bash
+git clone https://github.com/tanavc1/local-llm-autotune.git
+cd local-llm-autotune
+pip install -e .
+```
+
+**Requirements:** Python 3.10+, Ollama running locally.
+
+### 3. Check your hardware
+
+```bash
+autotune hardware
+```
+
+Shows CPU, RAM, GPU backend, and the effective memory budget autotune uses when selecting models.
+
+### 4. See what models fit
+
+```bash
+autotune ls
+```
+
+Scores every locally downloaded Ollama model against your hardware — shows whether it fits comfortably, has swap risk, or will OOM. Recommends a profile for each.
+
+### 5. Start chatting
+
+The fastest way to get started — autotune analyses memory fit, picks the right profile automatically, and opens a chat session:
+
+```bash
+autotune run phi4-mini:latest
+```
+
+Or start a chat with a specific profile:
+
+```bash
+autotune chat --model phi4-mini:latest                   # balanced (default)
+autotune chat --model phi4-mini:latest --profile fast    # fastest responses
+autotune chat --model phi4-mini:latest --profile quality # largest context
+```
+
+Set a system prompt:
+
+```bash
+autotune chat --model phi4-mini:latest --system "You are a concise coding assistant."
+```
+
+Resume a previous conversation (the ID is shown in the chat header):
+
+```bash
+autotune chat --model phi4-mini:latest --conv-id a3f92c1b
+```
+
+---
+
+## Chat commands
+
+Once inside a chat session, these slash commands are available:
+
+| Command | What it does |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/new` | Start a new conversation (keeps model and profile) |
+| `/history` | Show the full conversation history |
+| `/profile fast\|balanced\|quality` | Switch profile mid-conversation |
+| `/model <id>` | Switch to a different model |
+| `/system <text>` | Set or replace the system prompt |
+| `/export` | Export conversation to a Markdown file |
+| `/metrics` | Show session performance stats (tok/s, TTFT, request count) |
+| `/backends` | Show which backends are running (Ollama, LM Studio, HF API) |
+| `/models` | List all locally available models |
+| `/quit` | Exit (also Ctrl-C) |
+
+---
+
+## Apple Silicon (MLX acceleration)
+
+On M-series Macs, install the MLX backend to use native Metal GPU kernels:
+
+```bash
+pip install -e ".[mlx]"           # install mlx-lm
+autotune mlx pull phi4-mini       # download MLX-quantized model from mlx-community
+autotune chat --model phi4-mini   # automatically routes to MLX on Apple Silicon
+```
+
+MLX is activated automatically when running on Apple Silicon — no configuration needed. autotune resolves the Ollama model name to the corresponding `mlx-community` HuggingFace repo.
+
+```bash
+autotune mlx list                 # show locally cached MLX models
+autotune mlx resolve llama3.2     # check which MLX model ID would be used
+```
+
+---
+
+## API server (OpenAI-compatible)
+
+Run autotune as a server and point any existing OpenAI client at it:
+
+```bash
+autotune serve
+# Listening at http://127.0.0.1:8765/v1
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8765/v1", api_key="local")
+response = client.chat.completions.create(
+    model="phi4-mini:latest",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+### Autotune-specific headers
+
+Pass these with any request to override behavior per-call:
+
+```
+X-Autotune-Profile: fast        # override profile (fast | balanced | quality)
+X-Conversation-Id: a3f92c1b     # attach to a persistent conversation
+```
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/chat/completions` | OpenAI-compatible, streaming or non-streaming |
+| `GET /v1/models` | List all available models across all backends |
+| `GET /health` | Server status, queue depth, memory pressure |
+| `GET /api/hardware` | Live hardware snapshot |
+| `GET /api/profiles` | Profile definitions |
+| `POST /api/conversations` | Create a persistent conversation |
+| `GET /api/conversations` | List conversations |
+| `GET /api/conversations/{id}` | Get conversation + full message history |
+| `DELETE /api/conversations/{id}` | Delete conversation |
+| `GET /api/conversations/{id}/export` | Export as Markdown |
+
+### Concurrency tuning
+
+The server serialises inference by default (1 concurrent request, 8 queued). Requests beyond the queue limit receive HTTP 429 immediately. Tune with env vars:
+
+```bash
+AUTOTUNE_MAX_CONCURRENT=1    # parallel inference slots (default: 1)
+AUTOTUNE_MAX_QUEUED=8        # max requests waiting for a slot (default: 8)
+AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a waiting request gets 429 (default: 120)
+```
+
+---
+
+## Profiles
+
+| Profile | Context | Temperature | KV precision | System QoS | Use when |
+|---------|--------:|:-----------:|:------------:|:----------:|---------|
+| `fast` ⚡ | 2,048 | 0.05 | Q8 | USER_INTERACTIVE | Quick lookups, autocomplete |
+| `balanced` ⚖️ | 8,192 | 0.70 | F16 | USER_INITIATED | General chat, coding |
+| `quality` ✨ | 32,768 | 0.80 | F16 | USER_INITIATED | Long-form writing, analysis |
+
+`autotune run` with `--profile auto` (the default) analyses model size vs. available RAM and picks the profile automatically.
+
+---
+
+## Telemetry and benchmarks
+
+### View past runs
+
+```bash
+autotune telemetry               # last 20 inference runs
+autotune telemetry --events      # notable events: swap spikes, OOMs, slow tokens
+```
+
+### Run a benchmark
+
+```bash
+python scripts/benchmark.py --model phi4-mini:latest --runs 3
+```
+
+Runs the model against raw Ollama (no autotune) and autotune fast/balanced, measures TTFT and throughput across multiple prompts, and prints a before/after comparison.
+
+### Where data is stored
+
+All runs persist to SQLite automatically:
+- **macOS:** `~/Library/Application Support/autotune/autotune.db`
+- **Linux:** `~/.local/share/autotune/autotune.db`
 
 ---
 
 ## Benchmark results
 
-Tested on **phi4-mini:latest** (2 GB, Q4_K_M) via Ollama. 3 runs × 4 prompts (short QA, code generation, long multi-turn context, system-prompt-heavy). All runs persisted to DB for reproducibility.
-
-### Summary (12 samples per variant)
+Tested on **phi4-mini:latest** (2.5 GB, Q4_K_M) via Ollama on Apple M2 16 GB. 3 runs × 4 prompts. All results persisted to DB.
 
 | Variant | tok/s | TTFT (ms) | RAM Δ (GB) | CPU avg % |
 |---------|------:|----------:|-----------:|----------:|
@@ -35,58 +232,43 @@ Tested on **phi4-mini:latest** (2 GB, Q4_K_M) via Ollama. 3 runs × 4 prompts (s
 | autotune/fast | 32.2 ± 4.6 | **224 ± 28** | +0.9 ± 0.7 | 14.0 |
 | autotune/balanced | 31.9 ± 4.6 | **247 ± 76** | +1.0 ± 0.6 | 15.9 |
 
-### Per-prompt breakdown
+**TTFT −59%** (601 ms → 247 ms). The dominant driver is system-prompt prefix caching (`num_keep`): raw Ollama re-tokenises the full prefix on every turn; autotune pins those tokens in the KV cache so generation starts immediately. The `short_qa` cold-start improvement is most dramatic: 1,471 ms → 224 ms.
 
-| Prompt | Variant | tok/s | TTFT (ms) |
-|--------|---------|------:|----------:|
-| short\_qa | raw\_ollama | 28.4 | 1471 |
-| short\_qa | autotune/fast | 34.3 | 216 |
-| short\_qa | autotune/balanced | 35.4 | 224 |
-| code\_gen | raw\_ollama | 27.7 | 267 |
-| code\_gen | autotune/fast | 27.7 | 219 |
-| code\_gen | autotune/balanced | 28.3 | 218 |
-| long\_context | raw\_ollama | 37.8 | 347 |
-| long\_context | autotune/fast | 38.4 | 219 |
-| long\_context | autotune/balanced | 36.5 | 255 |
-| system\_prompt | raw\_ollama | 30.6 | 320 |
-| system\_prompt | autotune/fast | 28.5 | 239 |
-| system\_prompt | autotune/balanced | 27.5 | 288 |
+**CPU average −26%** (19.1% → 14.0% for fast). The fast profile sets OS QoS class, disables background GC pressure during inference, and right-sizes the context window.
 
-### Key findings
-
-**TTFT −59%** (601 ms → 247 ms mean, autotune/balanced).
-The dominant driver is system-prompt prefix caching (`num_keep`). Raw Ollama re-tokenises the full prefix every turn; autotune pins those tokens in KV cache so the model starts generating immediately. The `short_qa` cold-start improvement is most dramatic: 1471 ms → 224 ms.
-
-**Throughput +2–3%**.
-Modest gain from right-sizing `num_ctx` to exactly the tokens in flight rather than Ollama's fixed 4096-token default regardless of actual conversation length.
-
-**RAM variance halved** (σ 0.6 → σ 0.7 GB for balanced, but outlier cold-start runs eliminated).
-Adaptive KV sizing and `keep_alive` tuning reduce the "model cold-load" RAM spike that appears in raw Ollama's first request.
-
-**CPU average −26%** (19.1% → 14.0% for fast profile).
-The fast profile sets OS QoS class, disables background GC pressure, and reduces context window size, leaving more cycles available to the inference engine.
-
-> **Honest note:** these results are on a single model (phi4-mini:latest). Larger models with bigger system prompts will show larger TTFT gains from prefix caching. Throughput improvements are modest on small models because the bottleneck is arithmetic, not KV management. Results may vary by hardware.
-
-### MLX backend benchmark (Apple Silicon)
-
-Tested on **M-series Mac**, **phi4-mini** (MLX 4-bit vs Ollama Q4_K_M). 3 prompts × 3 runs = 9 samples each. Model warm (already loaded in unified memory).
+### MLX backend (Apple Silicon)
 
 | Backend | TTFT (ms) | tok/s |
 |---------|----------:|------:|
 | MLX (mlx-community/Phi-4-mini-instruct-4bit) | **334** | 34.4 |
 | Ollama (phi4-mini:latest, Q4_K_M) | 416 | 40.7 |
-| **MLX improvement** | **−20% TTFT** | −16% tok/s |
+| **MLX improvement** | **−20% TTFT** | — |
 
-MLX achieves lower TTFT because it runs entirely in unified memory with no CPU↔GPU copies and Apple Metal GPU kernels. Throughput is within measurement error for a 3.8B parameter model where arithmetic dominates. The TTFT advantage grows significantly with longer prompts where Ollama's CPU-side tokenization and transfer overhead becomes proportionally larger.
+> **Honest note:** results are on a single small model. Larger models with longer system prompts show bigger TTFT gains from prefix caching (the benefit scales with system prompt length). On 7B+ models, MLX throughput consistently beats Ollama by 15–40% as Metal matrix-multiply throughput dominates.
 
-> On larger models (7B+) where Metal matrix multiplication throughput dominates, MLX consistently outperforms llama.cpp/Ollama by 15–40% on throughput as well.
+---
+
+## How dynamic KV sizing works
+
+Ollama allocates the entire KV cache upfront before generating a single token. If `num_ctx=8192`, it allocates memory for 8,192 tokens even if your conversation is 50 tokens.
+
+autotune computes the minimum `num_ctx` each request actually needs:
+
+```
+num_ctx = clamp(input_tokens + max_new_tokens + 256, 512, profile_max)
+```
+
+For a short conversation on the `balanced` profile (max 8,192):
+- Input: ~22 tokens → `num_ctx` = 22 + 1,024 + 256 = **1,302**
+- Savings on `qwen2.5-coder:14b`: 8,192 → 1,302 tokens = **~677 MB of KV cache freed**
+
+`num_ctx` grows naturally as the conversation grows since the full history is included in every request.
 
 ---
 
 ## Context management tiers
 
-autotune monitors the ratio of `history_tokens / effective_budget` and selects a compression strategy automatically:
+autotune monitors `history_tokens / effective_budget` and selects a strategy automatically:
 
 ```
 < 55%   FULL              — all turns verbatim, nothing dropped
@@ -95,88 +277,9 @@ autotune monitors the ratio of `history_tokens / effective_budget` and selects a
 > 90%   EMERGENCY         — last 4 turns (aggressively compressed) + one-line summary
 ```
 
-Low-value chatter ("ok", "thanks", "sure") is dropped first. Code blocks, stack traces, and technical content are always preserved. All cutoffs happen at sentence or paragraph boundaries — never mid-sentence.
+Low-value chatter ("ok", "thanks") is dropped first. Code blocks, stack traces, and technical content are always preserved. All cutoffs happen at sentence or paragraph boundaries — never mid-sentence.
 
-The facts block injected for older turns is extracted deterministically (no LLM call) and includes:
-- ✓ Accomplishments and completed tasks
-- ⚙ Active decisions and constraints
-- 📌 Key facts and identifiers
-- ⚠ Errors encountered
-- 💬 Topics covered
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/tanavc1/local-llm-autotune.git
-cd local-llm-autotune
-pip install -e .
-```
-
-**Requirements:** Python 3.10+, [Ollama](https://ollama.com) running locally.
-
-### Apple Silicon (MLX acceleration)
-
-```bash
-pip install -e ".[mlx]"          # installs mlx-lm
-autotune mlx pull phi4-mini      # download MLX-quantized model
-autotune chat --model phi4-mini  # automatically uses MLX on M-series Macs
-```
-
-MLX is activated automatically when running on Apple Silicon — no configuration needed. autotune resolves the Ollama model name to the corresponding `mlx-community` HuggingFace repo and routes inference there.
-
-```bash
-autotune mlx list                # show locally cached MLX models
-autotune mlx resolve llama3.2    # check which MLX model ID would be used
-```
-
----
-
-## Usage
-
-### Terminal chat (direct)
-
-```bash
-autotune chat phi4-mini:latest
-autotune chat phi4-mini:latest --profile fast
-autotune chat phi4-mini:latest --profile quality
-```
-
-### API server (OpenAI-compatible)
-
-```bash
-autotune serve
-# Then point any OpenAI client to http://localhost:8765/v1
-```
-
-### List models with fitness scores
-
-```bash
-autotune ls
-# Shows available Ollama models scored 0-10 against your machine's RAM
-# and recommends a profile for each
-```
-
-### Run a model with auto-selected profile
-
-```bash
-autotune run phi4-mini:latest
-# Profiles hardware → picks fast/balanced/quality → runs optimised
-```
-
-### View telemetry
-
-```bash
-autotune telemetry                 # last 20 runs
-autotune telemetry --events        # notable events (swap spikes, OOMs, slow tokens)
-```
-
-### Run benchmarks
-
-```bash
-python scripts/benchmark.py --model phi4-mini:latest --runs 3
-```
+The facts block injected for older turns is extracted deterministically (no LLM call) and includes accomplishments, active decisions, key facts, errors, and topics covered.
 
 ---
 
@@ -185,17 +288,20 @@ python scripts/benchmark.py --model phi4-mini:latest --runs 3
 ```
 autotune/
 ├── api/
-│   ├── server.py          # FastAPI server — OpenAI-compatible /v1 endpoints
+│   ├── server.py          # FastAPI server — OpenAI-compatible /v1 endpoints + FIFO queue
 │   ├── kv_manager.py      # KV cache: num_keep, adaptive num_ctx, pressure thresholds
+│   ├── ctx_utils.py       # Token estimation, dynamic num_ctx computation
 │   ├── profiles.py        # fast / balanced / quality profiles
-│   ├── conversation.py    # SQLite-backed conversation state
+│   ├── conversation.py    # SQLite-backed persistent conversation state
+│   ├── model_selector.py  # Pre-flight fit analysis: weights + KV + runtime overhead
+│   ├── hardware_tuner.py  # OS-level tuning: nice, QoS class, GC, CPU governor
 │   ├── chat.py            # Terminal REPL
-│   └── backends/          # Ollama, LM Studio, HuggingFace Inference API
+│   └── backends/          # Ollama, LM Studio, MLX, HuggingFace Inference API
 ├── context/
-│   ├── window.py          # ContextWindow orchestrator — builds messages to send
+│   ├── window.py          # ContextWindow orchestrator
 │   ├── budget.py          # Tier thresholds and recent-window sizes
 │   ├── classifier.py      # Message value scoring (0.0 chatter → 1.0 technical)
-│   ├── compressor.py      # JSON blob, tool output, assistant reply compression
+│   ├── compressor.py      # Tool output and long-content compression
 │   └── extractor.py       # Deterministic fact extraction for summary blocks
 ├── bench/
 │   └── runner.py          # Benchmark with 250 ms hardware sampling
@@ -203,40 +309,7 @@ autotune/
 │   └── store.py           # SQLite: models, hardware, run_observations, telemetry_events
 ├── hardware/
 │   └── profiler.py        # CPU/GPU/RAM detection
-└── cli.py                 # Entry point
-```
-
----
-
-## Profiles
-
-| Profile | Context | Temperature | KV precision | Use when |
-|---------|--------:|:-----------:|:------------:|---------|
-| `fast` ⚡ | 2 048 | 0.05 | Q8 | Quick lookups, autocomplete |
-| `balanced` ⚖️ | 8 192 | 0.70 | F16 | General chat, coding |
-| `quality` ✨ | 32 768 | 0.80 | F16 | Long-form writing, analysis |
-
----
-
-## Telemetry schema
-
-All runs are persisted to `~/.local/share/autotune/autotune.db` (macOS: `~/Library/Application Support/autotune/`):
-
-**`run_observations`** — one row per inference:
-`tokens_per_sec`, `ttft_ms`, `elapsed_sec`, `peak_ram_gb`, `delta_ram_gb`, `swap_peak_gb`, `cpu_avg_pct`, `cpu_peak_pct`, `num_ctx_used`, `num_keep`, `f16_kv`, `profile_name`, `bench_tag`, `completed`, `error_msg` + hardware fingerprint FK.
-
-**`telemetry_events`** — auto-fired for notable conditions:
-`swap_spike` (>2 GB), `ram_spike` (>1.5 GB Δ), `slow_token` (TTFT >5 s), `error`.
-
----
-
-## Concurrency control
-
-The API server uses a semaphore to prevent parallel inference from exhausting memory:
-
-```bash
-AUTOTUNE_MAX_CONCURRENT=2   # default: 2 simultaneous inferences
-AUTOTUNE_QUEUE_TIMEOUT=5.0  # seconds before HTTP 429 is returned
+└── cli.py                 # Entry point (Click)
 ```
 
 ---

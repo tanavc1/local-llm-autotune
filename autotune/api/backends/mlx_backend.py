@@ -429,3 +429,8 @@ def get_mlx_backend() -> MLXBackend:
     if _backend is None:
         _backend = MLXBackend()
     return _backend
+
+
+def is_mlx_model_loaded(mlx_id: str) -> bool:
+    """Return True if mlx_id is already resident in unified memory."""
+    return _model_cache is not None and _model_cache.model_id == mlx_id
