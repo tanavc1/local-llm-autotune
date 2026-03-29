@@ -342,7 +342,7 @@ async def run_comparison(
 
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}", no_wrap=True),
+        TextColumn("[progress.description]{task.description}"),
         BarColumn(bar_width=28),
         MofNCompleteColumn(),
         TimeElapsedColumn(),

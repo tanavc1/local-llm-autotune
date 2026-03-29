@@ -199,7 +199,7 @@ def pull_model(model_id: str, console: Optional[Console] = None) -> bool:
 
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}", no_wrap=True),
+        TextColumn("[progress.description]{task.description}"),
         BarColumn(bar_width=32),
         DownloadColumn(),
         TransferSpeedColumn(),
