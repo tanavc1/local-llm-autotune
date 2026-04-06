@@ -47,20 +47,28 @@ PROFILES: dict[str, Profile] = {
     "fast": Profile(
         name="fast",
         label="⚡ Fast",
-        max_new_tokens=384,
+        # 512 vs 384: enough for code functions and non-trivial answers without
+        # truncation artifacts that cause models to spiral into repetition.
+        max_new_tokens=512,
         temperature=0.1,
         top_p=0.9,
-        repetition_penalty=1.1,
+        # 1.15: stronger than default (1.0) — prevents the repetition loops
+        # where models fill remaining tokens with the same word. Passed to
+        # Ollama as `repeat_penalty` inside the options dict (not the
+        # top-level param Ollama ignores).
+        repetition_penalty=1.15,
         max_context_tokens=2048,
         system_prompt_cache=True,
         qos_class="USER_INTERACTIVE",
-        preferred_quants=["Q4_K_S", "Q4_K_M", "Q3_K_M", "Q2_K"],
+        # Removed Q3_K_M and Q2_K from fast preferred: these cause unusable output
+        # on small models and should never be actively preferred.
+        preferred_quants=["Q4_K_S", "Q4_K_M", "Q5_K_M"],
         kv_cache_precision="q8",
         disable_gc_during_inference=True,
         speculative_decoding=False,
         backend_preference=["mlx", "ollama", "lmstudio", "hf_api"],
         ollama_keep_alive="-1",
-        request_timeout_sec=30.0,
+        request_timeout_sec=60.0,
         description="Lowest latency. Short context, greedy decoding, high priority scheduling.",
     ),
 
@@ -70,7 +78,7 @@ PROFILES: dict[str, Profile] = {
         max_new_tokens=1024,
         temperature=0.7,
         top_p=0.95,
-        repetition_penalty=1.05,
+        repetition_penalty=1.08,
         max_context_tokens=8192,
         system_prompt_cache=True,
         qos_class="USER_INITIATED",

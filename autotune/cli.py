@@ -85,9 +85,26 @@ def recommend(
     from autotune.models.registry import MODEL_REGISTRY
 
     # ── Hardware profiling ──────────────────────────────────────────────
-    console.rule("[bold blue]autotune[/bold blue]")
-    with console.status("[cyan]Profiling hardware…[/cyan]", spinner="dots"):
+    console.rule("[bold blue]autotune recommend[/bold blue]")
+    console.print()
+    console.print("[bold]Step 1 of 2[/bold]  Detecting your hardware…")
+    console.print("  [dim]Scanning CPU model and core count, available RAM, GPU backend…[/dim]")
+    with console.status(
+        "  [dim]Reading /proc/cpuinfo, sysctl, Metal/CUDA device info…[/dim]",
+        spinner="dots",
+    ):
         hw = profile_hardware()
+
+    gpu_str = (
+        f"{hw.gpu.name} ({hw.gpu.backend.upper()})"
+        if hw.gpu else "CPU-only (no GPU detected)"
+    )
+    mem_avail = hw.memory.available_gb
+    console.print(
+        f"  [green]✓[/green]  {hw.cpu.brand[:42]}  /  "
+        f"{hw.memory.total_gb:.0f} GB RAM ({mem_avail:.1f} GB free)  /  {gpu_str}"
+    )
+    console.print()
 
     if show_hardware:
         print_hardware_profile(hw)
@@ -109,7 +126,25 @@ def recommend(
 
     # ── Generate recommendations ────────────────────────────────────────
     modes = list(MODE_WEIGHTS.keys()) if mode == "all" else [mode]
-    with console.status("[cyan]Scoring candidates…[/cyan]", spinner="dots"):
+
+    # Count candidates we'll evaluate
+    from autotune.config.generator import CONTEXT_LENGTHS, GPU_LAYER_FRACTIONS
+    n_models = len(MODEL_REGISTRY) if not model_filter else 1
+    n_quants_avg = 5  # rough average across models
+    n_ctx = len(CONTEXT_LENGTHS)
+    n_gpu = len(GPU_LAYER_FRACTIONS) if hw.has_gpu else 1
+    n_candidates = n_models * n_quants_avg * n_ctx * n_gpu * len(modes)
+
+    console.print(
+        f"[bold]Step 2 of 2[/bold]  Scoring candidate configurations…\n"
+        f"  [dim]Evaluating ~{n_candidates:,} combos "
+        f"(model × quant × context × GPU layers × mode)  "
+        f"against {mem_avail:.1f} GB available…[/dim]"
+    )
+    with console.status(
+        "  [dim]Fitting, stability-scoring, speed-scoring, quality-scoring…[/dim]",
+        spinner="dots",
+    ):
         recs = generate_recommendations(hw, modes=modes, top_n=top)
 
     if model_filter:
@@ -123,6 +158,11 @@ def recommend(
         )
         sys.exit(1)
 
+    total_fitting = sum(len([r for r in recs.values()]) for _ in [recs])
+    console.print(
+        f"  [green]✓[/green]  Done — found recommendations for "
+        f"{len(recs)} mode(s)\n"
+    )
     print_recommendations(recs, modes=modes)
 
 
@@ -136,6 +176,7 @@ def hardware() -> None:
     from autotune.hardware.profiler import profile_hardware
     from autotune.output.formatter import print_hardware_profile
 
+    console.print("[dim]Scanning CPU, RAM, GPU, OS version…[/dim]")
     with console.status("[cyan]Profiling hardware…[/cyan]", spinner="dots"):
         hw = profile_hardware()
 
@@ -297,10 +338,12 @@ def pull(model: Optional[str], show_list: bool) -> None:
         if not model:
             return
 
+    console.print(f"[dim]Checking if Ollama is running…[/dim]")
     try:
         pull_model(model, console)
         console.print(
-            f"[dim]Start chatting:  [bold]autotune chat --model {model}[/bold][/dim]"
+            f"[dim]Start chatting:  [bold]autotune chat --model {model}[/bold]\n"
+            f"           or list models: [bold]autotune ls[/bold][/dim]"
         )
     except OllamaNotRunningError as e:
         console.print(f"[red]Ollama not running:[/red] {e}")
@@ -824,6 +867,7 @@ Be thorough and precise. This is a real production system."""
     "--profile", "-p",
     type=click.Choice(["fast", "balanced", "quality"]),
     default="balanced", show_default=True,
+    help="autotune optimization profile to use.",
 )
 @click.option("--tag", default=None, metavar="NAME",
               help="Label this run (auto-generated if omitted).")
@@ -832,8 +876,12 @@ Be thorough and precise. This is a real production system."""
 @click.option("--no-hw-tuning", is_flag=True, default=False,
               help="Skip OS-level hardware optimizations (for comparison runs).")
 @click.option("--raw", is_flag=True, default=False,
-              help="Hit Ollama with ZERO autotune settings — pure Ollama defaults. "
-                   "Use this to establish a true raw baseline for comparison.")
+              help="Run ONLY raw Ollama defaults — no autotune. "
+                   "Good for establishing a baseline before comparing.")
+@click.option("--duel", is_flag=True, default=False,
+              help="Run BOTH raw Ollama AND autotune back-to-back on the same prompt, "
+                   "then show an immediate side-by-side comparison. "
+                   "This is the recommended way to see the full before/after picture.")
 @click.option("--save/--no-save", default=True,
               help="Save result to DB (default: save).")
 @click.option("--compare", default=None, metavar="TAG_A,TAG_B",
@@ -845,24 +893,40 @@ def bench(
     prompt_file: Optional[str],
     no_hw_tuning: bool,
     raw: bool,
+    duel: bool,
     save: bool,
     compare: Optional[str],
 ) -> None:
-    """Run an intensive benchmark prompt and measure real hardware strain.
+    """Run an intensive benchmark and measure hardware strain.
+
+    There are three ways to use this command:
 
     \b
-    Examples:
-      # Run baseline
-      autotune bench --model phi4-mini:latest --profile balanced --tag baseline
+    1. AUTOTUNE ONLY (default) — run autotune with the chosen profile:
+         autotune bench --model phi4-mini:latest --profile balanced
 
-      # Run with fast profile (less RAM pressure)
-      autotune bench --model phi4-mini:latest --profile fast --tag fast_optimized
+    \b
+    2. RAW OLLAMA ONLY — run pure Ollama defaults, no autotune:
+         autotune bench --model phi4-mini:latest --raw
 
-      # Compare the two
-      autotune bench --compare baseline,fast_optimized
+    \b
+    3. DUEL (recommended) — run both raw and autotune, show comparison:
+         autotune bench --model phi4-mini:latest --duel
+         autotune bench --model phi4-mini:latest --duel --profile fast
+
+    \b
+    4. COMPARE SAVED RUNS — diff two previously saved tags:
+         autotune bench --compare baseline,fast_optimized
+
+    \b
+    Save a run to a named tag and compare later:
+      autotune bench --model phi4-mini:latest --raw --tag my_baseline
+      autotune bench --model phi4-mini:latest --profile fast --tag my_fast
+      autotune bench --compare my_baseline,my_fast
     """
     import asyncio
-    from autotune.bench.runner import run_bench, save_result
+    import psutil as _psutil
+    from autotune.bench.runner import run_bench, run_raw_ollama, save_result
 
     # ── Compare mode ─────────────────────────────────────────────────────
     if compare:
@@ -916,10 +980,7 @@ def bench(
         console.print(t)
         return
 
-    # ── Benchmark run ─────────────────────────────────────────────────────
-    mode_label = "raw_ollama" if raw else profile
-    auto_tag = tag or f"{model.replace(':', '_').replace('/', '_')}_{mode_label}_{int(time.time())}"
-
+    # ── Build prompt ──────────────────────────────────────────────────────
     if prompt_file:
         with open(prompt_file) as f:
             prompt_text = f.read()
@@ -930,31 +991,191 @@ def bench(
         {"role": "system", "content": "You are a senior systems engineer and performance expert. Answer thoroughly and completely. Do not truncate."},
         {"role": "user",   "content": prompt_text},
     ]
-
     prompt_tokens_est = sum(len(m["content"]) // 4 for m in messages)
+
+    ts = int(time.time())
+    vm_before = _psutil.virtual_memory()
+    sw_before = _psutil.swap_memory()
+
+    # ── DUEL MODE — run both raw and autotune, then show comparison ────────
+    if duel:
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.rule import Rule
+        from rich import box
+
+        raw_tag   = tag + "_raw"   if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_raw_{ts}"
+        tuned_tag = tag + "_tuned" if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_{profile}_{ts}"
+
+        console.print()
+        console.print(Panel(
+            f"[bold]DUEL MODE[/bold]  [cyan]{model}[/cyan]  ·  autotune/{profile} vs. raw Ollama\n"
+            f"[dim]Running the same intensive prompt through both configurations.\n"
+            f"Prompt: ~{prompt_tokens_est} tokens  ·  "
+            f"RAM before: {vm_before.used/1024**3:.2f} GB / {vm_before.total/1024**3:.1f} GB[/dim]",
+            border_style="cyan",
+        ))
+        console.print()
+
+        # ── Round 1: Raw Ollama ──────────────────────────────────────────
+        console.print("[bold]Round 1 of 2[/bold]  [red]Raw Ollama[/red]  (zero autotune — factory defaults)")
+        console.print("  [dim]num_ctx=4096, temp=0.8, keep_alive=5m, no HW tuning, no prefix cache[/dim]")
+        with console.status("  [dim]Running raw Ollama inference… (measuring TTFT, tok/s, RAM, CPU…)[/dim]", spinner="dots"):
+            raw_result = asyncio.run(run_raw_ollama(
+                model_id=model,
+                messages=messages,
+                tag=raw_tag,
+            ))
+        if raw_result.error:
+            console.print(f"  [red]✗  Raw Ollama failed:[/red] {raw_result.error}")
+            raise SystemExit(1)
+        console.print(
+            f"  [green]✓[/green]  Done in {raw_result.elapsed_sec:.1f}s — "
+            f"TTFT [yellow]{raw_result.ttft_ms:.0f} ms[/yellow]  "
+            f"tok/s [yellow]{raw_result.tokens_per_sec:.1f}[/yellow]  "
+            f"peak RAM [yellow]{raw_result.ram_peak_gb:.2f} GB[/yellow]  "
+            f"CPU [yellow]{raw_result.cpu_avg_pct:.0f}%[/yellow]"
+        )
+        if save:
+            save_result(raw_result)
+            console.print(f"  [dim]Saved to DB as tag: {raw_tag}[/dim]")
+
+        console.print()
+        console.print("[dim]Cooling down 5 seconds to let RAM settle…[/dim]")
+        import asyncio as _asyncio
+        _asyncio.run(_asyncio.sleep(5))
+        console.print()
+
+        # ── Round 2: Autotune ────────────────────────────────────────────
+        console.print(f"[bold]Round 2 of 2[/bold]  [cyan]autotune/{profile}[/cyan]  (full optimizer stack)")
+        console.print(
+            f"  [dim]Dynamic num_ctx, prefix caching (num_keep), keep_alive=-1, "
+            f"repeat_penalty, QoS={profile.upper()}, GC suspend[/dim]"
+        )
+        with console.status(f"  [dim]Running autotune/{profile} inference…[/dim]", spinner="dots"):
+            tuned_result = asyncio.run(run_bench(
+                model_id=model,
+                messages=messages,
+                profile_name=profile,
+                tag=tuned_tag,
+                apply_hw_tuning=not no_hw_tuning,
+            ))
+        if tuned_result.error:
+            console.print(f"  [red]✗  autotune/{profile} failed:[/red] {tuned_result.error}")
+            raise SystemExit(1)
+        console.print(
+            f"  [green]✓[/green]  Done in {tuned_result.elapsed_sec:.1f}s — "
+            f"TTFT [cyan]{tuned_result.ttft_ms:.0f} ms[/cyan]  "
+            f"tok/s [cyan]{tuned_result.tokens_per_sec:.1f}[/cyan]  "
+            f"peak RAM [cyan]{tuned_result.ram_peak_gb:.2f} GB[/cyan]  "
+            f"CPU [cyan]{tuned_result.cpu_avg_pct:.0f}%[/cyan]"
+        )
+        if save:
+            save_result(tuned_result)
+            console.print(f"  [dim]Saved to DB as tag: {tuned_tag}[/dim]")
+
+        # ── Duel comparison table ────────────────────────────────────────
+        console.print()
+        console.print(Rule("[bold]Duel Results[/bold]", style="dim"))
+        console.print()
+
+        def _pct_change(raw_val: float, tuned_val: float, higher_better: bool) -> str:
+            if raw_val == 0:
+                return "[dim]—[/dim]"
+            pct = (tuned_val - raw_val) / abs(raw_val) * 100
+            improved = (pct > 1 and higher_better) or (pct < -1 and not higher_better)
+            degraded = (pct < -1 and higher_better) or (pct > 1 and not higher_better)
+            sign = "+" if pct >= 0 else ""
+            if improved:
+                return f"[bold green]{sign}{pct:.1f}%[/bold green]"
+            elif degraded:
+                return f"[bold red]{sign}{pct:.1f}%[/bold red]"
+            return f"[dim]{sign}{pct:.1f}%[/dim]"
+
+        t = Table(box=box.ROUNDED, show_header=True, header_style="bold", expand=False)
+        t.add_column("Metric",           style="bold", min_width=26)
+        t.add_column("Raw Ollama",        justify="right", style="yellow")
+        t.add_column(f"autotune/{profile}", justify="right", style="cyan")
+        t.add_column("Change",            justify="right")
+        t.add_column("Better?",           justify="center")
+
+        metrics_cfg = [
+            ("TTFT (ms)       ↓ lower=better",  raw_result.ttft_ms,       tuned_result.ttft_ms,       False, ".0f"),
+            ("Throughput (tok/s)  ↑ higher=better", raw_result.tokens_per_sec, tuned_result.tokens_per_sec, True, ".1f"),
+            ("Total time (s)",                  raw_result.elapsed_sec,   tuned_result.elapsed_sec,   False, ".2f"),
+            ("Peak RAM (GB)   ↓ lower=better",  raw_result.ram_peak_gb,   tuned_result.ram_peak_gb,   False, ".3f"),
+            ("RAM delta (GB)  ↓ lower=better",  raw_result.delta_ram_gb,  tuned_result.delta_ram_gb,  False, "+.3f"),
+            ("Swap peak (GB)  ↓ lower=better",  raw_result.swap_peak_gb,  tuned_result.swap_peak_gb,  False, ".3f"),
+            ("CPU avg (%)     ↓ lower=better",  raw_result.cpu_avg_pct,   tuned_result.cpu_avg_pct,   False, ".1f"),
+            ("num_ctx used",                    float(raw_result.num_ctx_used or 4096),
+                                                float(tuned_result.num_ctx_used or 0),               False, ".0f"),
+        ]
+
+        for label, rv, tv, hb, fmt in metrics_cfg:
+            if rv == 0 and tv == 0:
+                continue
+            rv_str = f"{rv:{fmt}}"
+            tv_str = f"{tv:{fmt}}" if tv != 0 else "—"
+            delta  = _pct_change(rv, tv, hb)
+            if rv == 0:
+                better = "[dim]—[/dim]"
+            else:
+                pct = (tv - rv) / abs(rv) * 100
+                improved = (pct > 1 and hb) or (pct < -1 and not hb)
+                degraded = (pct < -1 and hb) or (pct > 1 and not hb)
+                better = "[green]✓ better[/green]" if improved else "[red]✗ worse[/red]" if degraded else "[dim]≈ same[/dim]"
+            t.add_row(label, rv_str, tv_str, delta, better)
+
+        console.print(t)
+
+        # KV settings used by autotune
+        if tuned_result.num_ctx_used and tuned_result.num_keep_used is not None:
+            console.print(
+                f"\n[dim]autotune used: num_ctx={tuned_result.num_ctx_used:,}  "
+                f"num_keep={tuned_result.num_keep_used}  "
+                f"f16_kv={'yes' if tuned_result.f16_kv_used else 'no (Q8)'}[/dim]"
+            )
+        if save:
+            console.print(
+                f"\n[dim]Both runs saved. Compare later with:\n"
+                f"  autotune bench --compare {raw_tag},{tuned_tag}[/dim]"
+            )
+        return
+
+    # ── SINGLE MODE — run either raw or autotune ──────────────────────────
+    mode_label = "raw_ollama" if raw else profile
+    auto_tag = tag or f"{model.replace(':', '_').replace('/', '_')}_{mode_label}_{ts}"
 
     console.print()
     if raw:
-        console.print(f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  profile=[red]RAW OLLAMA (no autotune)[/red]  tag=[dim]{auto_tag}[/dim]")
-        console.print(f"[dim]Ollama defaults: num_ctx=4096, temp=0.8, no HW tuning, no keep_alive override[/dim]")
+        console.print(
+            f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  "
+            f"profile=[red]RAW OLLAMA (no autotune)[/red]  tag=[dim]{auto_tag}[/dim]"
+        )
+        console.print(
+            "[dim]Running with Ollama factory defaults: num_ctx=4096, temp=0.8, "
+            "keep_alive=5m, no HW tuning, no prefix cache[/dim]"
+        )
     else:
-        console.print(f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  profile=[yellow]{profile}[/yellow]  tag=[dim]{auto_tag}[/dim]")
-        console.print(f"[dim]Prompt: ~{prompt_tokens_est} tokens  │  HW tuning: {'off' if no_hw_tuning else 'on'}[/dim]")
+        console.print(
+            f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  "
+            f"profile=[yellow]{profile}[/yellow]  tag=[dim]{auto_tag}[/dim]"
+        )
+        console.print(
+            f"[dim]Running autotune/{profile}: dynamic num_ctx, prefix caching, keep_alive=-1, "
+            f"repeat_penalty, QoS tuning  ·  Prompt: ~{prompt_tokens_est} tokens  "
+            f"·  HW tuning: {'off (--no-hw-tuning)' if no_hw_tuning else 'on'}[/dim]"
+        )
     console.print()
 
-    import psutil
-    vm = psutil.virtual_memory()
-    sw = psutil.swap_memory()
     console.print(
-        f"[dim]System before:  RAM {vm.percent:.1f}%  "
-        f"({vm.used/1024**3:.2f} GB used / {vm.total/1024**3:.1f} GB)  "
-        f"swap {sw.used/1024**3:.2f} GB[/dim]"
+        f"[dim]RAM before: {vm_before.used/1024**3:.2f} GB / {vm_before.total/1024**3:.1f} GB  "
+        f"·  Swap: {sw_before.used/1024**3:.2f} GB[/dim]\n"
     )
-    console.print()
+    console.print("[dim]Running inference (measuring TTFT, tok/s, RAM, CPU every 250ms)…[/dim]")
 
-    with console.status("[bold cyan]Running inference…[/bold cyan]", spinner="dots"):
+    with console.status("[bold cyan]Inference in progress…[/bold cyan]", spinner="dots"):
         if raw:
-            from autotune.bench.runner import run_raw_ollama
             result = asyncio.run(run_raw_ollama(
                 model_id=model,
                 messages=messages,
@@ -973,7 +1194,7 @@ def bench(
         console.print(f"[red]Error:[/red] {result.error}")
         raise SystemExit(1)
 
-    # ── Results table ────────────────────────────────────────────────────
+    # ── Single-run results table ─────────────────────────────────────────
     from rich.table import Table
     from rich.panel import Panel
     from rich import box
@@ -1300,10 +1521,18 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
     from autotune.api.chat import start_chat
     from autotune.api.model_selector import ModelSelector, FitClass
 
+    console.print(f"\n[bold]Pre-flight check for[/bold] [cyan]{model_name}[/cyan]\n")
+
+    console.print("  [dim]Detecting hardware…[/dim]")
     hw           = profile_hardware()
     available_gb = hw.effective_memory_gb
     total_gb     = hw.memory.total_gb
     sel          = ModelSelector(available_gb=available_gb, total_ram_gb=total_gb)
+
+    console.print(
+        f"  [green]✓[/green]  {hw.cpu.brand[:40]}  /  "
+        f"{total_gb:.0f} GB RAM  /  {available_gb:.1f} GB available"
+    )
 
     # ── Fetch model info from Ollama ─────────────────────────────────────
     size_gb:   float          = 0.0
@@ -1311,6 +1540,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
     quant_str: str            = "unknown"
     modelinfo: dict           = {}
 
+    console.print("  [dim]Querying Ollama for model info…[/dim]")
     try:
         tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
         for m in tags_resp.json().get("models", []):
@@ -1318,7 +1548,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
                 size_gb = m.get("size", 0) / 1024**3
                 break
     except Exception:
-        console.print("[red]Ollama is not running.[/red]  Start with: ollama serve")
+        console.print("  [red]✗  Ollama is not running.[/red]  Start with: [bold]ollama serve[/bold]")
         raise SystemExit(1)
 
     try:
@@ -1345,12 +1575,18 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
 
     if size_gb == 0.0:
         console.print(
-            f"[yellow]Model {model_name!r} not found in Ollama.[/yellow]  "
-            f"Pull it first: [cyan]ollama pull {model_name}[/cyan]"
+            f"  [red]✗[/red]  Model [cyan]{model_name!r}[/cyan] not found in Ollama.\n"
+            f"  Pull it first: [bold]ollama pull {model_name}[/bold]"
         )
         raise SystemExit(1)
 
+    console.print(
+        f"  [green]✓[/green]  Found [cyan]{model_name}[/cyan]  "
+        f"({size_gb:.1f} GB on disk, quant={quant_str})"
+    )
+
     # ── Pre-flight fit analysis ──────────────────────────────────────────
+    console.print("  [dim]Running memory fit analysis (weights + KV cache + runtime overhead)…[/dim]")
     report = sel.assess(
         model_name=model_name,
         size_gb=size_gb,

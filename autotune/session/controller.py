@@ -248,22 +248,65 @@ class SessionController:
         self._stop = False
 
     def run(self) -> None:
+        import psutil as _psutil
+
         # ── 1. Profile hardware ─────────────────────────────────────────
-        with console.status("[cyan]Profiling hardware…[/cyan]", spinner="dots"):
+        console.print()
+        console.print("[bold]Starting autotune live session[/bold]\n")
+        console.print("[dim]Step 1 of 4[/dim]  Detecting hardware…")
+        with console.status("  [dim]Scanning CPU, RAM, GPU, OS…[/dim]", spinner="dots"):
             hw = profile_hardware()
 
-        # ── 2. Build initial config ─────────────────────────────────────
-        with console.status("[cyan]Selecting initial configuration…[/cyan]", spinner="dots"):
+        gpu_str = (
+            f"{hw.gpu.name} ({hw.gpu.backend.upper()})"
+            if hw.gpu else "CPU-only"
+        )
+        vm = _psutil.virtual_memory()
+        console.print(
+            f"  [green]✓[/green]  {hw.cpu.brand[:40]}  ·  "
+            f"{hw.memory.total_gb:.0f} GB RAM ({vm.available/1024**3:.1f} GB free)  ·  {gpu_str}"
+        )
+
+        # ── 2. Detect active LLMs ───────────────────────────────────────
+        console.print("\n[dim]Step 2 of 4[/dim]  Scanning for running LLMs…")
+        from .monitor import _query_ollama, _detect_llm_processes
+        with console.status("  [dim]Checking Ollama API, process list…[/dim]", spinner="dots"):
+            ollama_models = _query_ollama()
+            llm_procs = _detect_llm_processes()
+
+        if ollama_models:
+            model_names = ", ".join(m.name for m in ollama_models[:3])
+            console.print(
+                f"  [green]✓[/green]  Ollama running — loaded: [cyan]{model_names}[/cyan]"
+            )
+        elif llm_procs:
+            proc_names = ", ".join(f"{p.runtime} (pid {p.pid})" for p in llm_procs[:2])
+            console.print(f"  [green]✓[/green]  LLM processes detected: {proc_names}")
+        else:
+            console.print(
+                "  [dim]✓[/dim]  No active LLM detected  "
+                "[dim](start one and session will auto-detect it)[/dim]"
+            )
+
+        # ── 3. Build initial config ─────────────────────────────────────
+        console.print("\n[dim]Step 3 of 4[/dim]  Loading recommendation engine…")
+        with console.status("  [dim]Scoring candidates for this hardware…[/dim]", spinner="dots"):
             try:
                 config = _build_session_config(hw, self.model_id, self.mode)
             except Exception as e:
-                console.print(f"[red]Config error: {e}[/red]")
-                console.print("[dim]Run `autotune fetch-many` to populate the model DB first.[/dim]")
+                console.print(f"  [red]✗  Config error: {e}[/red]")
+                console.print("  [dim]Run `autotune fetch-many` to populate the model DB first.[/dim]")
                 return
+
+        console.print(
+            f"  [green]✓[/green]  Session config ready  "
+            f"(mode={self.mode},  "
+            f"budget={hw.effective_memory_gb:.1f} GB)"
+        )
 
         start_time = time.time()
 
-        # ── 3. JSON-only mode ───────────────────────────────────────────
+        # ── 3b. JSON-only mode ──────────────────────────────────────────
         if self.json_only:
             advisor = AdaptiveAdvisor(config)
             snapshot = _build_json_snapshot(hw, config, advisor, start_time, None)
@@ -271,42 +314,52 @@ class SessionController:
             return
 
         # ── 4. Start metrics collector ──────────────────────────────────
+        console.print(f"\n[dim]Step 4 of 4[/dim]  Starting live monitor…")
         monitor = MetricsCollector(interval_sec=self.interval)
         monitor.start()
+        console.print(
+            f"  [green]✓[/green]  Sampling every {self.interval:.1f}s  ·  "
+            f"Health checks every 30s  ·  Spike detection active  ·  Logging to DB"
+        )
+        console.print()
+        console.print("[dim]Dashboard starting in 1 second… (Ctrl-C to exit)[/dim]")
+        time.sleep(1.0)
 
         # ── 5. Advisor ──────────────────────────────────────────────────
         advisor = AdaptiveAdvisor(config)
         advisor._log(
-            f"Session started: {config.model_name} @ {config.quant}  "
-            f"{config.context_len:,}ctx  {config.n_gpu_layers}/{config.n_total_layers}L GPU  "
-            f"backend={config.backend.upper()}",
+            f"Session started — {hw.cpu.brand.split('@')[0].strip()[:32]}  ·  "
+            f"{hw.memory.total_gb:.0f} GB RAM  ·  "
+            f"{vm.available/1024**3:.1f} GB free  ·  {gpu_str}",
             "INFO",
         )
+        if ollama_models:
+            for om in ollama_models[:2]:
+                advisor._log(
+                    f"Ollama: {om.name} loaded  ({om.size_gb:.1f} GB weights"
+                    + (f"  ctx {om.context_len:,}" if om.context_len else "")
+                    + ")",
+                    "INFO",
+                )
+        # Emit first health check immediately
+        advisor._last_proactive_event_time = 0.0  # forces first health event on first tick
 
         # ── 6. Dashboard ────────────────────────────────────────────────
         dashboard = LiveDashboard(hw, config, start_time)
 
-        # Log initial JSON
-        snapshot = _build_json_snapshot(hw, config, advisor, start_time, None)
-        console.print("\n[dim]Initial recommendation JSON:[/dim]")
-        console.print_json(json.dumps(snapshot, indent=2))
-        console.print()
-        console.print("[dim]Press Ctrl-C to stop.[/dim]\n")
-        time.sleep(1.5)  # let user read
-
         # DB setup
         last_db_log = 0.0
         hw_id: Optional[str] = None
+        db = None
         try:
             from autotune.db.store import get_db
-            from autotune.db.fingerprint import hardware_id, hardware_to_db_dict
+            from autotune.db.fingerprint import hardware_to_db_dict
             db = get_db()
             hw_dict = hardware_to_db_dict(hw)
             db.upsert_hardware(hw_dict)
             hw_id = hw_dict["id"]
         except Exception:
-            db = None
-            hw_id = None
+            pass
 
         # ── 7. Main live loop ───────────────────────────────────────────
         all_decisions: list[AdvisorDecision] = []
@@ -318,7 +371,7 @@ class SessionController:
 
         with Live(
             dashboard.render(None, advisor.current_state, advisor.events, all_decisions),
-            refresh_per_second=1,
+            refresh_per_second=2,
             screen=True,
             console=Console(stderr=False),
         ) as live:
@@ -326,15 +379,14 @@ class SessionController:
                 metrics = monitor.latest
 
                 if metrics:
-                    # Run advisor
+                    # Run advisor (emits proactive events, spike detection, etc.)
                     new_decisions = advisor.update(metrics)
                     if new_decisions:
                         all_decisions = new_decisions + all_decisions
-                        # Update config from decisions
                         for d in new_decisions:
                             self._apply_decision(config, d)
 
-                    # DB logging
+                    # DB logging every 30 seconds
                     now = time.time()
                     if db and hw_id and (now - last_db_log) > DB_LOG_INTERVAL:
                         try:
@@ -356,7 +408,7 @@ class SessionController:
                         except Exception:
                             pass
 
-                # Re-render dashboard
+                # Re-render dashboard at 2 fps
                 live.update(
                     dashboard.render(
                         metrics,
@@ -371,12 +423,21 @@ class SessionController:
         monitor.stop()
         console.print("\n[cyan]Session ended.[/cyan]")
 
-        # Print final JSON
-        final_snapshot = _build_json_snapshot(
-            hw, config, advisor, start_time, monitor.latest
-        )
-        console.print("\n[dim]Final session snapshot:[/dim]")
-        console.print_json(json.dumps(final_snapshot, indent=2))
+        # Brief summary on exit
+        if monitor.latest:
+            m = monitor.latest
+            from .advisor import compute_health_score, health_status
+            score = compute_health_score(m)
+            label, color, icon = health_status(score)
+            uptime = int(time.time() - start_time)
+            h, rem = divmod(uptime, 3600)
+            mins, sec = divmod(rem, 60)
+            console.print(
+                f"[dim]Session ran for {h:02d}:{mins:02d}:{sec:02d}  ·  "
+                f"Final health: {score}/100 ({label})  ·  "
+                f"Final RAM: {m.ram_percent:.0f}%  ·  "
+                f"Final CPU: {m.cpu_percent:.0f}%[/dim]"
+            )
 
     def _apply_decision(self, config: SessionConfig, decision: AdvisorDecision) -> None:
         """Update the live config based on an advisor decision."""

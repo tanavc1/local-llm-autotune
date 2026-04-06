@@ -12,6 +12,14 @@ Smooth degradation order (least → most disruptive):
   5. disable_speculative_decoding
   6. lower_quantization
   7. switch_to_smaller_model
+
+Health score (0–100):
+  Composite metric giving a single at-a-glance number for LLM inference health.
+  90–100 = Running smoothly
+  75–89  = Moderate load
+  55–74  = Memory pressure building
+  35–54  = Stressed — action recommended
+  0–34   = Critical — immediate action needed
 """
 
 from __future__ import annotations
@@ -25,6 +33,95 @@ from .types import (
     AdvisorDecision, LiveMetrics, SessionConfig, SessionEvent,
     SessionState, ThermalState,
 )
+
+
+# ---------------------------------------------------------------------------
+# Health scoring
+# ---------------------------------------------------------------------------
+
+def compute_health_score(metrics: LiveMetrics) -> int:
+    """
+    Compute a 0–100 health score for LLM inference on this machine.
+
+    Weights:
+      RAM pressure   40 pts  (most critical for LLM — OOM kills inference)
+      Swap usage     30 pts  (any swap = severe slowdown for LLM)
+      Thermal state  15 pts  (throttling = slower tokens)
+      CPU overhead   10 pts  (GPU handles generation; CPU = overhead)
+      RAM growth      5 pts  (trending toward trouble)
+    """
+    score = 100.0
+
+    # RAM pressure — up to -40 pts
+    ram_pct = metrics.vram_percent if metrics.vram_percent is not None else metrics.ram_percent
+    if ram_pct >= 97:
+        score -= 40
+    elif ram_pct >= 94:
+        score -= 30
+    elif ram_pct >= 90:
+        score -= 18
+    elif ram_pct >= 85:
+        score -= 10
+    elif ram_pct >= 80:
+        score -= 5
+
+    # Swap usage — up to -30 pts (any swap is very bad for LLM)
+    if metrics.swap_percent >= 20:
+        score -= 30
+    elif metrics.swap_percent >= 10:
+        score -= 22
+    elif metrics.swap_percent >= 3:
+        score -= 14
+    elif metrics.swap_used_gb > 0.5:
+        score -= 8
+    elif metrics.swap_used_gb > 0.1:
+        score -= 3
+
+    # Swap growth — additional penalty for active paging
+    if metrics.swap_growth_mb_per_min >= 50:
+        score -= 10
+    elif metrics.swap_growth_mb_per_min >= 10:
+        score -= 5
+
+    # Thermal — up to -15 pts
+    if metrics.thermal_state == ThermalState.CRITICAL:
+        score -= 15
+    elif metrics.thermal_state == ThermalState.THROTTLING:
+        score -= 12
+    elif metrics.thermal_state in (ThermalState.WARNING,):
+        score -= 6
+    elif metrics.thermal_state == ThermalState.WARM:
+        score -= 2
+
+    # CPU overhead — up to -10 pts (GPU-bound inference; high CPU = competing load)
+    if metrics.cpu_percent >= 90:
+        score -= 10
+    elif metrics.cpu_percent >= 75:
+        score -= 5
+    elif metrics.cpu_percent >= 60:
+        score -= 2
+
+    # RAM growth trajectory — up to -5 pts
+    if metrics.ram_growth_mb_per_min > 300:
+        score -= 5
+    elif metrics.ram_growth_mb_per_min > 150:
+        score -= 2
+
+    return max(0, min(100, int(score)))
+
+
+def health_status(score: int) -> tuple[str, str, str]:
+    """Return (label, color, icon) for a health score."""
+    if score >= 90:
+        return "Running smoothly", "green", "●"
+    elif score >= 75:
+        return "Moderate load — watching closely", "yellow", "▲"
+    elif score >= 55:
+        return "Memory pressure building", "bold yellow", "⚠"
+    elif score >= 35:
+        return "Stressed — action recommended", "red", "⚠"
+    else:
+        return "Critical — immediate action needed", "bold red", "⛔"
 
 # ---------------------------------------------------------------------------
 # Thresholds
@@ -104,7 +201,23 @@ class AdaptiveAdvisor:
         self._last_action_time = 0.0
         self._stable_since: Optional[float] = None
         self._decisions: deque[AdvisorDecision] = deque(maxlen=50)
-        self._events: deque[SessionEvent] = deque(maxlen=100)
+        self._events: deque[SessionEvent] = deque(maxlen=200)
+
+        # Health tracking
+        self._last_health_score: Optional[int] = None
+        self._last_proactive_event_time: float = 0.0
+        self._proactive_event_interval: float = 30.0   # seconds
+
+        # Spike detection
+        self._prev_ram_used_gb: Optional[float] = None
+        self._prev_cpu_pct: Optional[float] = None
+        self._prev_swap_gb: Optional[float] = None
+
+        # Threshold crossing detection
+        self._prev_ram_pct: Optional[float] = None
+        self._ram_warn_fired: bool = False
+        self._ram_action_fired: bool = False
+        self._swap_warn_fired: bool = False
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -127,6 +240,9 @@ class AdaptiveAdvisor:
         Feed the latest metrics snapshot. Returns any new decisions made.
         """
         self._update_baseline(metrics)
+        self._emit_proactive_events(metrics)
+        self._emit_spike_events(metrics)
+        self._emit_threshold_events(metrics)
         signals = self._evaluate_signals(metrics)
         decisions = self._decide(signals, metrics)
 
@@ -134,7 +250,123 @@ class AdaptiveAdvisor:
             self._decisions.appendleft(d)
             self._log(d.reason, d.severity.value.upper())
 
+        # Update spike tracking
+        self._prev_ram_used_gb = metrics.ram_used_gb
+        self._prev_cpu_pct = metrics.cpu_percent
+        self._prev_swap_gb = metrics.swap_used_gb
+        self._prev_ram_pct = metrics.ram_percent
+
         return decisions
+
+    # ------------------------------------------------------------------ #
+    # Proactive event generation                                           #
+    # ------------------------------------------------------------------ #
+
+    def _emit_proactive_events(self, m: LiveMetrics) -> None:
+        """Emit a health check event every ~30 seconds regardless of state."""
+        now = time.time()
+        if (now - self._last_proactive_event_time) < self._proactive_event_interval:
+            return
+
+        score = compute_health_score(m)
+        label, color, icon = health_status(score)
+        self._last_health_score = score
+
+        ram_pct = m.vram_percent if m.vram_percent is not None else m.ram_percent
+
+        # Build a compact one-line status
+        swap_note = f"  ·  Swap {m.swap_used_gb:.2f} GB" if m.swap_used_gb > 0.05 else ""
+        thermal_note = ""
+        if m.thermal_state not in (ThermalState.NOMINAL, ThermalState.WARM):
+            thermal_note = f"  ·  Thermal {m.thermal_state.value}"
+
+        level = "OK" if score >= 75 else ("WARN" if score >= 50 else "ACTION")
+        self._log(
+            f"Health {score}/100 — {label}"
+            f"  (RAM {ram_pct:.0f}%  ·  CPU {m.cpu_percent:.0f}%{swap_note}{thermal_note})",
+            level,
+        )
+        self._last_proactive_event_time = now
+
+    def _emit_spike_events(self, m: LiveMetrics) -> None:
+        """Detect sudden jumps in RAM or CPU and log an alert."""
+        # RAM spike: >0.4 GB increase in one tick
+        if self._prev_ram_used_gb is not None:
+            delta_ram = m.ram_used_gb - self._prev_ram_used_gb
+            if delta_ram > 0.4:
+                self._log(
+                    f"RAM jumped +{delta_ram:.1f} GB  "
+                    f"({self._prev_ram_used_gb:.1f} → {m.ram_used_gb:.1f} GB)  "
+                    f"— likely model loading or context expansion",
+                    "WARN",
+                )
+            elif delta_ram < -0.4:
+                self._log(
+                    f"RAM freed {abs(delta_ram):.1f} GB  "
+                    f"({self._prev_ram_used_gb:.1f} → {m.ram_used_gb:.1f} GB)  "
+                    f"— model unloaded or cache cleared",
+                    "INFO",
+                )
+
+        # CPU spike: >30 percentage points in one tick (from low baseline)
+        if self._prev_cpu_pct is not None:
+            delta_cpu = m.cpu_percent - self._prev_cpu_pct
+            if delta_cpu > 30 and self._prev_cpu_pct < 40:
+                self._log(
+                    f"CPU spike: {self._prev_cpu_pct:.0f}% → {m.cpu_percent:.0f}%  "
+                    f"— inference burst or background process",
+                    "INFO",
+                )
+
+        # Swap appeared from zero
+        if self._prev_swap_gb is not None and self._prev_swap_gb < 0.05 and m.swap_used_gb >= 0.1:
+            self._log(
+                f"Swap started: {m.swap_used_gb:.2f} GB in use  "
+                f"— RAM is full, OS is paging to disk (slows LLM significantly)",
+                "WARN",
+            )
+        elif self._prev_swap_gb is not None and self._prev_swap_gb >= 0.1 and m.swap_used_gb < 0.05:
+            self._log(
+                "Swap cleared — memory pressure resolved",
+                "OK",
+            )
+
+    def _emit_threshold_events(self, m: LiveMetrics) -> None:
+        """Fire events when RAM crosses warning/action thresholds."""
+        ram_pct = m.vram_percent if m.vram_percent is not None else m.ram_percent
+
+        # RAM warning zone (first time above 80%)
+        if not self._ram_warn_fired and ram_pct >= MEM_WARN_PCT:
+            self._log(
+                f"RAM crossed {MEM_WARN_PCT:.0f}% — entering caution zone  "
+                f"({m.ram_used_gb:.1f} / {m.ram_total_gb:.0f} GB)  "
+                f"·  Consider closing other apps or reducing context",
+                "WARN",
+            )
+            self._ram_warn_fired = True
+        elif self._ram_warn_fired and ram_pct < MEM_WARN_PCT - 3:
+            self._log(
+                f"RAM back below {MEM_WARN_PCT:.0f}% — pressure eased  "
+                f"({m.ram_used_gb:.1f} GB)",
+                "OK",
+            )
+            self._ram_warn_fired = False
+
+        # RAM action zone (first time above 88%)
+        if not self._ram_action_fired and ram_pct >= MEM_ACTION_PCT:
+            self._log(
+                f"RAM crossed {MEM_ACTION_PCT:.0f}% — high pressure  "
+                f"({m.ram_used_gb:.1f} / {m.ram_total_gb:.0f} GB)  "
+                f"·  Reduce context window or switch to a lighter quant",
+                "ACTION",
+            )
+            self._ram_action_fired = True
+        elif self._ram_action_fired and ram_pct < MEM_ACTION_PCT - 3:
+            self._log(
+                f"RAM dropped below {MEM_ACTION_PCT:.0f}% — pressure eased",
+                "OK",
+            )
+            self._ram_action_fired = False
 
     # ------------------------------------------------------------------ #
     # Baseline tracking                                                    #

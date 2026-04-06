@@ -1,5 +1,13 @@
 """
 Rich live terminal dashboard for the session controller.
+
+Redesigned to prioritise actionable information:
+  - Health score (0-100) in the header — at-a-glance machine state
+  - Plain-English status label ("Running smoothly", "Memory pressure", etc.)
+  - Active LLM panel: what Ollama has loaded, how much memory it's using
+  - Memory panel with trend arrows (↑ growing / ↓ dropping / → stable)
+  - CPU / thermal panel
+  - Event log with proactive 30-second health checks
 """
 
 from __future__ import annotations
@@ -21,6 +29,8 @@ from .types import (
     AdvisorDecision, LiveMetrics, SessionConfig,
     SessionEvent, SessionState, ThermalState,
 )
+from .advisor import compute_health_score, health_status
+
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -34,7 +44,7 @@ def _pct_color(pct: float, warn: float = 75.0, crit: float = 88.0) -> str:
     return "green"
 
 
-def _bar(pct: float, width: int = 18, warn: float = 75.0, crit: float = 88.0) -> Text:
+def _bar(pct: float, width: int = 20, warn: float = 75.0, crit: float = 88.0) -> Text:
     filled = round(max(0.0, min(1.0, pct / 100)) * width)
     empty = width - filled
     color = _pct_color(pct, warn, crit)
@@ -44,27 +54,27 @@ def _bar(pct: float, width: int = 18, warn: float = 75.0, crit: float = 88.0) ->
     return t
 
 
-def _state_badge(state: SessionState) -> Text:
-    badges = {
-        SessionState.OPTIMAL:           ("● OPTIMAL",           "bold green"),
-        SessionState.WARNING:           ("▲ WARNING",           "bold yellow"),
-        SessionState.ACTION_NEEDED:     ("⚡ ACTION NEEDED",    "bold red"),
-        SessionState.DEGRADING:         ("⬇ DEGRADING",         "bold yellow"),
-        SessionState.STABLE_RECOVERING: ("↑ RECOVERING",        "cyan"),
-        SessionState.CRITICAL:          ("⛔ CRITICAL",          "bold red blink"),
-    }
-    label, style = badges.get(state, ("? UNKNOWN", "white"))
-    return Text(label, style=style)
+def _health_bar(score: int, width: int = 20) -> Text:
+    filled = round(score / 100 * width)
+    empty = width - filled
+    color = "green" if score >= 90 else "yellow" if score >= 55 else "bold red"
+    t = Text()
+    t.append("█" * filled, style=color)
+    t.append("░" * empty, style="dim")
+    return t
 
 
-def _thermal_badge(ts: ThermalState, limit: int) -> Text:
-    if ts == ThermalState.NOMINAL:
-        return Text(f"● NOMINAL ({limit}%)", style="green")
-    if ts == ThermalState.WARM:
-        return Text(f"~ WARM ({limit}%)", style="yellow")
-    if ts in (ThermalState.WARNING, ThermalState.THROTTLING):
-        return Text(f"⚠ THROTTLING ({limit}%)", style="bold red")
-    return Text(f"⛔ CRITICAL ({limit}%)", style="bold red blink")
+def _trend_arrow(rate_mb_per_min: float) -> Text:
+    """Return a colored trend arrow based on growth rate."""
+    if abs(rate_mb_per_min) < 2.0:
+        return Text("→ stable", style="dim")
+    if rate_mb_per_min > 50:
+        return Text(f"↑↑ +{rate_mb_per_min:.0f} MB/min", style="bold red")
+    if rate_mb_per_min > 10:
+        return Text(f"↑ +{rate_mb_per_min:.0f} MB/min", style="yellow")
+    if rate_mb_per_min > 0:
+        return Text(f"↑ +{rate_mb_per_min:.0f} MB/min", style="dim green")
+    return Text(f"↓ {rate_mb_per_min:.0f} MB/min", style="cyan")
 
 
 def _elapsed(start: float) -> str:
@@ -75,224 +85,256 @@ def _elapsed(start: float) -> str:
 
 
 def _temp_str(t: Optional[float]) -> str:
-    return f"{t:.0f}°C" if t is not None else "N/A"
+    if t is None:
+        return "N/A"
+    color = "bold red" if t > 90 else "yellow" if t > 75 else "green"
+    return f"[{color}]{t:.0f}°C[/{color}]"
 
 
 def _gb(v: Optional[float]) -> str:
     return f"{v:.2f} GB" if v is not None else "N/A"
 
 
-def _rate_str(rate: float) -> str:
-    if abs(rate) < 0.5:
-        return "[dim]stable[/dim]"
-    sign = "+" if rate > 0 else ""
-    color = "red" if rate > 20 else "yellow" if rate > 5 else "green"
-    return f"[{color}]{sign}{rate:.0f} MB/min[/{color}]"
-
-
 # ---------------------------------------------------------------------------
-# Panel builders
+# Header panel — health score front and center
 # ---------------------------------------------------------------------------
 
-def _header_panel(hw: HardwareProfile, state: SessionState, start_time: float) -> Panel:
-    gpu_label = f"{hw.gpu.name} ({hw.gpu.backend.upper()})" if hw.gpu else "CPU-only"
+def _header_panel(hw: HardwareProfile, score: int, state: SessionState, start_time: float) -> Panel:
+    label, color, icon = health_status(score)
+
+    gpu_label = f"{hw.gpu.name}" if hw.gpu else "CPU-only"
     if hw.gpu and hw.gpu.is_unified_memory:
-        gpu_label += " [unified]"
+        gpu_label += " [unified mem]"
 
     t = Text()
     t.append("  autotune live  ", style="bold white on blue")
-    t.append(f"  {hw.os_version}  │  {hw.cpu.brand[:30]}  │  {hw.memory.total_gb:.0f} GB  │  {gpu_label}  │  ", style="dim")
+    t.append(f"  {hw.cpu.brand.split('@')[0].strip()[:28]}  ·  "
+             f"{hw.memory.total_gb:.0f} GB  ·  {gpu_label}  ", style="dim")
     t.append(f"⏱ {_elapsed(start_time)}", style="cyan")
     t.append("  │  ")
-    t.append_text(_state_badge(state))
+
+    # Health score — the most important single number
+    score_color = "bold green" if score >= 90 else "bold yellow" if score >= 55 else "bold red"
+    t.append(f"Health ", style="dim")
+    t.append(f"{score}/100", style=score_color)
+    t.append("  │  ")
+    t.append(f"{icon} {label}", style=color)
+    t.append("  │  Ctrl-C to exit", style="dim")
 
     return Panel(t, box=box.HORIZONTALS, padding=(0, 1))
 
 
+# ---------------------------------------------------------------------------
+# Memory panel — with trend arrows
+# ---------------------------------------------------------------------------
+
 def _memory_panel(m: LiveMetrics, is_unified: bool) -> Panel:
     t = Table.grid(padding=(0, 1))
-    t.add_column(width=8, style="bold")
-    t.add_column(width=18)
-    t.add_column(width=8, justify="right")
+    t.add_column(width=7, style="bold")
+    t.add_column(width=22)
+    t.add_column(width=7, justify="right")
     t.add_column()
 
     # RAM
+    ram_color = _pct_color(m.ram_percent)
     t.add_row(
         "RAM",
         _bar(m.ram_percent),
-        f"[{_pct_color(m.ram_percent)}]{m.ram_percent:.0f}%[/]",
-        f"[dim]{m.ram_used_gb:.1f}/{m.ram_total_gb:.0f} GB  {_rate_str(m.ram_growth_mb_per_min)}[/dim]",
+        f"[{ram_color}]{m.ram_percent:.0f}%[/]",
+        Text.assemble(
+            (f"{m.ram_used_gb:.1f}/{m.ram_total_gb:.0f} GB  ", "dim"),
+            _trend_arrow(m.ram_growth_mb_per_min),
+        ),
     )
 
-    # Unified / VRAM
+    # GPU / Unified memory
     if m.vram_percent is not None and not is_unified:
+        vram_color = _pct_color(m.vram_percent)
         t.add_row(
             "VRAM",
             _bar(m.vram_percent),
-            f"[{_pct_color(m.vram_percent)}]{m.vram_percent:.0f}%[/]",
-            f"[dim]{_gb(m.vram_used_gb)} / {_gb(m.vram_total_gb)}  {_rate_str(m.vram_growth_mb_per_min)}[/dim]",
+            f"[{vram_color}]{m.vram_percent:.0f}%[/]",
+            Text.assemble(
+                (_gb(m.vram_used_gb) + " / " + _gb(m.vram_total_gb) + "  ", "dim"),
+                _trend_arrow(m.vram_growth_mb_per_min),
+            ),
         )
     elif is_unified and m.vram_percent is not None:
         t.add_row(
             "GPU=RAM",
             _bar(m.vram_percent),
             f"[{_pct_color(m.vram_percent)}]{m.vram_percent:.0f}%[/]",
-            f"[dim]unified pool[/dim]",
+            Text("unified memory pool", style="dim"),
         )
 
     # Swap
-    swap_warn = 5.0 if m.swap_percent > 0 else 100.0
+    swap_warn = 3.0 if m.swap_used_gb > 0.05 else 100.0
+    swap_color = _pct_color(m.swap_percent, warn=swap_warn, crit=15.0)
     t.add_row(
         "Swap",
         _bar(m.swap_percent, warn=swap_warn, crit=15.0),
-        f"[{_pct_color(m.swap_percent, warn=swap_warn, crit=15.0)}]{m.swap_percent:.0f}%[/]",
-        f"[dim]{m.swap_used_gb:.2f}/{m.swap_total_gb:.1f} GB  {_rate_str(m.swap_growth_mb_per_min)}[/dim]",
+        f"[{swap_color}]{m.swap_percent:.0f}%[/]",
+        Text.assemble(
+            (f"{m.swap_used_gb:.2f}/{m.swap_total_gb:.1f} GB  ", "dim"),
+            _trend_arrow(m.swap_growth_mb_per_min),
+        ),
     )
 
-    # Compressor hint for macOS
+    # Free memory line
     avail_color = _pct_color(m.ram_percent)
-    t.add_row(
-        "",
-        "",
-        "",
-        f"[{avail_color}]{m.ram_available_gb:.1f} GB free[/{avail_color}]",
-    )
+    free_note = f"{m.ram_available_gb:.1f} GB free"
+    if m.swap_used_gb > 0.1:
+        free_note += f"  [yellow]⚠ {m.swap_used_gb:.2f} GB swap in use[/yellow]"
+    t.add_row("", "", "", f"[{avail_color}]{free_note}[/{avail_color}]")
 
     return Panel(t, title="[bold]Memory[/bold]", box=box.ROUNDED, padding=(0, 1))
 
 
-def _performance_panel(m: LiveMetrics) -> Panel:
+# ---------------------------------------------------------------------------
+# CPU / Thermals panel
+# ---------------------------------------------------------------------------
+
+def _cpu_thermal_panel(m: LiveMetrics) -> Panel:
     t = Table.grid(padding=(0, 2))
     t.add_column(width=14, style="bold dim")
     t.add_column()
 
-    def maybe(v, fmt=".1f", suffix="") -> str:
-        return f"{v:{fmt}}{suffix}" if v is not None else "[dim]—[/dim]"
-
-    tps = m.tokens_per_sec
-    tps_color = "green" if tps and tps > 10 else "yellow" if tps else "dim"
-    t.add_row("Prompt tok/s", f"[{tps_color}]{maybe(tps)} t/s[/{tps_color}]")
-
-    gen = m.gen_tokens_per_sec
-    gen_color = "green" if gen and gen > 10 else "yellow" if gen else "dim"
-    t.add_row("Gen tok/s", f"[{gen_color}]{maybe(gen)} t/s[/{gen_color}]")
-
-    ttft = m.ttft_ms
-    ttft_color = "green" if ttft and ttft < 500 else "yellow" if ttft and ttft < 2000 else "red" if ttft else "dim"
-    t.add_row("TTFT", f"[{ttft_color}]{maybe(ttft, '.0f', ' ms')}[/{ttft_color}]")
-
-    t.add_row("Queue depth", str(m.queue_depth) if m.queue_depth else "[dim]0[/dim]")
-
     cpu_color = _pct_color(m.cpu_percent, warn=70, crit=90)
-    t.add_row("CPU overall", f"[{cpu_color}]{m.cpu_percent:.0f}%[/{cpu_color}]")
+    t.add_row("CPU avg", Text.assemble(
+        _bar(m.cpu_percent, width=16, warn=70, crit=90),
+        (f"  [{cpu_color}]{m.cpu_percent:.0f}%[/{cpu_color}]", ""),
+    ))
 
     # Per-core mini-bar
     cores = m.cpu_per_core
     if cores:
-        core_str = " ".join(
-            f"[{'red' if c > 85 else 'yellow' if c > 60 else 'green'}]{'█' if c > 50 else '▄' if c > 25 else '░'}[/]"
-            for c in cores[:16]
-        )
-        t.add_row("CPU cores", core_str)
+        core_str = Text()
+        for c in cores[:16]:
+            color = "red" if c > 85 else "yellow" if c > 60 else "green"
+            core_str.append("█" if c > 50 else "▄" if c > 25 else "░", style=color)
+        t.add_row("Cores", core_str)
 
-    return Panel(t, title="[bold]Performance[/bold]", box=box.ROUNDED, padding=(0, 1))
+    t.add_row("CPU temp", Text.from_markup(_temp_str(m.cpu_temp_c)))
+    t.add_row("GPU temp", Text.from_markup(_temp_str(m.gpu_temp_c)))
 
-
-def _thermal_panel(m: LiveMetrics) -> Panel:
-    t = Table.grid(padding=(0, 2))
-    t.add_column(width=12, style="bold dim")
-    t.add_column()
-
-    t.add_row("CPU temp", _temp_str(m.cpu_temp_c))
-    t.add_row("GPU temp", _temp_str(m.gpu_temp_c))
-    t.add_row("Thermal", _thermal_badge(m.thermal_state, m.cpu_speed_limit_pct))
-
-    if m.llm_processes:
-        t.add_row("", "")
-        t.add_row("[bold]LLM procs[/bold]", "")
-        for p in m.llm_processes[:4]:
-            t.add_row(
-                f"  {p.runtime[:10]}",
-                f"[cyan]{p.ram_gb:.1f} GB[/cyan] RAM  [dim]{p.cpu_percent:.0f}% CPU[/dim]"
-                f"  [dim]pid {p.pid}[/dim]",
-            )
-    elif m.ollama_models:
-        t.add_row("", "")
-        t.add_row("[bold]Ollama[/bold]", "")
-        for om in m.ollama_models[:3]:
-            t.add_row(f"  {om.name[:20]}", f"[cyan]{om.size_gb:.1f} GB[/cyan]  ctx {om.context_len:,}")
+    ts = m.thermal_state
+    if ts == ThermalState.NOMINAL:
+        thermal_text = Text("● Nominal — no throttling", style="green")
+    elif ts == ThermalState.WARM:
+        thermal_text = Text("~ Warm — slight throttle risk", style="yellow")
+    elif ts == ThermalState.THROTTLING:
+        thermal_text = Text("⚠ Throttling — CPU slowed down!", style="bold red")
+    elif ts == ThermalState.CRITICAL:
+        thermal_text = Text("⛔ Critical thermal event", style="bold red blink")
     else:
-        t.add_row("", "")
-        t.add_row("[dim]No LLM[/dim]", "[dim]No running LLM detected[/dim]")
+        thermal_text = Text(ts.value, style="dim")
+    t.add_row("Thermal", thermal_text)
 
-    return Panel(t, title="[bold]Thermal / Processes[/bold]", box=box.ROUNDED, padding=(0, 1))
+    if m.cpu_speed_limit_pct < 100:
+        t.add_row("Speed limit", Text(f"{m.cpu_speed_limit_pct}% of max", style="yellow"))
+
+    return Panel(t, title="[bold]CPU / Thermals[/bold]", box=box.ROUNDED, padding=(0, 1))
 
 
-def _config_panel(cfg: SessionConfig) -> Panel:
-    t = Table.grid(padding=(0, 2))
+# ---------------------------------------------------------------------------
+# Device status panel — replaces the useless "Current Config" panel
+# ---------------------------------------------------------------------------
+
+def _device_status_panel(m: LiveMetrics, score: int, start_time: float) -> Panel:
+    label, color, icon = health_status(score)
+
+    t = Table.grid(padding=(0, 1))
     t.add_column(width=14, style="bold dim")
     t.add_column()
 
-    t.add_row("Model", f"[cyan]{cfg.model_name}[/cyan]")
-    t.add_row("Quantization", f"[yellow]{cfg.quant}[/yellow]")
-    t.add_row("Context", f"{cfg.context_len:,} tokens")
-    t.add_row("GPU layers", f"{cfg.n_gpu_layers}/{cfg.n_total_layers}")
-    t.add_row("Backend", cfg.backend.upper())
-    t.add_row("KV precision", cfg.kv_cache_precision.upper())
-    t.add_row("Concurrency", str(cfg.concurrency))
-    t.add_row("Speculative", "on" if cfg.speculative_decoding else "[dim]off[/dim]")
-    t.add_row("Prompt cache", "on" if cfg.prompt_caching else "[dim]off[/dim]")
-    t.add_row("", "")
-    weight_color = _pct_color(cfg.weight_gb / cfg.total_budget_gb * 100, warn=60, crit=80)
-    t.add_row("Weights", f"[{weight_color}]{cfg.weight_gb:.2f} GB[/{weight_color}]")
-    kv_color = _pct_color(cfg.kv_cache_gb / cfg.total_budget_gb * 100, warn=15, crit=25)
-    t.add_row("KV cache", f"[{kv_color}]{cfg.kv_cache_gb:.2f} GB[/{kv_color}]")
-    t.add_row("Budget", f"{cfg.total_budget_gb:.1f} GB available")
+    # Health score with bar
+    t.add_row(
+        "Health",
+        Text.assemble(
+            _health_bar(score),
+            (f"  [{color}]{score}/100[/{color}]", ""),
+        ),
+    )
+    t.add_row("Status", Text(f"{icon} {label}", style=color))
+    t.add_row("", Text(""))
 
-    return Panel(t, title="[bold]Current Config[/bold]", box=box.ROUNDED, padding=(0, 1))
+    # Active LLM
+    if m.ollama_models:
+        t.add_row("[bold]Active LLM[/bold]", Text(""))
+        for om in m.ollama_models[:2]:
+            name_str = om.name[:24]
+            ctx_str = f"ctx {om.context_len:,}" if om.context_len else ""
+            t.add_row(
+                f"  {name_str}",
+                Text(f"{om.size_gb:.1f} GB weights  {ctx_str}", style="cyan"),
+            )
+        # Performance stats if available
+        if m.tokens_per_sec is not None:
+            tps_color = "green" if m.tokens_per_sec > 15 else "yellow"
+            t.add_row(
+                "  Throughput",
+                Text(f"{m.tokens_per_sec:.1f} tok/s", style=tps_color),
+            )
+        if m.ttft_ms is not None:
+            ttft_color = "green" if m.ttft_ms < 500 else "yellow" if m.ttft_ms < 2000 else "red"
+            t.add_row(
+                "  TTFT",
+                Text(f"{m.ttft_ms:.0f} ms", style=ttft_color),
+            )
+    elif m.llm_processes:
+        t.add_row("[bold]Active LLM[/bold]", Text(""))
+        for proc in m.llm_processes[:2]:
+            t.add_row(
+                f"  {proc.runtime[:12]}",
+                Text(
+                    f"{proc.ram_gb:.1f} GB RAM  {proc.cpu_percent:.0f}% CPU  pid {proc.pid}",
+                    style="cyan",
+                ),
+            )
+    else:
+        t.add_row("[dim]LLM[/dim]", Text("No active LLM detected", style="dim"))
+        t.add_row("", Text("Start one: ollama run phi4-mini", style="dim"))
+
+    t.add_row("", Text(""))
+
+    # Quick advice based on current state
+    ram_pct = m.vram_percent if m.vram_percent is not None else m.ram_percent
+    if ram_pct >= 94:
+        t.add_row(
+            "[red]⚠ Action[/red]",
+            Text("Reduce context or switch to lighter quant", style="red"),
+        )
+    elif ram_pct >= 85:
+        t.add_row(
+            "[yellow]Tip[/yellow]",
+            Text("Close unused apps to free RAM headroom", style="yellow"),
+        )
+    elif m.swap_used_gb > 0.1:
+        t.add_row(
+            "[yellow]Tip[/yellow]",
+            Text("Swap in use — LLM speed may be degraded", style="yellow"),
+        )
+    elif score >= 90:
+        t.add_row(
+            "[green]Tip[/green]",
+            Text("Machine is healthy — inference unrestricted", style="dim green"),
+        )
+
+    return Panel(t, title="[bold]Device Status[/bold]", box=box.ROUNDED, padding=(0, 1))
 
 
-def _events_panel(events: list[SessionEvent], decisions: list[AdvisorDecision]) -> Panel:
-    t = Table.grid(padding=(0, 1))
-    t.add_column(width=11, style="dim")
-    t.add_column(width=8)
-    t.add_column()
-
-    _level_styles = {
-        "INFO":     ("dim", "INFO "),
-        "OK":       ("green", "OK   "),
-        "WARN":     ("yellow", "WARN "),
-        "WARNING":  ("yellow", "WARN "),
-        "ACTION":   ("bold red", "ACT  "),
-        "ACTION_NEEDED": ("bold red", "ACT  "),
-        "CRITICAL": ("bold red blink", "CRIT "),
-        "DEGRADING": ("yellow", "DEG  "),
-        "OPTIMAL":  ("green", "OK   "),
-        "STABLE_RECOVERING": ("cyan", "RECOV"),
-    }
-
-    shown = 0
-    for ev in events[:12]:
-        ts_str = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
-        style, tag = _level_styles.get(ev.level, ("white", ev.level[:5]))
-        t.add_row(ts_str, f"[{style}]{tag}[/{style}]", ev.message)
-        shown += 1
-
-    if shown == 0:
-        t.add_row("", "[dim]—[/dim]", "[dim]Session started. Monitoring…[/dim]")
-
-    return Panel(t, title="[bold]Event Log[/bold]", box=box.ROUNDED, padding=(0, 1))
-
+# ---------------------------------------------------------------------------
+# Recommendations panel
+# ---------------------------------------------------------------------------
 
 def _advice_panel(decisions: list[AdvisorDecision]) -> Optional[Panel]:
     if not decisions:
         return None
-    recent = decisions[:3]
     t = Table.grid(padding=(0, 1))
-    t.add_column(width=10, style="bold")
+    t.add_column(width=14, style="bold")
     t.add_column()
 
-    for d in recent:
+    for d in decisions[:2]:
         severity_color = {
             SessionState.CRITICAL: "bold red",
             SessionState.ACTION_NEEDED: "red",
@@ -300,22 +342,57 @@ def _advice_panel(decisions: list[AdvisorDecision]) -> Optional[Panel]:
         }.get(d.severity, "cyan")
         action_label = d.action.replace("_", " ").upper()
         t.add_row(f"[{severity_color}]{action_label}[/{severity_color}]", d.reason)
-        # Show the suggested command
-        changes = d.suggested_changes
-        if changes:
+        ch = d.suggested_changes
+        if ch:
             cmd_parts = []
-            if "context_len" in changes:
-                cmd_parts.append(f"--ctx-size {changes['context_len']}")
-            if "kv_cache_precision" in changes:
-                cmd_parts.append(f"--kv-cache-type {changes['kv_cache_precision']}")
-            if "quant" in changes:
-                cmd_parts.append(f"→ reload with {changes['quant']}")
-            if "concurrency" in changes:
-                cmd_parts.append(f"--parallel {changes['concurrency']}")
+            if "context_len" in ch:
+                cmd_parts.append(f"set ctx → {ch['context_len']:,}")
+            if "kv_cache_precision" in ch:
+                cmd_parts.append(f"KV precision → {ch['kv_cache_precision']}")
+            if "quant" in ch:
+                cmd_parts.append(f"reload with {ch['quant']}")
+            if "concurrency" in ch:
+                cmd_parts.append(f"concurrency → {ch['concurrency']}")
             if cmd_parts:
-                t.add_row("", f"[dim]↳ {' '.join(cmd_parts)}[/dim]")
+                t.add_row("", Text("↳ " + "  ·  ".join(cmd_parts), style="dim"))
 
-    return Panel(t, title="[bold yellow]⚡ Recommendations[/bold yellow]", box=box.ROUNDED, padding=(0, 1))
+    return Panel(t, title="[bold yellow]⚡ Recommended Actions[/bold yellow]", box=box.ROUNDED, padding=(0, 1))
+
+
+# ---------------------------------------------------------------------------
+# Event log panel
+# ---------------------------------------------------------------------------
+
+def _events_panel(events: list[SessionEvent]) -> Panel:
+    t = Table.grid(padding=(0, 1))
+    t.add_column(width=11, style="dim")
+    t.add_column(width=7)
+    t.add_column()
+
+    _level_styles: dict[str, tuple[str, str]] = {
+        "INFO":     ("dim",        "INFO "),
+        "OK":       ("green",      " OK  "),
+        "WARN":     ("yellow",     "WARN "),
+        "WARNING":  ("yellow",     "WARN "),
+        "ACTION":   ("bold red",   " ACT "),
+        "ACTION_NEEDED": ("bold red", " ACT "),
+        "CRITICAL": ("bold red",   "CRIT "),
+        "DEGRADING": ("yellow",    " DEG "),
+        "OPTIMAL":  ("green",      " OK  "),
+        "STABLE_RECOVERING": ("cyan", "RECV "),
+    }
+
+    shown = 0
+    for ev in events[:14]:
+        ts_str = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
+        style, tag = _level_styles.get(ev.level, ("white", ev.level[:5]))
+        t.add_row(ts_str, f"[{style}]{tag}[/{style}]", ev.message)
+        shown += 1
+
+    if shown == 0:
+        t.add_row("", "[dim]—[/dim]", "[dim]Collecting first metrics…[/dim]")
+
+    return Panel(t, title="[bold]Event Log[/bold]", box=box.ROUNDED, padding=(0, 1))
 
 
 # ---------------------------------------------------------------------------
@@ -341,48 +418,50 @@ class LiveDashboard:
         events: list[SessionEvent],
         decisions: list[AdvisorDecision],
     ) -> Layout:
+        # Compute health score
+        score = compute_health_score(metrics) if metrics else 85
+
         layout = Layout()
 
+        has_advice = bool(decisions)
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="body"),
-            Layout(name="advice", size=6) if decisions else Layout(name="advice", size=0),
-            Layout(name="events", size=14),
+            Layout(name="advice", size=5) if has_advice else Layout(name="advice", size=0),
+            Layout(name="events", size=16),
         )
 
-        layout["header"].update(_header_panel(self.hw, state, self.start_time))
+        layout["header"].update(_header_panel(self.hw, score, state, self.start_time))
 
-        # Body: left metrics, right config
+        # Body: left (memory + cpu) | right (device status)
         layout["body"].split_row(
-            Layout(name="metrics", ratio=3),
-            Layout(name="config_col", ratio=2),
+            Layout(name="left_col", ratio=3),
+            Layout(name="right_col", ratio=2),
         )
-
-        # Metrics column: memory | performance | thermal
-        layout["metrics"].split_column(
+        layout["left_col"].split_column(
             Layout(name="memory", ratio=3),
-            Layout(name="perf_therm", ratio=2),
-        )
-        layout["perf_therm"].split_row(
-            Layout(name="perf"),
-            Layout(name="thermal"),
+            Layout(name="cpu", ratio=2),
         )
 
         if metrics:
             layout["memory"].update(_memory_panel(metrics, self._is_unified))
-            layout["perf"].update(_performance_panel(metrics))
-            layout["thermal"].update(_thermal_panel(metrics))
+            layout["cpu"].update(_cpu_thermal_panel(metrics))
+            layout["right_col"].update(_device_status_panel(metrics, score, self.start_time))
         else:
-            loading = Panel("[dim]Collecting metrics…[/dim]", box=box.ROUNDED)
+            loading = Panel("[dim]Collecting first metrics…[/dim]", box=box.ROUNDED)
             layout["memory"].update(loading)
-            layout["perf"].update(loading)
-            layout["thermal"].update(loading)
+            layout["cpu"].update(loading)
+            layout["right_col"].update(
+                Panel(
+                    "[dim]Initializing…[/dim]",
+                    title="[bold]Device Status[/bold]",
+                    box=box.ROUNDED,
+                )
+            )
 
-        layout["config_col"].update(_config_panel(self.config))
-
-        if decisions:
+        if has_advice:
             layout["advice"].update(_advice_panel(decisions) or Panel(""))
 
-        layout["events"].update(_events_panel(events, decisions))
+        layout["events"].update(_events_panel(events))
 
         return layout

@@ -100,6 +100,12 @@ class ModelProfile:
     description: str
     hf_repo: str = ""            # Hugging Face repo for reference
 
+    # Real-world quality benchmarks (None = unknown, populated for registry models)
+    # Sources: Open LLM Leaderboard, official model papers (5-shot MMLU)
+    bench_mmlu: float | None = None        # 5-shot MMLU accuracy (0–1.0)
+    bench_humaneval: float | None = None   # HumanEval pass@1 (0–1.0)
+    bench_gsm8k: float | None = None       # GSM8K math reasoning (0–1.0)
+
     # ------------------------------------------------------------------ #
     # Derived helpers                                                      #
     # ------------------------------------------------------------------ #
@@ -162,6 +168,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
             description="Ultra-light Llama 3.2 model, ideal for CPU or low-VRAM devices",
             hf_repo="meta-llama/Llama-3.2-1B",
+            bench_mmlu=0.328, bench_humaneval=0.289, bench_gsm8k=0.444,
         ),
         ModelProfile(
             id="llama-3.2-3b",
@@ -177,6 +184,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
             description="Compact Llama 3.2 with solid performance on 4–8 GB systems",
             hf_repo="meta-llama/Llama-3.2-3B",
+            bench_mmlu=0.586, bench_humaneval=0.524, bench_gsm8k=0.777,
         ),
         # ── Small / mainstream ─────────────────────────────────────────
         ModelProfile(
@@ -193,6 +201,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
             description="Fast, capable 7B model; the community workhorse",
             hf_repo="mistralai/Mistral-7B-v0.3",
+            bench_mmlu=0.642, bench_humaneval=0.270, bench_gsm8k=0.521,
         ),
         ModelProfile(
             id="llama-3.1-8b",
@@ -208,6 +217,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
             description="Meta's frontier 8B model with 128k context support",
             hf_repo="meta-llama/Meta-Llama-3.1-8B",
+            bench_mmlu=0.667, bench_humaneval=0.726, bench_gsm8k=0.845,
         ),
         ModelProfile(
             id="gemma-2-9b",
@@ -223,6 +233,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16"],
             description="Google Gemma 2 9B – strong reasoning for its size",
             hf_repo="google/gemma-2-9b",
+            bench_mmlu=0.723, bench_humaneval=0.402, bench_gsm8k=0.686,
         ),
         # ── Medium ─────────────────────────────────────────────────────
         ModelProfile(
@@ -239,6 +250,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q2_K", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
             description="Alibaba Qwen 2.5 14B – excellent multilingual + code quality",
             hf_repo="Qwen/Qwen2.5-14B",
+            bench_mmlu=0.798, bench_humaneval=0.769, bench_gsm8k=0.856,
         ),
         ModelProfile(
             id="mistral-nemo-12b",
@@ -254,6 +266,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
             description="12B Mistral model with 128k context and large vocab",
             hf_repo="mistralai/Mistral-Nemo-Base-2407",
+            bench_mmlu=0.680, bench_humaneval=0.325, bench_gsm8k=0.602,
         ),
         # ── Large ──────────────────────────────────────────────────────
         ModelProfile(
@@ -270,6 +283,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q2_K", "Q4_K_S", "Q4_K_M", "Q5_K_M", "Q6_K"],
             description="Meta's flagship 70B – near-GPT-4 quality when quantised to Q4",
             hf_repo="meta-llama/Meta-Llama-3.1-70B",
+            bench_mmlu=0.860, bench_humaneval=0.805, bench_gsm8k=0.951,
         ),
         ModelProfile(
             id="qwen2.5-72b",
@@ -285,6 +299,7 @@ MODEL_REGISTRY: dict[str, ModelProfile] = {
             quantization_options=["Q2_K", "Q4_K_S", "Q4_K_M", "Q5_K_M"],
             description="Alibaba's 72B model with top-tier multilingual and coding scores",
             hf_repo="Qwen/Qwen2.5-72B",
+            bench_mmlu=0.865, bench_humaneval=0.861, bench_gsm8k=0.916,
         ),
     ]
 }

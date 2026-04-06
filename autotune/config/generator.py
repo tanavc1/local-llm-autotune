@@ -32,6 +32,14 @@ from autotune.models.registry import (
 
 CONTEXT_LENGTHS: list[int] = [512, 1024, 2048, 4096, 8192, 16384, 32768]
 
+# Per-mode context ceiling: prevents tiny models from gaming context bonuses
+# in fast/balanced modes where large context is rarely needed.
+MODE_MAX_CONTEXT: dict[str, int] = {
+    "fastest":      4096,   # short responses, low latency
+    "balanced":     16384,  # everyday use; 8k covers most tasks
+    "best_quality": 32768,  # let quality models use their full context
+}
+
 # Fraction of model layers to place on GPU (0 = CPU-only, 1.0 = all-GPU)
 GPU_LAYER_FRACTIONS: list[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
 
@@ -87,9 +95,12 @@ class ModeWeights:
 
 
 MODE_WEIGHTS: dict[str, ModeWeights] = {
-    "fastest": ModeWeights(stability=0.20, speed=0.55, quality=0.10, context=0.15),
-    "balanced": ModeWeights(stability=0.30, speed=0.30, quality=0.25, context=0.15),
-    "best_quality": ModeWeights(stability=0.20, speed=0.10, quality=0.55, context=0.15),
+    # context weight kept small (0.05–0.10): large context helps but shouldn't
+    # override model quality, especially in best_quality mode where users
+    # explicitly want the smartest model, not the one with the most tokens.
+    "fastest":      ModeWeights(stability=0.20, speed=0.55, quality=0.18, context=0.07),
+    "balanced":     ModeWeights(stability=0.25, speed=0.28, quality=0.37, context=0.10),
+    "best_quality": ModeWeights(stability=0.15, speed=0.05, quality=0.75, context=0.05),
 }
 
 
@@ -98,10 +109,31 @@ MODE_WEIGHTS: dict[str, ModeWeights] = {
 # ---------------------------------------------------------------------------
 
 def _stability_score(mem: MemoryEstimate, available_gb: float) -> float:
-    """Fraction of available memory left after peak usage (0–1)."""
+    """
+    Score based on memory headroom using a tiered (non-linear) scale.
+
+    The original linear formula (headroom / available) created a perverse
+    incentive: a tiny model with 5 GB headroom scored 0.62 stability while
+    a large model with 1 GB headroom scored 0.12, causing the recommendation
+    engine to systematically prefer tiny models.
+
+    Tiered thresholds better reflect real risk:
+      ≥ 25% headroom  → fully safe (1.0)   – OS can page freely
+      10–25% headroom → mostly safe (0.6–1.0)
+      5–10% headroom  → marginal   (0.3–0.6)
+       0–5% headroom  → risky      (0.0–0.3)
+    """
     if not mem.fits:
         return 0.0
-    return min(1.0, mem.headroom_gb / available_gb)
+    frac = mem.headroom_gb / max(available_gb, 0.1)
+    if frac >= 0.25:
+        return 1.0
+    elif frac >= 0.10:
+        return 0.60 + (frac - 0.10) / 0.15 * 0.40  # 0.60 → 1.0
+    elif frac >= 0.05:
+        return 0.30 + (frac - 0.05) / 0.05 * 0.30  # 0.30 → 0.60
+    else:
+        return frac / 0.05 * 0.30                   # 0.00 → 0.30
 
 
 def _speed_score(
@@ -112,39 +144,82 @@ def _speed_score(
     Estimated relative throughput normalised to 0–1.
 
     Factors:
-      - Quantization speed multiplier (higher bits = slower)
-      - GPU layer fraction (more GPU layers = faster, assuming GPU available)
+      - Quantization speed multiplier (higher compression → fewer memory ops)
+      - GPU layer fraction (more layers on GPU = faster Metal execution)
       - CPU core count for CPU-only inference
+      - Model parameter count: larger models are slower regardless of quant.
+        A 14B Q2_K model is NOT faster than a 7B Q4_K_M — it still has 2×
+        the parameters to compute. Not accounting for this caused the engine
+        to incorrectly prefer large Q2_K models in fastest mode.
+
+    Size normalization: 7B is the community reference for "mainstream fast".
+    A 14B model at any quant is roughly 2× slower than a 7B at the same quant.
+    We use a mild log-inverse scale so the penalty grows gradually with size.
     """
     q_spec: QuantizationSpec = QUANTIZATIONS[candidate.quant]
     quant_factor = q_spec.speed_multiplier / QUANTIZATIONS["F16"].speed_multiplier
 
     if hw.has_gpu and candidate.gpu_layer_fraction > 0:
-        # GPU acceleration: throughput scales roughly with fraction of layers on GPU
         gpu_boost = 1.0 + candidate.gpu_layer_fraction * 3.0  # up to 4× over CPU
     else:
-        # CPU-only: normalise by core count; 16+ physical cores ≈ best
         gpu_boost = min(1.0, hw.cpu.physical_cores / 16.0)
 
-    raw = quant_factor * gpu_boost
-    # Normalise: maximum possible raw ≈ 4 * 4 = 16 (F16 quant_factor=1, gpu_boost=4)
-    return min(1.0, raw / 16.0)
+    # Size penalty: throughput ∝ 1 / params_b (more params = more FLOPs per token)
+    # Reference = 7B. Cap at 2× bonus for tiny models, floor at ~0.1× for 70B.
+    # Uses square-root to soften the penalty (avoids making large models useless).
+    params_b = candidate.model.parameters_b
+    size_factor = min(2.0, math.sqrt(7.0 / max(params_b, 0.5)))
+
+    raw = quant_factor * gpu_boost * size_factor
+    # Maximum: quant_factor=3.2 (Q2_K), gpu_boost=4.0, size_factor=2.0 → 25.6
+    return min(1.0, raw / 25.6)
 
 
 def _quality_score(candidate: CandidateConfig) -> float:
     """
-    Model quality as a blend of parameter count normalised score and quant fidelity.
+    Model quality as a blend of real benchmark data and quantization fidelity.
 
-    Parameter score: log-linear from 1B (0.0) to 70B (1.0).
-    Quant fidelity: from registry (0–1).
+    When bench_mmlu is available (all registry models), use a chance-corrected
+    MMLU score as the primary quality signal — this reflects what the model
+    actually knows, not just how many parameters it has.
+
+    Chance-corrected MMLU: (mmlu - 0.25) / 0.75
+      0.25 = random baseline (4-choice), 0.75 = range to perfect score
+      → llama-3.2-1b (32.8%) → 0.104   (very weak general knowledge)
+      → llama-3.1-8b (66.7%) → 0.556   (solid mainstream model)
+      → qwen2.5-14b  (79.8%) → 0.731   (strong model)
+      → qwen2.5-72b  (86.5%) → 0.820   (near-frontier)
+
+    Quantization penalty:
+      Aggressive quants (Q2_K, Q3_K_M) on small models cause disproportionate
+      quality loss — this is what causes "always wrong" and repetition loops.
+      We apply an extra penalty to quants below Q4_K_S on models < 14B.
     """
-    params_b = candidate.model.parameters_b
-    # log scale: log(1)=0 → 0.0, log(70)≈4.25 → 1.0
-    param_score = min(1.0, math.log(max(1.0, params_b)) / math.log(70))
+    # Primary quality signal: real benchmarks when available
+    bench = candidate.model.bench_mmlu
+    if bench is not None:
+        base_score = max(0.0, min(1.0, (bench - 0.25) / 0.75))
+    else:
+        # Fallback: log-linear parameter estimate
+        params_b = candidate.model.parameters_b
+        base_score = min(1.0, math.log(max(1.0, params_b)) / math.log(70))
 
+    # Quantization fidelity (0–1 from registry)
     quant_fidelity = QUANTIZATIONS[candidate.quant].quality_score
 
-    return 0.55 * param_score + 0.45 * quant_fidelity
+    # Extra penalty for aggressive quants on models where they destroy quality.
+    # Q2_K (fidelity=0.50) on models under ~34B causes unintelligible output —
+    # this is the root cause of the "always wrong + repetition" user report.
+    # Q3_K_M is similarly risky on models under 14B.
+    # Only very large models (≥ 34B) can tolerate Q2_K with acceptable output.
+    params_b = candidate.model.parameters_b
+    if quant_fidelity < 0.75 and params_b < 34.0:
+        # Penalty scales with aggression: Q2_K (0.50) → -0.20 penalty
+        # Q4_K_S (0.78) → no penalty (above threshold)
+        extra_penalty = max(0.0, (0.75 - quant_fidelity) / 0.75) * 0.20
+        quant_fidelity = max(0.05, quant_fidelity - extra_penalty)
+
+    return 0.60 * base_score + 0.40 * quant_fidelity
 
 
 def _context_score(candidate: CandidateConfig) -> float:
@@ -178,12 +253,27 @@ def _build_rationale(sc: ScoredConfig, mode: str) -> str:
         if c.n_gpu_layers > 0
         else "CPU-only inference"
     )
+
+    # Include real benchmark data when available
+    bench_note = ""
+    if c.model.bench_mmlu is not None:
+        bench_note = f" MMLU {c.model.bench_mmlu:.1%}"
+        if c.model.bench_humaneval is not None:
+            bench_note += f", HumanEval {c.model.bench_humaneval:.1%}"
+
+    # Warn about aggressive quants that sacrifice quality
+    quant_warn = ""
+    q_fidelity = QUANTIZATIONS[c.quant].quality_score
+    if q_fidelity < 0.75:
+        quant_warn = f" [NOTE: {c.quant} reduces quality ~{(1-q_fidelity)*100:.0f}% vs F16 — acceptable only when memory is the constraint]"
+
     return (
-        f"{c.model.name} @ {c.quant} ({quant_desc}), "
-        f"context {c.context_len} tokens, {gpu_note}. "
+        f"{c.model.name} @ {c.quant} ({quant_desc})."
+        f"{bench_note}. "
+        f"Context {c.context_len} tokens, {gpu_note}. "
         f"Uses {mem.peak_gb:.2f} GB of {mem.peak_gb + mem.headroom_gb:.2f} GB "
         f"available ({mem.headroom_gb:.2f} GB headroom). "
-        f"Mode: {mode}."
+        f"Mode: {mode}.{quant_warn}"
     )
 
 
@@ -286,9 +376,15 @@ def generate_recommendations(
 
     for mode in modes:
         weights = MODE_WEIGHTS[mode]
+        ctx_cap = MODE_MAX_CONTEXT.get(mode, 32768)
         scored: list[ScoredConfig] = []
 
         for c in candidates:
+            # Skip context lengths that don't make sense for this mode.
+            # This prevents tiny 1B models from winning best_quality by using
+            # a 32768 context they don't need, inflating context + stability scores.
+            if c.context_len > ctx_cap:
+                continue
             sc = _score_candidate(c, hw, weights)
             if sc is not None:
                 scored.append(sc)
