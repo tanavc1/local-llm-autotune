@@ -221,14 +221,14 @@ def models(registry: bool) -> None:
                 "Ollama does not appear to be running.  Start it first:\n"
                 "  [bold]ollama serve[/bold]\n\n"
                 "Or pull a model directly:\n"
-                "  [bold]autotune pull phi4-mini[/bold]"
+                "  [bold]autotune pull qwen3:8b[/bold]"
             )
         else:
             console.print(
                 "[yellow]No models found.[/yellow]\n"
                 "Pull one to get started:\n"
                 "  [bold]autotune pull[/bold]  (browse popular models)\n"
-                "  [bold]autotune pull phi4-mini[/bold]"
+                "  [bold]autotune pull qwen3:8b[/bold]"
             )
         return
 
@@ -319,7 +319,7 @@ def models(registry: bool) -> None:
 def pull(model: Optional[str], show_list: bool) -> None:
     """Download an Ollama model directly from within autotune.
 
-    MODEL is an Ollama model tag, e.g. llama3.2, phi4-mini, qwen2.5:14b.
+    MODEL is an Ollama model tag, e.g. qwen3:8b, llama3.2, qwen2.5:14b.
     After downloading you can chat with it immediately:
 
     \b
@@ -396,7 +396,7 @@ def benchmark(model: str, runs: int, profile: str, output: Optional[str], no_sav
 
     \b
     Examples:
-      autotune benchmark phi4-mini          # 2 runs × 6 prompts × 2 conditions
+      autotune benchmark qwen3:8b            # 2 runs × 6 prompts × 2 conditions
       autotune benchmark llama3.2:3b -n 1   # quick single-pass
       autotune benchmark qwen2.5:7b -p fast --output results.json
     """
@@ -861,7 +861,7 @@ Be thorough and precise. This is a real production system."""
 
 
 @cli.command("bench")
-@click.option("--model", "-m", default="phi4-mini:latest", show_default=True,
+@click.option("--model", "-m", default="qwen3:8b", show_default=True,
               help="Model to benchmark.")
 @click.option(
     "--profile", "-p",
@@ -903,16 +903,16 @@ def bench(
 
     \b
     1. AUTOTUNE ONLY (default) — run autotune with the chosen profile:
-         autotune bench --model phi4-mini:latest --profile balanced
+         autotune bench --model qwen3:8b --profile balanced
 
     \b
     2. RAW OLLAMA ONLY — run pure Ollama defaults, no autotune:
-         autotune bench --model phi4-mini:latest --raw
+         autotune bench --model qwen3:8b --raw
 
     \b
     3. DUEL (recommended) — run both raw and autotune, show comparison:
-         autotune bench --model phi4-mini:latest --duel
-         autotune bench --model phi4-mini:latest --duel --profile fast
+         autotune bench --model qwen3:8b --duel
+         autotune bench --model qwen3:8b --duel --profile fast
 
     \b
     4. COMPARE SAVED RUNS — diff two previously saved tags:
@@ -920,8 +920,8 @@ def bench(
 
     \b
     Save a run to a named tag and compare later:
-      autotune bench --model phi4-mini:latest --raw --tag my_baseline
-      autotune bench --model phi4-mini:latest --profile fast --tag my_fast
+      autotune bench --model qwen3:8b --raw --tag my_baseline
+      autotune bench --model qwen3:8b --profile fast --tag my_fast
       autotune bench --compare my_baseline,my_fast
     """
     import asyncio
@@ -1291,7 +1291,7 @@ def ls(as_json: bool) -> None:
     if not ollama_models:
         console.print(
             "[yellow]No models downloaded.[/yellow]  "
-            "Pull one with: [cyan]ollama pull phi4-mini[/cyan]"
+            "Pull one with: [cyan]ollama pull qwen3:8b[/cyan]"
         )
         return
 
@@ -1512,7 +1512,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
 
     \b
     Examples:
-      autotune run phi4-mini:latest
+      autotune run qwen3:8b
       autotune run qwen2.5-coder:14b --profile balanced
       autotune run llama3.2 --system "You are a concise coding assistant"
     """
@@ -1667,8 +1667,8 @@ def telemetry(model_id: Optional[str], limit: int, events: bool) -> None:
     \b
     Examples:
       autotune telemetry
-      autotune telemetry --model phi4-mini:latest
-      autotune telemetry --events --model phi4-mini:latest
+      autotune telemetry --model qwen3:8b
+      autotune telemetry --events --model qwen3:8b
     """
     from autotune.db.store import get_db
     from rich.table import Table
@@ -1904,8 +1904,8 @@ def chat(
       autotune chat --model llama3.2
       autotune chat --model Qwen/Qwen2.5-7B-Instruct --profile fast
       autotune chat --model llama3.2 --system "You are a concise assistant"
-      autotune chat --model phi4-mini --no-optimize
-      autotune chat --model phi4-mini --no-swap
+      autotune chat --model qwen3:8b --no-optimize
+      autotune chat --model qwen3:8b --no-swap
     """
     from autotune.api.chat import start_chat
     start_chat(
@@ -1932,7 +1932,7 @@ def mlx_group() -> None:
     \b
     Examples:
       autotune mlx list               Show cached MLX models
-      autotune mlx pull phi4-mini     Pull the MLX version of phi4-mini
+      autotune mlx pull qwen3:8b      Pull the MLX version of qwen3:8b
       autotune mlx resolve llama3.2   Show which MLX model would be used
     """
 
@@ -1988,12 +1988,12 @@ def mlx_list() -> None:
 def mlx_pull(model: str, quant: str) -> None:
     """Pull an MLX-quantized model from mlx-community on HuggingFace.
 
-    MODEL can be an Ollama model name (e.g. phi4-mini, llama3.2:3b) or a
-    full HuggingFace model ID (e.g. mlx-community/Phi-4-mini-instruct-4bit).
+    MODEL can be an Ollama model name (e.g. qwen3:8b, llama3.2:3b) or a
+    full HuggingFace model ID (e.g. mlx-community/Qwen3-8B-4bit).
 
     \b
     Examples:
-      autotune mlx pull phi4-mini
+      autotune mlx pull qwen3:8b
       autotune mlx pull llama3.2:3b
       autotune mlx pull qwen2.5-coder:14b --quant 8bit
     """
@@ -2131,8 +2131,10 @@ _RECOMMENDED_PULL_MODELS = [
     ("llama3.2:3b",   2.5, "Fast baseline — Llama 3.2 3B"),
 ]
 
-# Models to skip (per user request or known bad performers)
-_SKIP_MODELS = {"phi4-mini:latest", "phi4-mini", "phi4"}
+# Models to exclude from automated multi-model benchmarks.
+# Add models here that produce unreliable results or that you want to exclude
+# from comparative runs (e.g. models with known quirks or that need special flags).
+_SKIP_MODELS: set[str] = set()
 
 
 def _ollama_list_models() -> list[dict]:
@@ -2689,8 +2691,8 @@ def stress_test(
 # ---------------------------------------------------------------------------
 
 @cli.command("proof")
-@click.option("--model", "-m", default="phi4-mini:latest",
-              help="Ollama model to benchmark (default: phi4-mini:latest)")
+@click.option("--model", "-m", default="qwen3:8b",
+              help="Ollama model to benchmark (default: qwen3:8b)")
 @click.option("--runs", "-r", type=int, default=3,
               help="Warm inference runs per prompt per config (default: 3)")
 @click.option("--cold-runs", type=int, default=3,

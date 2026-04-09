@@ -25,7 +25,7 @@ response via the native ``/api/chat`` endpoint.  No estimation.
     Time Ollama spent processing the input tokens (the KV-fill phase).
     Maps directly to TTFT latency.  Shrinks with smaller ``num_ctx`` because
     Ollama must initialise less KV-buffer memory before starting the forward
-    pass.  Proven: ctx=4096 → 324 ms, ctx=1024 → 200 ms (-38%) on phi4-mini.
+    pass.  Proven: ctx=4096 → 324 ms, ctx=1024 → 200 ms (-38%) on qwen3:8b.
 
 **Generation throughput** (``eval_count / eval_duration``)
     True tokens/second from Ollama's internal Metal timer — accurate to the
@@ -34,12 +34,12 @@ response via the native ``/api/chat`` endpoint.  No estimation.
 **VRAM footprint** (``size_vram`` from ``/api/ps``)
     Actual unified memory Ollama is holding for this model right now, in bytes.
     Smaller ``num_ctx`` → smaller KV buffer → lower ``size_vram``.
-    Proven: ctx=512 → -806 MB vs ctx=4096 on phi4-mini.
+    Proven: ctx=512 → -806 MB vs ctx=4096 on qwen3:8b.
 
 **Model load time** (``load_duration``)
     Time for Ollama to allocate buffers and move weights to Metal.
     Scales with KV cache size → smaller ctx → faster load.
-    Proven: ctx=4096 → 2606 ms, ctx=1024 → 976 ms (-63%) on phi4-mini.
+    Proven: ctx=4096 → 2606 ms, ctx=1024 → 976 ms (-63%) on qwen3:8b.
 
 Public API
 ----------
@@ -51,7 +51,7 @@ Public API
 
     # Run inference and get authoritative Ollama stats
     stats = await client.run_with_stats(
-        model="phi4-mini:latest",
+        model="qwen3:8b:latest",
         messages=[{"role": "user", "content": "Hello"}],
         options={"num_ctx": 1290},
     )
@@ -60,7 +60,7 @@ Public API
     print(stats.load_ms)             # model load time (ms)
 
     # Check VRAM footprint of loaded model
-    vram = await client.get_vram_snapshot("phi4-mini:latest")
+    vram = await client.get_vram_snapshot("qwen3:8b:latest")
     print(vram.size_vram_gb)         # GB of unified memory in use
 """
 

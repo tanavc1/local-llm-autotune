@@ -15,7 +15,7 @@ autotune sits between your application and the local LLM backend. It automatical
 | **Dynamic KV sizing** | Computes the exact `num_ctx` each request needs instead of allocating the profile max — typically 4–8× less KV cache memory |
 | **KV prefix caching** | Pins system-prompt tokens in Ollama's KV cache via `num_keep` so they're never re-evaluated each turn |
 | **Adaptive KV precision** | Downgrades KV cache from F16 → Q8 under memory pressure (80% → −10% ctx, 88% → −25% ctx + Q8, 93% → −50% ctx + Q8) |
-| **Model keep-alive** | Sets `keep_alive=-1` so the model stays loaded in unified memory between turns — eliminates reload latency |
+| **Model keep-alive** | Sets `keep_alive=-1s` so the model stays loaded in unified memory between turns — eliminates reload latency |
 | **Multi-tier context management** | Intelligently trims conversation history at token budget thresholds with no mid-sentence cuts |
 | **Inference queue** | FIFO queue (default: 1 concurrent, 8 waiting) with HTTP 429 back-pressure — prevents parallel inference from thrashing memory |
 | **Profile-based optimization** | `fast` / `balanced` / `quality` profiles tune temperature, context length, KV precision, and OS QoS class |
@@ -32,8 +32,9 @@ autotune sits between your application and the local LLM backend. It automatical
 Install [Ollama](https://ollama.com) and pull at least one model:
 
 ```bash
-ollama pull phi4-mini        # 2.5 GB — good starting point on any machine
-ollama pull qwen2.5-coder:14b  # 9 GB — great coding model for 16+ GB RAM
+ollama pull qwen3:8b           # 5.2 GB — best general model for 16 GB laptops
+ollama pull gemma4             # ~5.8 GB — Google's newest model, multimodal, 128k context
+ollama pull qwen2.5-coder:14b  # 9 GB — top coding model for 24+ GB RAM
 ```
 
 ### 2. Install autotune
@@ -67,28 +68,48 @@ Scores every locally downloaded Ollama model against your hardware — shows whe
 The fastest way to get started — autotune analyses memory fit, picks the right profile automatically, and opens a chat session:
 
 ```bash
-autotune run phi4-mini:latest
+autotune run qwen3:8b
 ```
 
 Or start a chat with a specific profile:
 
 ```bash
-autotune chat --model phi4-mini:latest                   # balanced (default)
-autotune chat --model phi4-mini:latest --profile fast    # fastest responses
-autotune chat --model phi4-mini:latest --profile quality # largest context
+autotune chat --model qwen3:8b                   # balanced (default)
+autotune chat --model qwen3:8b --profile fast    # fastest responses
+autotune chat --model qwen3:8b --profile quality # largest context
+autotune chat --model qwen3:8b --no-swap         # guarantee no macOS swap
 ```
 
 Set a system prompt:
 
 ```bash
-autotune chat --model phi4-mini:latest --system "You are a concise coding assistant."
+autotune chat --model qwen3:8b --system "You are a concise coding assistant."
 ```
 
 Resume a previous conversation (the ID is shown in the chat header):
 
 ```bash
-autotune chat --model phi4-mini:latest --conv-id a3f92c1b
+autotune chat --model qwen3:8b --conv-id a3f92c1b
 ```
+
+---
+
+## Model recommendations by hardware
+
+autotune works with any Ollama-compatible model. Here are our current picks for each hardware tier:
+
+| RAM | Recommended model | Size | Why |
+|-----|------------------|------|-----|
+| 8 GB | `qwen3:4b` | ~2.6 GB | Best 4B model available; hybrid thinking mode |
+| 16 GB | `qwen3:8b` | ~5.2 GB | Near-frontier quality; best 8B as of 2026 |
+| 16 GB | `gemma4` | ~5.8 GB | Google's newest; multimodal, 128k context |
+| 24 GB | `qwen3:14b` | ~9.0 GB | Excellent reasoning; fits well with headroom |
+| 32 GB | `qwen3:30b-a3b` | ~17 GB | MoE: flagship quality at 7B inference cost |
+| 64 GB+ | `qwen3:32b` | ~20 GB | Top dense open model |
+| Coding | `qwen2.5-coder:14b` | ~9.0 GB | Best open coding model for 24 GB machines |
+| Reasoning | `deepseek-r1:14b` | ~9.0 GB | Chain-of-thought; strong math and logic |
+
+Run `autotune ls` to see how each downloaded model scores against your specific hardware.
 
 ---
 
@@ -118,8 +139,8 @@ On M-series Macs, install the MLX backend to use native Metal GPU kernels:
 
 ```bash
 pip install -e ".[mlx]"           # install mlx-lm
-autotune mlx pull phi4-mini       # download MLX-quantized model from mlx-community
-autotune chat --model phi4-mini   # automatically routes to MLX on Apple Silicon
+autotune mlx pull qwen3:8b        # download MLX-quantized model from mlx-community
+autotune chat --model qwen3:8b    # automatically routes to MLX on Apple Silicon
 ```
 
 MLX is activated automatically when running on Apple Silicon — no configuration needed. autotune resolves the Ollama model name to the corresponding `mlx-community` HuggingFace repo.
@@ -145,7 +166,7 @@ from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8765/v1", api_key="local")
 response = client.chat.completions.create(
-    model="phi4-mini:latest",
+    model="qwen3:8b",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 ```
@@ -211,11 +232,11 @@ autotune telemetry --events      # notable events: swap spikes, OOMs, slow token
 
 ```bash
 # Full side-by-side comparison (raw Ollama vs autotune profiles)
-python scripts/benchmark.py --model phi4-mini:latest --runs 3
+python scripts/benchmark.py --model qwen3:8b --runs 3
 
 # Or using the CLI:
-autotune bench --model phi4-mini:latest --raw --tag baseline
-autotune bench --model phi4-mini:latest --profile fast --tag fast_opt
+autotune bench --model qwen3:8b --raw --tag baseline
+autotune bench --model qwen3:8b --profile fast --tag fast_opt
 autotune bench --compare baseline,fast_opt
 ```
 
@@ -235,7 +256,7 @@ All runs persist to SQLite automatically:
 ### Methodology
 
 **Hardware:** Apple M2, 16 GB unified memory (macOS Sequoia)  
-**Model:** `phi4-mini:latest` — Q4_K_M quantization, 2.5 GB weights, served via Ollama  
+**Model:** `qwen3:8b` — Q4_K_M quantization, 5.2 GB weights, served via Ollama  
 **Test script:** `scripts/stress_test.py` — automated, no manual intervention  
 **Scale:** 63 inference calls across 18 distinct prompts and 6 test phases
 
@@ -303,7 +324,7 @@ Smaller KV allocation = less memory to initialise before the first token, which 
 
 #### 2. `keep_alive = -1`
 
-Ollama's default is `keep_alive=5m` — after five minutes idle the model is **fully unloaded** from unified memory. The next request pays a full model reload (1–4 s for phi4-mini; longer for larger models).
+Ollama's default is `keep_alive=5m` — after five minutes idle the model is **fully unloaded** from unified memory. The next request pays a full model reload (1–4 s on a 5 GB model; longer for larger models).
 
 autotune always sends `keep_alive="-1"` (keep model resident indefinitely).
 
@@ -355,7 +376,7 @@ The simple factual prompt shows autotune slightly slower on run 1 because `TTFTO
 
 ### Limitations
 
-- **Single model.** All numbers are from `phi4-mini:latest` (2.5 GB, Q4_K_M) on Apple M2 16 GB. TTFT gains from `keep_alive=-1` will be proportionally larger on bigger models — a 9 GB model has a longer reload penalty than a 2.5 GB one.
+- **Single model.** All numbers are from `qwen3:8b` (5.2 GB, Q4_K_M) on Apple M2 16 GB. TTFT gains from `keep_alive=-1s` will be proportionally larger on bigger models — a 9 GB model has a longer reload penalty than a 5 GB one.
 - **`num_ctx` trade-off.** Smaller context means fewer tokens of conversation history fit. For short sessions this is pure win. For very long conversations autotune may need to trim history earlier (handled by `autotune.context.ContextWindow`).
 - **Token estimation.** Throughput uses `len(response) / 4 / elapsed_sec`. The same formula is used for both configurations so the comparison is fair, but absolute tok/s may differ from Ollama's internal tokenizer count.
 

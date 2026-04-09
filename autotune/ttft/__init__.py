@@ -28,7 +28,7 @@ Three mechanisms, used together
    prompt, autotune pins those tokens in Ollama's KV cache via ``num_keep``.
    Every subsequent turn skips re-evaluating the system prompt entirely.
 
-Benchmark proof (2026-04-08, phi4-mini:latest, 63 calls, 18 prompts):
+Benchmark proof (2026-04-08, qwen3:8b, 63 calls, 18 prompts):
   Average across all scenarios:        raw 626 ms  →  autotune 349 ms  (−44%)
   Large-context prompts (>1 k tokens): raw 2 015 ms → autotune 261 ms  (−87%)
   Cold-start / session continuity:     raw 1 227 ms → autotune 244 ms  (−80%)

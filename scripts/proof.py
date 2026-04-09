@@ -9,10 +9,10 @@ All timing numbers come from Ollama's own internal timers — nothing
 estimated by Python.
 
 Usage:
-    python scripts/proof.py                         (uses phi4-mini:latest)
+    python scripts/proof.py                          (uses qwen3:8b by default)
     python scripts/proof.py --model llama3.2:3b
-    python scripts/proof.py --model phi4-mini --with-cold --with-noswap
-    autotune proof --model phi4-mini:latest
+    python scripts/proof.py --model qwen3:8b --with-cold --with-noswap
+    autotune proof --model qwen3:8b
     autotune proof --list-models
 """
 from __future__ import annotations
@@ -721,7 +721,7 @@ async def main(args: argparse.Namespace) -> None:
             for m in models:
                 console.print(f"  {m}")
         else:
-            console.print("[dim]No models found. Pull one: ollama pull phi4-mini[/dim]")
+            console.print("[dim]No models found. Pull one: ollama pull qwen3:8b[/dim]")
         return
 
     model = args.model
@@ -783,7 +783,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="autotune proof — honest benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--model", "-m", default="phi4-mini:latest")
+    p.add_argument("--model", "-m", default="qwen3:8b")
     p.add_argument("--runs",  "-r", type=int, default=3,
                    help="Runs per prompt per mode (default: 3)")
     p.add_argument("--cold-runs", type=int, default=3)

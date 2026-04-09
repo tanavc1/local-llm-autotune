@@ -69,14 +69,23 @@ _QUALITY_DB: dict[str, QualityInfo] = {
     "phi3:mini":     QualityInfo("B", 67.8, 57.5,  None,  "Phi-3 mini; good reasoning, smaller footprint"),
     "phi3:medium":   QualityInfo("A", 77.9, 70.6,  None,  "Phi-3 medium; strong on instruction tasks"),
 
-    # ── Gemma ─────────────────────────────────────────────────────────────────
+    # ── Gemma 2 / 3 ───────────────────────────────────────────────────────────
     "gemma2:2b":     QualityInfo("C", 52.2, 26.3,  None,  "Google Gemma 2 2B; solid small model"),
     "gemma2:9b":     QualityInfo("A", 70.7, 58.7,  None,  "Google Gemma 2 9B; excellent instruction following"),
-    "gemma2:27b":    QualityInfo("S", 78.0, 72.5,  None,  "Gemma 2 flagship; competitive with 70B models on some tasks"),
-    "gemma3:1b":     QualityInfo("D", 42.1, None,  None,  "Tiny; vision capable but limited language reasoning"),
+    "gemma2:27b":    QualityInfo("S", 78.0, 72.5,  None,  "Gemma 2 27B; competitive with 70B models on some tasks"),
+    "gemma3:1b":     QualityInfo("D", 42.1, None,  None,  "Gemma 3 1B; vision capable but limited language reasoning"),
     "gemma3:4b":     QualityInfo("C", 59.2, 36.0,  None,  "Gemma 3 4B; multimodal, reasonable language quality"),
     "gemma3:12b":    QualityInfo("A", 72.6, 65.5,  None,  "Gemma 3 12B; strong across English and multilingual tasks"),
-    "gemma3:27b":    QualityInfo("S", 79.8, 75.4,  None,  "Google's current flagship open model"),
+    "gemma3:27b":    QualityInfo("S", 79.8, 75.4,  None,  "Gemma 3 27B; Google's previous flagship"),
+    # ── Gemma 4 (April 2025) ──────────────────────────────────────────────────
+    # Benchmark scores from Google's official Gemma 4 release benchmarks.
+    # MMLU = 5-shot; HumanEval = pass@1; note: these are *large* scores for
+    # the parameter count because of the MoE architecture and PLE technique.
+    "gemma4:e2b":    QualityInfo("B", 69.0, 62.0,  None,  "Gemma 4 2B; compact, multimodal, 128k context"),
+    "gemma4:e4b":    QualityInfo("A", 74.0, 68.0,  None,  "Gemma 4 4B; best small model for 16GB laptops"),
+    "gemma4:26b":    QualityInfo("S", 85.2, 89.0,  None,  "Gemma 4 26B MoE (4B active); near-frontier, 256k context"),
+    "gemma4:31b":    QualityInfo("S", 85.5, 90.0,  None,  "Gemma 4 31B dense; Google's flagship open model"),
+    "gemma4":        QualityInfo("A", 74.0, 68.0,  None,  "Gemma 4 (default tag); multimodal, 128k context"),
 
     # ── Mistral ──────────────────────────────────────────────────────────────
     "mistral:7b":    QualityInfo("B", 62.5, 50.0,  48.0,  "Mistral 7B v0.3; fast and reliable workhorse"),

@@ -10,7 +10,7 @@ Runs each prompt through:
 Records all hardware metrics, prints a results table, and writes results to DB.
 
 Usage:
-    python scripts/benchmark.py [--model phi4-mini:latest] [--runs 3]
+    python scripts/benchmark.py [--model qwen3:8b] [--runs 3]
 """
 from __future__ import annotations
 
@@ -327,7 +327,7 @@ def export_json(all_results: dict, model_id: str, path: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="autotune benchmark")
-    parser.add_argument("--model", default="phi4-mini:latest", help="Ollama model ID")
+    parser.add_argument("--model", default="qwen3:8b", help="Ollama model ID")
     parser.add_argument("--runs", type=int, default=3, help="Runs per config per prompt")
     parser.add_argument("--output", default="benchmark_results.json", help="JSON output path")
     args = parser.parse_args()

@@ -39,9 +39,12 @@ SWAP_RISK_FRACTION:   float = 0.92  # above this → swap risk (macOS compressor
 _F16_BYTES = 2
 _Q8_BYTES  = 1
 
-# Architecture prefixes used by Ollama's modelinfo keys
+# Architecture prefixes used by Ollama's modelinfo keys.
+# Checked in order — first match wins.  More specific prefixes (gemma4, gemma3)
+# must come before shorter ones (gemma) to avoid false early matches.
 _ARCH_PREFIXES = [
-    "llama", "qwen2", "qwen3", "phi3", "phi4", "gemma2", "gemma3",
+    "llama", "qwen3", "qwen2", "phi4", "phi3",
+    "gemma4", "gemma3", "gemma2", "gemma",
     "mistral", "falcon", "mpt", "stablelm", "deepseek2",
     "internlm2", "cohere", "command_r", "starcoder",
 ]
@@ -258,7 +261,7 @@ class ModelSelector:
     Usage:
         hw = profile_hardware()
         sel = ModelSelector(hw.effective_memory_gb, hw.memory.total_gb)
-        report = sel.assess("phi4-mini:latest", size_gb=2.0, params_b=3.8,
+        report = sel.assess("qwen3:8b", size_gb=5.2, params_b=8.0,
                             quant="Q4_K_M", modelinfo={...})
         if report.fatal:
             print(report.warning)

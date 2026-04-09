@@ -31,7 +31,7 @@ Ollama must allocate and (on Metal) zero/initialise the KV cache buffer
 *before* running the prompt forward pass.  A 4096-token KV buffer takes
 longer to set up than a 1290-token one even if the prompt is only 10 tokens.
 
-Measured on phi4-mini:latest (same 8-token prompt):
+Measured on qwen3:8b (same 8-token prompt):
     num_ctx=4096 → prompt_eval_duration=324 ms
     num_ctx=1024 → prompt_eval_duration=200 ms   (-38%)
 
@@ -41,7 +41,7 @@ Why load_duration tracks KV allocation cost
 the KV cache tensor.  When ``num_ctx`` shrinks, the KV tensor is smaller and
 this phase is faster.
 
-Measured on phi4-mini:latest (first call after keep_alive expires):
+Measured on qwen3:8b (first call after keep_alive expires):
     num_ctx=4096 → load_duration=2607 ms
     num_ctx=1024 → load_duration=976 ms    (-63%)
 
@@ -168,7 +168,7 @@ class OllamaMetricsClient:
         client = OllamaMetricsClient()
 
         stats = await client.run_with_stats(
-            model="phi4-mini:latest",
+            model="qwen3:8b",
             messages=[{"role": "user", "content": "Hi"}],
             options={"num_ctx": 1290},
             keep_alive="5m",          # or "-1" to keep forever

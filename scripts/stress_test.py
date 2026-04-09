@@ -14,7 +14,7 @@ Metrics per call:
   TTFT (ms), throughput (tok/s), elapsed (s), RAM before/peak/after/delta,
   swap peak, CPU avg/peak, num_ctx, KV precision, pressure level at call time
 
-Models: phi4-mini:latest (primary), llama3.2:3b (secondary)
+Models: qwen3:8b (primary), llama3.2:3b (secondary)
   - qwen2.5-coder:14b used in pressure phase if memory allows
 
 Output: stress_results.json + terminal report
@@ -47,7 +47,7 @@ from autotune.api.kv_manager import memory_pressure_snapshot
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-PRIMARY_MODEL   = "phi4-mini:latest"
+PRIMARY_MODEL   = "qwen3:8b"
 SECONDARY_MODEL = "llama3.2:3b"
 HEAVY_MODEL     = "qwen2.5-coder:14b"
 

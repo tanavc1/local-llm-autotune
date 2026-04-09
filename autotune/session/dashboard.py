@@ -293,7 +293,7 @@ def _device_status_panel(m: LiveMetrics, score: int, start_time: float) -> Panel
             )
     else:
         t.add_row("[dim]LLM[/dim]", Text("No active LLM detected", style="dim"))
-        t.add_row("", Text("Start one: ollama run phi4-mini", style="dim"))
+        t.add_row("", Text("Start one: ollama run qwen3:8b", style="dim"))
 
     t.add_row("", Text(""))
 

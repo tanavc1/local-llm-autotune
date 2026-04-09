@@ -536,7 +536,7 @@ def save_result(result: BenchResult) -> int:
     db.upsert_hardware(hw_dict)
 
     # Auto-register the model if it's not already in the models table.
-    # Ollama model IDs (e.g. "phi4-mini:latest") won't be there — insert a
+    # Ollama model IDs (e.g. "qwen3:8b") won't be there — insert a
     # minimal stub so the FK constraint is satisfied.
     if not db.get_model(result.model_id):
         name = result.model_id.split("/")[-1].split(":")[0]

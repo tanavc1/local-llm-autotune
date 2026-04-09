@@ -54,7 +54,7 @@ Usage
 ::
 
     guard = NoSwapGuard()
-    arch  = await guard.get_model_arch("phi4-mini:latest")
+    arch  = await guard.get_model_arch("qwen3:8b")
     decision = guard.apply(num_ctx=1536, f16_kv=True, arch=arch)
 
     if decision.level != "ok":

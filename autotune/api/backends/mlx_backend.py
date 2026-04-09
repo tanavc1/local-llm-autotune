@@ -117,6 +117,11 @@ _KNOWN_MLX_MAP: dict[str, str] = {
     "gemma3:4b":          "mlx-community/gemma-3-4b-it-4bit",
     "gemma3:12b":         "mlx-community/gemma-3-12b-it-4bit",
     "gemma3":             "mlx-community/gemma-3-4b-it-4bit",
+    # Gemma 4 (April 2025) — multimodal, 128k context
+    "gemma4:e2b":         "mlx-community/gemma-4-2b-it-4bit",
+    "gemma4:e4b":         "mlx-community/gemma-4-4b-it-4bit",
+    "gemma4:26b":         "mlx-community/gemma-4-27b-it-4bit",
+    "gemma4":             "mlx-community/gemma-4-4b-it-4bit",
     # DeepSeek
     "deepseek-r1:7b":     "mlx-community/DeepSeek-R1-Distill-Qwen-7B-4bit",
     "deepseek-r1:8b":     "mlx-community/DeepSeek-R1-Distill-Llama-8B-4bit",
@@ -128,8 +133,11 @@ _KNOWN_MLX_MAP: dict[str, str] = {
     "smollm2:360m":       "mlx-community/SmolLM2-360M-Instruct-4bit",
     "smollm2:1.7b":       "mlx-community/SmolLM2-1.7B-Instruct-4bit",
     "smollm2":            "mlx-community/SmolLM2-1.7B-Instruct-4bit",
-    # Qwen3 VL
+    # Qwen3 VL / Qwen2.5 VL
     "qwen3-vl:8b":        "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+    "qwen2.5-vl:7b":      "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+    # Llama 4
+    "llama4:scout":       "mlx-community/Llama-4-Scout-17B-16E-Instruct-4bit",
 }
 
 # HuggingFace cache root

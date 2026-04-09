@@ -21,8 +21,8 @@ num_ctx ≈ 1290 instead of Ollama's default 4096.
     a 4096-token one — even if only 60 of those slots are used.
 
   VRAM:  KV bytes = 2 × layers × kv_heads × head_dim × num_ctx × 2 (F16)
-    phi4-mini at ctx=4096 → ~536 MB KV cache
-    phi4-mini at ctx=1290 → ~169 MB KV cache
+    qwen3:8b at ctx=4096 → ~536 MB KV cache
+    qwen3:8b at ctx=1290 → ~169 MB KV cache
     Theory: −367 MB.  Measured: −400 to −800 MB (Metal aligns buffers).
 
   Load time:  First call after model load allocates KV as part of Metal buffer
@@ -33,8 +33,8 @@ num_ctx ≈ 1290 instead of Ollama's default 4096.
 
 Usage
 -----
-    python scripts/resource_test.py --model phi4-mini:latest
-    python scripts/resource_test.py --model phi4-mini:latest --runs 3 --output resource_results.json
+    python scripts/resource_test.py --model qwen3:8b:latest
+    python scripts/resource_test.py --model qwen3:8b:latest --runs 3 --output resource_results.json
 """
 from __future__ import annotations
 
@@ -320,7 +320,7 @@ async def phase_vram_comparison(model: str) -> VRAMComparison:
 
     delta = snap_raw.size_vram_gb - snap_tune.size_vram_gb
 
-    # Theoretical KV difference (phi4-mini: 32L, 8 KV heads, 128 head_dim, F16)
+    # Theoretical KV difference (qwen3:8b: 36L, 8 KV heads, 128 head_dim, F16)
     kv_theory = VRAMTracker.kv_savings_gb(
         ctx_raw, ctx_tune, n_layers=32, n_kv_heads=8, head_dim=128, f16_kv=True
     )
@@ -496,7 +496,7 @@ def print_report(
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="autotune resource impact test")
-    parser.add_argument("--model",  default="phi4-mini:latest")
+    parser.add_argument("--model",  default="qwen3:8b")
     parser.add_argument("--runs",   type=int, default=3, help="warm runs per prompt per mode")
     parser.add_argument("--cold",   type=int, default=3, help="cold-start calls per mode")
     parser.add_argument("--output", default="resource_results.json")

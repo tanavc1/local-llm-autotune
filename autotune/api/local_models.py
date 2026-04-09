@@ -31,7 +31,7 @@ _LMSTUDIO_BASE = "http://localhost:1234"
 
 @dataclass
 class LocalModel:
-    id: str                          # e.g. "phi4-mini:latest"
+    id: str                          # e.g. "qwen3:8b"
     name: str                        # base name without tag
     source: str                      # "ollama" | "mlx" | "lmstudio"
     size_gb: Optional[float]

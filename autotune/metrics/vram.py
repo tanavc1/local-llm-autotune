@@ -21,7 +21,7 @@ cache of size::
 
     kv_bytes = 2 × n_layers × n_kv_heads × head_dim × C × bytes_per_elem
 
-    phi4-mini (32 layers, 8 KV heads, 128 head_dim, F16 = 2 bytes):
+    qwen3:8b (32 layers, 8 KV heads, 128 head_dim, F16 = 2 bytes):
         C=4096 → 536 MB KV cache
         C=1290 → 169 MB KV cache
         Savings → 367 MB
@@ -30,7 +30,7 @@ The actual measured savings are slightly larger (~400–800 MB depending on
 quantization workspace and Metal buffer alignment) because Ollama allocates
 additional working memory for attention computation that also scales with C.
 
-Measured (phi4-mini, cold load, system RAM delta):
+Measured (qwen3:8b, cold load, system RAM delta):
     ctx=4096 load → +2.108 GB system RAM
     ctx=512  load → +1.302 GB system RAM
     Savings       →  0.806 GB
@@ -42,7 +42,7 @@ Public API
     from autotune.metrics.vram import VRAMTracker, VRAMSnapshot
 
     tracker = VRAMTracker()
-    snap = await tracker.snapshot("phi4-mini:latest")
+    snap = await tracker.snapshot("qwen3:8b:latest")
     print(f"VRAM in use: {snap.size_vram_gb:.2f} GB")
     print(f"Context length loaded: {snap.context_length}")
 
