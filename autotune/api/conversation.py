@@ -199,6 +199,36 @@ class ConversationManager:
             self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
+    def delete_last_message(self, conv_id: str, role: str = "user") -> bool:
+        """
+        Delete the most recent message with the given role from a conversation.
+
+        Used to roll back an orphaned user turn when inference fails before
+        producing any output — keeps the conversation history clean so that
+        a failed turn is never silently replayed on the next request.
+
+        Returns True if a message was deleted, False if none matched.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT id, tokens FROM messages
+                   WHERE conv_id = ? AND role = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (conv_id, role),
+            ).fetchone()
+            if not row:
+                return False
+            self._conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+            self._conn.execute(
+                """UPDATE conversations
+                   SET total_tokens  = MAX(0, total_tokens  - ?),
+                       message_count = MAX(0, message_count - 1)
+                   WHERE id = ?""",
+                (row["tokens"], conv_id),
+            )
+            self._conn.commit()
+        return True
+
     def get_messages(self, conv_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(

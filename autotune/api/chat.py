@@ -42,11 +42,22 @@ from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
 
-# Enable readline history on Unix
+# Enable readline history and line-editing in input() calls.
+# On macOS the stdlib "readline" is backed by libedit, which uses
+# editline syntax for parse_and_bind.  We bind just enough to make
+# Up/Down arrow work without breaking anything else.
 try:
-    import readline
-    readline.parse_and_bind("")
-except ImportError:
+    import readline as _rl
+    # libedit (macOS) uses "bind" syntax; GNU readline uses "Control-p: ..."
+    if "libedit" in getattr(_rl, "__doc__", "") or sys.platform == "darwin":
+        _rl.parse_and_bind("bind ^[[A ed-prev-history")
+        _rl.parse_and_bind("bind ^[[B ed-next-history")
+    else:
+        _rl.parse_and_bind("tab: complete")
+        _rl.parse_and_bind('"\\e[A": previous-history')
+        _rl.parse_and_bind('"\\e[B": next-history')
+    del _rl
+except Exception:
     pass
 
 console = Console()
@@ -531,8 +542,13 @@ class ChatSession:
     async def _chat(self, user_input: str, _retried: bool = False) -> None:
         profile = get_profile(self.profile_name)
 
-        # Add user message to conversation
-        self.conv_mgr.add_message(self.conv_id, "user", user_input)
+        # Add user message to conversation — but ONLY on the first attempt.
+        # When _retried=True the message was already saved in the first call;
+        # saving it again would corrupt history with a duplicate user turn,
+        # which causes the model to re-process the old message on subsequent
+        # turns — the "auto-send" bug.
+        if not _retried:
+            self.conv_mgr.add_message(self.conv_id, "user", user_input)
 
         # Build context via the intelligent ContextWindow manager.
         # new_user_message=None because the user turn was just saved to DB above.
@@ -603,6 +619,12 @@ class ChatSession:
                     print(chunk.content, end="", flush=True)
                     collected.append(chunk.content)
 
+            # If the stream completed without any content (model returned empty
+            # response, no error), the loading hint is still on the terminal line.
+            # Clear it so it doesn't bleed into the next "You: " prompt.
+            if not header_shown:
+                _clear_line()
+
         except ModelNotAvailableError as e:
             if not header_shown:
                 _clear_line()
@@ -614,6 +636,8 @@ class ChatSession:
                     f"\n[yellow]Model [bold]{self.model_id}[/bold] not found locally.[/yellow]"
                 )
                 try:
+                    console.file.flush()
+                    sys.stdout.flush()
                     answer = input("  → Download it from Ollama now? [Y/n]: ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     answer = "n"
@@ -666,8 +690,8 @@ class ChatSession:
         self._request_count += 1
         self._ttft_sum += ttft_ms
 
-        # Store assistant response
         if content:
+            # Store assistant response
             self.conv_mgr.add_message(
                 self.conv_id, "assistant", content,
                 ttft_ms=ttft_ms, tokens_per_sec=tps, backend=backend_used,
@@ -677,6 +701,17 @@ class ChatSession:
             if conv and not conv.get("title"):
                 title = user_input[:50].strip().replace("\n", " ")
                 self.conv_mgr.update_title(self.conv_id, title)
+        elif not _retried:
+            # Inference failed with no output.  The user message we saved at
+            # the top of this function produced no assistant reply, leaving
+            # an orphaned user turn in the DB.  Roll it back so the next
+            # request doesn't replay a failed turn the user never got a
+            # response for.  (On _retried=True the message was added by the
+            # first call and should stay — the retry IS the recovery path.)
+            try:
+                self.conv_mgr.delete_last_message(self.conv_id, role="user")
+            except Exception:
+                pass  # rollback is best-effort
 
         print()  # newline after streaming
         console.print(
@@ -718,6 +753,13 @@ class ChatSession:
         try:
             while True:
                 try:
+                    # Flush both Rich's internal buffer and raw stdout before
+                    # reading input.  Rich and print() write to the same fd but
+                    # through different buffers; if either is un-flushed when
+                    # input() is called the prompt can appear before the last
+                    # assistant line, making it look like the terminal glitched.
+                    console.file.flush()
+                    sys.stdout.flush()
                     user_input = input("You: ").strip()
                 except (EOFError, KeyboardInterrupt):
                     console.print("\n[dim]Bye![/dim]")
@@ -767,9 +809,10 @@ class ChatSession:
                     elif cmd == "/model":
                         if arg:
                             self.model_id = arg
-                            # Reset optimizer overrides for the new model
+                            # Reset all per-model state for the new model
                             self._ctx_ceiling = None
                             self._kv_precision_override = None
+                            self._no_swap_arch = None   # arch is model-specific
                             console.print(f"[green]Model: {arg}[/green]")
                             self._print_header()
                             # Pre-warm the new model
@@ -783,6 +826,8 @@ class ChatSession:
                             # No model given — show popular models to choose from
                             print_popular_models(console)
                             try:
+                                console.file.flush()
+                                sys.stdout.flush()
                                 choice = input("  Model to pull (Enter to cancel): ").strip()
                             except (EOFError, KeyboardInterrupt):
                                 choice = ""
@@ -796,6 +841,8 @@ class ChatSession:
                             self.chain._ollama_probed_at = 0.0
                             # Ask if user wants to switch to the newly pulled model
                             try:
+                                console.file.flush()
+                                sys.stdout.flush()
                                 switch = input(
                                     f"  Switch to {arg} now? [Y/n]: "
                                 ).strip().lower()
@@ -805,6 +852,7 @@ class ChatSession:
                                 self.model_id = arg
                                 self._ctx_ceiling = None
                                 self._kv_precision_override = None
+                                self._no_swap_arch = None
                                 self._print_header()
                                 await self._preload_model()
 
