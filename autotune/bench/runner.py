@@ -35,6 +35,7 @@ from autotune.api.profiles import get_profile
 from autotune.db.fingerprint import hardware_to_db_dict
 from autotune.db.store import get_db
 from autotune.hardware.profiler import profile_hardware
+from autotune.ttft import TTFTOptimizer
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +387,143 @@ async def run_raw_ollama(
         response_text=content,
         error=error_msg,
         num_ctx_used=4096,   # Ollama's actual default (confirmed via /api/ps)
+    )
+
+
+async def run_bench_ollama_only(
+    model_id: str,
+    messages: list[dict],
+    profile_name: str = "balanced",
+    tag: str = "bench_ollama",
+    apply_hw_tuning: bool = True,
+) -> BenchResult:
+    """
+    Benchmark autotune's optimised settings against Ollama directly.
+
+    Routes DIRECTLY to the Ollama HTTP API (no MLX / LM Studio fallback) and
+    applies all three TTFT mechanisms via :class:`autotune.ttft.TTFTOptimizer`:
+
+      1. Dynamic ``num_ctx``  — sized to this request, not the profile max
+      2. ``keep_alive=-1``    — model never unloads between calls
+      3. ``num_keep``         — system-prompt tokens pinned in KV cache
+
+    OS-level tuning (QOS class, GC disable) is applied separately via
+    :class:`autotune.api.hardware_tuner.HardwareTuner` when ``apply_hw_tuning``
+    is True.
+
+    Compare against :func:`run_raw_ollama` to isolate the autotune delta.
+    """
+    import httpx
+    import json as _json
+
+    profile = get_profile(profile_name)
+    tuner   = get_tuner()
+    _ttft   = TTFTOptimizer()
+
+    vm_before = psutil.virtual_memory()
+    sw_before = psutil.swap_memory()
+    ram_before  = vm_before.used / 1024**3
+    swap_before = sw_before.used / 1024**3
+    prompt_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
+
+    psutil.cpu_percent(interval=None)
+
+    # ── All three TTFT mechanisms in one call ────────────────────────────────
+    ttft_result = _ttft.build_request_options(messages, profile)
+    ollama_options: dict = {**ttft_result["options"]}
+    keep_alive: str      = ttft_result["keep_alive"]
+    # ────────────────────────────────────────────────────────────────────────
+
+    # Layer in remaining inference parameters (not TTFT-related)
+    if profile.repetition_penalty != 1.0:
+        ollama_options["repeat_penalty"] = profile.repetition_penalty
+
+    sampler = _SystemSampler(interval_sec=0.25)
+    sampler.start()
+
+    if apply_hw_tuning:
+        tuner._apply(profile_name)
+
+    t_start = time.perf_counter()
+    first_token_t: Optional[float] = None
+    collected: list[str] = []
+    error_msg: Optional[str] = None
+
+    try:
+        async with httpx.AsyncClient(timeout=360.0) as client:
+            async with client.stream(
+                "POST",
+                "http://localhost:11434/v1/chat/completions",
+                json={
+                    "model":       model_id,
+                    "messages":    messages,
+                    "stream":      True,
+                    "max_tokens":  profile.max_new_tokens,
+                    "temperature": profile.temperature,
+                    "top_p":       profile.top_p,
+                    "options":     ollama_options,
+                    "keep_alive":  keep_alive,
+                },
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = _json.loads(line[6:])
+                    except Exception:
+                        continue
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    content = choices[0].get("delta", {}).get("content", "")
+                    if content:
+                        if first_token_t is None:
+                            first_token_t = time.perf_counter()
+                        collected.append(content)
+    except Exception as e:
+        error_msg = str(e)
+    finally:
+        if apply_hw_tuning:
+            tuner._restore()
+        sampler.stop()
+
+    t_end = time.perf_counter()
+    elapsed = t_end - t_start
+    ttft_ms = (first_token_t - t_start) * 1000 if first_token_t else 0.0
+
+    content = "".join(collected)
+    comp_tokens = estimate_tokens(content)
+    tps = comp_tokens / max(elapsed, 0.01)
+
+    vm_after = psutil.virtual_memory()
+    sw_after = psutil.swap_memory()
+
+    return BenchResult(
+        tag=tag,
+        model_id=model_id,
+        profile_name=profile_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=comp_tokens,
+        ttft_ms=round(ttft_ms, 1),
+        tokens_per_sec=round(tps, 2),
+        elapsed_sec=round(elapsed, 2),
+        ram_before_gb=round(ram_before, 3),
+        ram_peak_gb=round(sampler.peak_ram_gb(), 3),
+        ram_after_gb=round(vm_after.used / 1024**3, 3),
+        swap_before_gb=round(swap_before, 3),
+        swap_peak_gb=round(sampler.peak_swap_gb(), 3),
+        swap_after_gb=round(sw_after.used / 1024**3, 3),
+        cpu_avg_pct=round(sampler.avg_cpu_pct(), 1),
+        cpu_peak_pct=round(sampler.peak_cpu_pct(), 1),
+        response_text=content,
+        error=error_msg,
+        num_ctx_used=ollama_options["num_ctx"],
+        num_keep_used=ollama_options.get("num_keep"),
+        f16_kv_used=ollama_options.get("f16_kv", True),
     )
 
 

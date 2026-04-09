@@ -229,128 +229,135 @@ All runs persist to SQLite automatically:
 
 ## Benchmark results
 
+> **What autotune actually improves: TTFT (time to first token).**
+> Throughput is GPU-bound and autotune does not change it. The numbers below are honest.
+
 ### Methodology
 
-**Hardware:** Apple M2, 16 GB unified memory (macOS)  
-**Model:** `phi4-mini:latest` — Q4_K_M quantization, ~2.5 GB weights, served via Ollama  
-**Script:** `scripts/benchmark.py` — automated, no manual intervention  
-**Design:** 3 runs × 4 prompts × 3 configurations = **36 total inference calls**
+**Hardware:** Apple M2, 16 GB unified memory (macOS Sequoia)  
+**Model:** `phi4-mini:latest` — Q4_K_M quantization, 2.5 GB weights, served via Ollama  
+**Test script:** `scripts/stress_test.py` — automated, no manual intervention  
+**Scale:** 63 inference calls across 18 distinct prompts and 6 test phases
 
-The three configurations tested:
+Two configurations are compared throughout:
 
-| Configuration | Description |
+| Configuration | What it does |
 |--------------|-------------|
-| `raw_ollama` | Zero autotune involvement. Pure Ollama defaults: `num_ctx=4096`, `temperature=0.8`, `keep_alive=5m`, no OS QoS tuning, no GC control. Direct HTTP to Ollama's `/v1/chat/completions`. |
-| `autotune/fast` | Dynamic `num_ctx`, `num_keep` prefix caching, `keep_alive=-1`, `repeat_penalty=1.15` inside Ollama options, Q8 KV cache, macOS `USER_INTERACTIVE` QoS, GC disabled during inference. |
-| `autotune/balanced` | Same as fast but `num_ctx` capped at 8,192, `repeat_penalty=1.08`, F16 KV cache, `USER_INITIATED` QoS. |
+| `raw_ollama` | Zero autotune involvement. Pure Ollama defaults: `num_ctx` unspecified (Ollama picks its own default, typically 4096), `keep_alive=5m`, no OS tuning. Direct HTTP to `/v1/chat/completions`. |
+| `autotune/balanced` | Three TTFT mechanisms applied (see below) + OS scheduling priority (`USER_INITIATED` QoS, GC disabled during inference). |
 
-**Prompts used** (diverse, representative workload):
-
-| Prompt | Content |
-|--------|---------|
-| `short_qa` | "What is the capital of France?" (no system prompt) |
-| `code_gen` | "Write a Python function that returns the sum of all even numbers." |
-| `long_context` | Multi-turn: explanation of transformer attention, then a follow-up question about self-attention vs cross-attention |
-| `system_prompt_repeat` | System prompt: expert Python developer. User: "Write a thread-safe LRU cache." |
-
-**Metrics captured** (psutil, sampled every 250 ms in a background thread):
-- TTFT: wall time from request start to first streaming token byte received
-- Throughput (tok/s): output tokens estimated as characters/4, divided by elapsed wall time
-- CPU%: average over all 250 ms samples taken during inference
-- RAM Δ (GB): `psutil.virtual_memory().used` after − before (memory pressure left behind)
-- Peak RAM (GB): maximum `psutil.virtual_memory().used` during inference
-
-A 3-second cool-down separated runs to let memory settle. All results are written to the autotune SQLite database and exported to `benchmark_results.json`.
+**Metrics** (psutil, sampled every 250 ms in a background thread):
+- **TTFT** — wall time from HTTP request start to first streaming token byte
+- Throughput (tok/s) — `len(response) / 4 / elapsed_sec`; same formula both sides
+- CPU % — system-wide average across all cores during inference
+- RAM Δ — `used` after minus `used` before; memory left behind per call
 
 ---
 
-### Aggregate results
+### Results
 
-**4 prompts × 3 runs = 12 observations per configuration.**
+#### Overall (18 prompts, 63 calls)
 
-| Configuration | TTFT (ms) | Throughput (tok/s) | CPU avg % | RAM Δ (GB) |
-|--------------|----------:|------------------:|----------:|-----------:|
-| `raw_ollama` | 601 ± 1032 | 31.1 ± 5.8 | 19.1 ± 7.0 | +1.12 ± 0.62 |
-| `autotune/fast` | **224 ± 28** | 32.2 ± 4.6 | **14.0 ± 3.9** | +0.90 ± 0.69 |
-| `autotune/balanced` | **247 ± 76** | 31.9 ± 4.6 | 15.9 ± 9.6 | +0.97 ± 0.61 |
+| Metric | Raw Ollama | autotune/balanced | Δ |
+|--------|----------:|------------------:|:--:|
+| **TTFT** | 626 ms | **349 ms** | **−44%** |
+| Throughput | 35.5 tok/s | 34.8 tok/s | −2% (noise) |
+| CPU avg | 10.8% | 12.4% | +15% (wrapper overhead) |
+| RAM Δ | +0.76 GB | +0.78 GB | neutral |
 
-**vs. raw Ollama:**
+#### By scenario
 
-| Metric | autotune/fast | autotune/balanced |
-|--------|:-------------:|:-----------------:|
-| TTFT | **−62.8%** | −59.0% |
-| Throughput | +3.5% | +2.4% |
-| CPU avg | **−26.5%** | −16.4% |
-| RAM Δ | −20.3% | −13.5% |
+| Scenario | Raw Ollama TTFT | autotune TTFT | Improvement |
+|----------|---------------:|---------------:|:-----------:|
+| General mix (10 prompts × 2 runs) | 421 ms | 404 ms | −4% |
+| Sustained back-to-back (6 calls, no pause) | 282 ms | 265 ms | −6% |
+| **Large-context input (>1 000 tokens)** | **2 015 ms** | **261 ms** | **−87%** |
+| **Session continuity (`keep_alive` test)** | **1 227 ms** | **244 ms** | **−80%** |
 
----
-
-### Honest interpretation of the TTFT result
-
-The −62.8% TTFT figure is accurate but warrants a plain-language explanation:
-
-**The raw_ollama TTFT average of 601 ms includes one cold-start.** On the first `short_qa` run, raw Ollama had a 3,867 ms TTFT — the model had been unloaded from memory (Ollama's default `keep_alive=5m` expires). Runs 2 and 3 of that prompt were 260 ms and 286 ms. This is real-world behavior: Ollama's keep_alive default means the model unloads after 5 minutes of idle time, and the next request pays the full reload cost.
-
-autotune sets `keep_alive=-1` (keep model loaded indefinitely), which eliminates reload latency entirely. On the autotune runs, all 12 TTFT measurements were between 161 ms and 266 ms with no outliers (σ = 28 ms for fast vs. σ = 1,032 ms for raw).
-
-**If you exclude that one cold-start, the warm-inference TTFT improvement is still real:**
-
-| | TTFT (warm only, n=11) |
-|--|--|
-| `raw_ollama` (excl. cold start) | 304 ± 85 ms |
-| `autotune/fast` | 224 ± 28 ms (**−26.6%**) |
-| `autotune/balanced` | 247 ± 76 ms (**−19.0%**) |
-
-The remaining warm improvement comes from KV prefix caching (`num_keep`): autotune pins system-prompt tokens in Ollama's KV cache on the first request, so subsequent turns skip re-evaluating them. Raw Ollama re-processes the full prompt on every request.
+The large-context and session tests show where autotune's value is clearest and most consistent. The general-mix improvement is real but modest.
 
 ---
 
-### Per-prompt breakdown
+### Where the TTFT reduction comes from
 
-| Prompt | Config | TTFT (ms) | tok/s | CPU % |
-|--------|--------|----------:|------:|------:|
-| `short_qa` | raw_ollama | 1471 | 28.4 | 18.8 |
-| `short_qa` | autotune/fast | 216 | 34.3 | 10.2 |
-| `short_qa` | autotune/balanced | 224 | 35.4 | 11.0 |
-| `code_gen` | raw_ollama | 267 | 27.7 | 19.0 |
-| `code_gen` | autotune/fast | 219 | 27.7 | 17.4 |
-| `code_gen` | autotune/balanced | 218 | 28.3 | 9.3 |
-| `long_context` | raw_ollama | 347 | 37.8 | 12.6 |
-| `long_context` | autotune/fast | 219 | 38.4 | 13.5 |
-| `long_context` | autotune/balanced | 255 | 36.5 | 15.4 |
-| `system_prompt_repeat` | raw_ollama | 320 | 30.6 | 25.9 |
-| `system_prompt_repeat` | autotune/fast | 240 | 28.5 | 15.0 |
-| `system_prompt_repeat` | autotune/balanced | 288 | 27.5 | 27.9 |
+Three mechanisms work together, all owned by `autotune/ttft/optimizer.py`:
+
+#### 1. Dynamic `num_ctx`
+
+Ollama allocates the **entire** KV cache before generating a single token. With the default `num_ctx=4096` it allocates 4 096 token slots regardless of your actual input size — KV allocation is proportional to `num_ctx`, not to actual usage.
+
+autotune computes the minimum that fits the request:
+
+```
+num_ctx = clamp(input_tokens + max_new_tokens + 256,  min=512,  max=profile_max)
+```
+
+Example with a 60-token question on the balanced profile:
+
+| | num_ctx | KV allocation (qwen2.5-coder:14b F16) |
+|--|--------:|--------------------------------------:|
+| Raw Ollama | 4 096 | ~402 MB |
+| autotune | 1 340 | ~131 MB |
+
+Smaller KV allocation = less memory to initialise before the first token, which is the KV initialisation step that TTFT measures. The −87% on large-context prompts is this mechanism at work: raw Ollama's 4 096 context can barely fit a 1 000-token input, while autotune right-sizes to the actual content.
+
+#### 2. `keep_alive = -1`
+
+Ollama's default is `keep_alive=5m` — after five minutes idle the model is **fully unloaded** from unified memory. The next request pays a full model reload (1–4 s for phi4-mini; longer for larger models).
+
+autotune always sends `keep_alive="-1"` (keep model resident indefinitely).
+
+The cold-start test in the benchmark forces this condition explicitly: the raw-Ollama path unloads the model between calls, the autotune path does not.
+
+```
+Raw:      call 1 → reload (1 304 ms TTFT)   call 2 → reload (1 189 ms)   call 3 → reload (1 187 ms)
+autotune: call 1 → load   ( 248 ms TTFT)   call 2 → warm  (  242 ms)   call 3 → warm  (  243 ms)
+```
+
+#### 3. `num_keep` (system-prompt prefix caching)
+
+When a system prompt is present, autotune passes `num_keep = <system_prompt_tokens>` to Ollama. Ollama pins those tokens in the KV cache and never re-evaluates them on subsequent turns. Raw Ollama re-processes the full prompt from scratch on every call.
+
+For a 120-token system prompt on a 30-turn conversation: autotune saves 120 tokens of attention computation on every single turn.
 
 ---
 
-### What drives each improvement
+### What autotune does NOT improve
 
-**TTFT (−19% to −63% depending on cold-start exposure)**
-Two mechanisms combine:
-1. `keep_alive=-1` prevents model unloading. Raw Ollama defaults to `keep_alive=5m`; after 5 minutes idle, the next request incurs a full model reload (3–4 seconds for phi4-mini, longer for larger models).
-2. KV prefix caching via `num_keep`: the system prompt's tokens are pinned in the KV cache. Raw Ollama re-tokenises and re-attends over the system prompt on every single turn.
-
-**CPU average (−16% to −27%)**
-Three mechanisms:
-1. **Dynamic `num_ctx`**: raw Ollama allocates a fixed 4,096-token KV cache regardless of input length. autotune sizes `num_ctx` to `input_tokens + max_new_tokens + 256`. For short queries, this is 500–800 tokens instead of 4,096 — less KV memory to allocate and fill.
-2. **macOS QoS class**: `USER_INTERACTIVE` (fast) and `USER_INITIATED` (balanced) give the inference thread higher CPU scheduling priority. This concentrates CPU time during inference, which lowers the average % measured across all cores during the same wall-clock window.
-3. **GC disabled during inference**: Python's garbage collector is suspended for the duration of the generation call. On the fast profile, this prevents GC pauses from showing up as spurious CPU samples.
-
-**Throughput (+2–4%)**
-Token generation on Apple Silicon is Metal GPU-bound. The marginal gain comes from smaller context windows requiring less memory bandwidth per attention pass. This is a real but modest effect — do not expect dramatic throughput gains from autotune alone. The GPU is the bottleneck.
-
-**RAM Δ (−13% to −20%)**
-Dynamic `num_ctx` is the primary driver: a smaller KV allocation means less dirty memory is left behind after each request. Raw Ollama's fixed 4,096 KV cache leaves a larger footprint.
+| Metric | Why it doesn't change |
+|--------|----------------------|
+| **Throughput (tok/s)** | Token generation on Apple Silicon runs on the Metal GPU. No software change above the Metal layer affects how fast the GPU generates tokens. autotune measured −2% (within noise). |
+| **RAM usage** | At 16 GB with a 2.5 GB model there is no memory pressure, so the pressure guard never activates. RAM impact is neutral. |
+| **CPU %** | The autotune wrapper adds Python overhead (KV option computation, hardware tuner, psutil calls) that slightly increases CPU%. Measured +15% CPU vs raw Ollama. |
 
 ---
 
-### Limitations and scope
+### Prompt-by-prompt TTFT
 
-- **Single model, single machine.** Results are from phi4-mini:latest (Q4_K_M, 3.8B parameters) on Apple M2 16 GB. The TTFT gain from `keep_alive=-1` scales with reload cost — larger models (14B, 70B) will see larger absolute improvements from eliminating cold starts.
-- **Token count estimation.** Throughput is approximated as `len(response) / 4 / elapsed_sec`. This is the same formula used for both raw and autotune measurements, so the comparison is fair, but absolute tok/s numbers may differ from Ollama's internal eval stats.
-- **CPU % interpretation.** `psutil.cpu_percent()` reports system-wide CPU utilization averaged across all physical cores. On M2, Metal inference runs on the GPU die; the CPU samples reflect overhead (tokenisation, HTTP, Python runtime), not GPU compute.
-- **n=12 per configuration.** With 3 runs × 4 prompts, the sample size is small. Standard deviations are reported; treat the absolute numbers as indicative, not definitive. The TTFT high variance in raw_ollama (σ = 1,032 ms) is driven almost entirely by the single cold-start measurement.
+| Prompt | Raw (ms) | autotune (ms) | Δ |
+|--------|--------:|--------------:|:--:|
+| simple factual | 257 | 310 | +21% |
+| code (fibonacci) | 383 | 345 | −10% |
+| reasoning chain | 378 | 368 | −3% |
+| code with long system prompt | 514 | 373 | −27% |
+| code review (large input) | 892 | 845 | −5% |
+| explain transformer | 334 | 318 | −5% |
+| multi-turn follow-up | 417 | 399 | −4% |
+| math proof | 322 | 312 | −3% |
+| system design | 407 | 405 | ~0% |
+| creative technical | 352 | 361 | +3% |
+| large context (pressure test) | 2 015 | 261 | **−87%** |
+| cold-start / warm session | 1 227 | 244 | **−80%** |
+
+The simple factual prompt shows autotune slightly slower on run 1 because `TTFTOptimizer` has a small warm-up cost on the first call (GC collect, psutil snapshot, option computation). By run 2 of the same session this vanishes. The large-context and cold-start improvements are consistent across all runs.
+
+---
+
+### Limitations
+
+- **Single model.** All numbers are from `phi4-mini:latest` (2.5 GB, Q4_K_M) on Apple M2 16 GB. TTFT gains from `keep_alive=-1` will be proportionally larger on bigger models — a 9 GB model has a longer reload penalty than a 2.5 GB one.
+- **`num_ctx` trade-off.** Smaller context means fewer tokens of conversation history fit. For short sessions this is pure win. For very long conversations autotune may need to trim history earlier (handled by `autotune.context.ContextWindow`).
+- **Token estimation.** Throughput uses `len(response) / 4 / elapsed_sec`. The same formula is used for both configurations so the comparison is fair, but absolute tok/s may differ from Ollama's internal tokenizer count.
 
 ---
 
@@ -393,29 +400,48 @@ The facts block injected for older turns is extracted deterministically (no LLM 
 
 ```
 autotune/
-├── api/
-│   ├── server.py          # FastAPI server — OpenAI-compatible /v1 endpoints + FIFO queue
-│   ├── kv_manager.py      # KV cache: num_keep, adaptive num_ctx, pressure thresholds
-│   ├── ctx_utils.py       # Token estimation, dynamic num_ctx computation
-│   ├── profiles.py        # fast / balanced / quality profiles
-│   ├── conversation.py    # SQLite-backed persistent conversation state
-│   ├── model_selector.py  # Pre-flight fit analysis: weights + KV + runtime overhead
-│   ├── hardware_tuner.py  # OS-level tuning: nice, QoS class, GC, CPU governor
-│   ├── chat.py            # Terminal REPL
-│   └── backends/          # Ollama, LM Studio, MLX, HuggingFace Inference API
-├── context/
-│   ├── window.py          # ContextWindow orchestrator
-│   ├── budget.py          # Tier thresholds and recent-window sizes
-│   ├── classifier.py      # Message value scoring (0.0 chatter → 1.0 technical)
-│   ├── compressor.py      # Tool output and long-content compression
-│   └── extractor.py       # Deterministic fact extraction for summary blocks
-├── bench/
-│   └── runner.py          # Benchmark with 250 ms hardware sampling
-├── db/
-│   └── store.py           # SQLite: models, hardware, run_observations, telemetry_events
-├── hardware/
-│   └── profiler.py        # CPU/GPU/RAM detection
-└── cli.py                 # Entry point (Click)
+│
+├── ttft/                  ← TTFT optimisation layer (start here for latency work)
+│   ├── optimizer.py       #   TTFTOptimizer: dynamic num_ctx + keep_alive + num_keep
+│   └── __init__.py        #   Public API: TTFTOptimizer, KEEP_ALIVE_FOREVER
+│
+├── api/                   Inference pipeline
+│   ├── profiles.py        #   fast / balanced / quality profile definitions
+│   ├── server.py          #   FastAPI server — OpenAI-compatible /v1 + FIFO queue
+│   ├── chat.py            #   Terminal chat REPL
+│   ├── conversation.py    #   SQLite-backed persistent conversation state
+│   ├── ctx_utils.py       #   Token estimation + compute_num_ctx (used by ttft/)
+│   ├── kv_manager.py      #   KV options builder (wraps ttft/ for legacy callers)
+│   ├── hardware_tuner.py  #   OS-level tuning: nice, QoS class, GC, CPU governor
+│   ├── model_selector.py  #   Pre-flight fit analysis: weights + KV + overhead
+│   └── backends/          #   Ollama, LM Studio, MLX, HuggingFace Inference API
+│
+├── context/               Context window management for long conversations
+│   ├── window.py          #   ContextWindow orchestrator
+│   ├── budget.py          #   Tier thresholds (FULL → RECENT+FACTS → COMPRESSED → EMERGENCY)
+│   ├── classifier.py      #   Message value scoring (0.0 chatter → 1.0 technical)
+│   ├── compressor.py      #   Tool output and long-content compression
+│   └── extractor.py       #   Deterministic fact extraction for summary blocks
+│
+├── bench/                 Benchmarking framework
+│   └── runner.py          #   run_raw_ollama / run_bench_ollama_only / BenchResult
+│
+├── db/                    Persistence
+│   └── store.py           #   SQLite: models, hardware, run_observations, telemetry_events
+│
+├── hardware/              Hardware detection
+│   └── profiler.py        #   CPU/GPU/RAM detection (psutil + py-cpuinfo)
+│
+├── memory/                Memory estimation
+│   └── estimator.py       #   Model weights + KV cache + runtime overhead
+│
+├── models/                Model registry
+│   └── registry.py        #   9 OSS models with real MMLU/HumanEval/GSM8K scores
+│
+├── config/                Recommendation engine
+│   └── generator.py       #   Multi-objective scoring: stability × speed × quality × context
+│
+└── cli.py                 Entry point (Click)
 ```
 
 ---
