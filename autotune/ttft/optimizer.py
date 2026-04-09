@@ -143,6 +143,8 @@ class TTFTOptimizer:
         profile: "Profile",
         context_ceiling: Optional[int] = None,
         kv_precision_override: Optional[str] = None,
+        no_swap: bool = False,
+        model_arch=None,           # autotune.memory.noswap.ModelArch, optional
     ) -> dict:
         """
         Return a dict with two keys::
@@ -250,6 +252,29 @@ class TTFTOptimizer:
                 ram_pct, original_ctx, num_ctx,
             )
 
+        # ── Mechanism 4: No-swap guarantee ───────────────────────────────────
+        # Applied after all other reductions.  Only active when no_swap=True.
+        no_swap_decision = None
+        if no_swap and model_arch is not None:
+            from autotune.memory.noswap import NoSwapGuard
+            guard = NoSwapGuard()
+            no_swap_decision = guard.apply(
+                num_ctx=num_ctx,
+                f16_kv=f16_kv,
+                arch=model_arch,
+                snap_fn=_snap_to_bucket,
+            )
+            if no_swap_decision.ctx_changed:
+                logger.info(
+                    "NoSwapGuard: %s → %s ctx, %s KV  (%s, avail=%.2fGB)",
+                    num_ctx, no_swap_decision.num_ctx,
+                    "F16" if no_swap_decision.f16_kv else "Q8",
+                    no_swap_decision.level,
+                    no_swap_decision.available_gb,
+                )
+            num_ctx = no_swap_decision.num_ctx
+            f16_kv  = no_swap_decision.f16_kv
+
         # ── Mechanism 3: num_keep (prefix caching) ───────────────────────────
         num_keep = 0
         if profile.system_prompt_cache:
@@ -276,11 +301,14 @@ class TTFTOptimizer:
             "num_keep":          num_keep,
             "f16_kv":            f16_kv,
             "keep_alive":        KEEP_ALIVE_FOREVER,
+            "no_swap":           no_swap,
+            "no_swap_level":     no_swap_decision.level if no_swap_decision else None,
         }
         logger.debug("TTFTOptimizer: %s", debug)
 
         return {
-            "options":    options,
-            "keep_alive": KEEP_ALIVE_FOREVER,   # Mechanism 2
-            "_debug":     debug,
+            "options":       options,
+            "keep_alive":    KEEP_ALIVE_FOREVER,   # Mechanism 2
+            "_debug":        debug,
+            "_no_swap":      no_swap_decision,     # None if no_swap=False
         }

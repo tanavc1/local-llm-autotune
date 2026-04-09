@@ -2683,44 +2683,45 @@ def stress_test(
               help="Cold-start calls per config (default: 3)")
 @click.option("--output", "-o", default="proof_results.json",
               help="JSON output path (default: proof_results.json)")
-@click.option("--skip-cold", is_flag=True, help="Skip cold-start phase")
-@click.option("--skip-vram", is_flag=True, help="Skip VRAM footprint phase")
+@click.option("--with-cold",   is_flag=True, help="Include cold-start phase")
+@click.option("--with-noswap", is_flag=True, help="Include no-swap mode demonstration")
 @click.option("--list-models", is_flag=True, help="List available Ollama models and exit")
 def proof(
     model: str,
     runs: int,
     cold_runs: int,
     output: str,
-    skip_cold: bool,
-    skip_vram: bool,
+    with_cold: bool,
+    with_noswap: bool,
     list_models: bool,
 ) -> None:
     """
-    Honest, traceable proof-of-improvement benchmark.
+    Does autotune actually help? Run this to find out.
 
-    Compares raw Ollama (zero middleware) vs autotune on:\n
-      Phase 1 — Warm prefill latency (time before first token)\n
-      Phase 2 — Cold-start load time (model unloaded between calls)\n
-      Phase 3 — VRAM footprint (from /api/ps size_vram)\n
+    Measures three things on your model:\n
+      Speed    — time before first word appears (what we improve)\n
+      Memory   — RAM used while model is loaded (what we reduce)\n
+      Honesty  — generation speed (GPU-bound, we don't touch this)\n
 
-    All numbers come from Ollama's internal Go timers. Nothing is estimated
-    by Python. Results are saved to JSON for full reproducibility.
+    Add --with-noswap to see how autotune prevents your Mac from\n
+    swapping under memory pressure.\n
+
+    All numbers from Ollama's own internal timers. Nothing estimated.
     """
     import asyncio as _asyncio
     import argparse as _argparse
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
-    from proof import main as _proof_main, build_parser as _build_parser
+    from proof import main as _proof_main
 
-    # Build a compatible namespace for the proof script's main()
     ns = _argparse.Namespace(
         model=model,
         runs=runs,
         cold_runs=cold_runs,
         output=output,
-        skip_cold=skip_cold,
-        skip_vram=skip_vram,
+        with_cold=with_cold,
+        with_noswap=with_noswap,
         list_models=list_models,
     )
     _asyncio.run(_proof_main(ns))

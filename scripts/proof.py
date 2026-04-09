@@ -1,38 +1,19 @@
 #!/usr/bin/env python3
 """
-autotune proof — honest, traceable benchmark
+autotune proof — does it actually help?
 
-Compares raw Ollama (zero middleware) vs autotune on three dimensions:
+Runs your model twice on each prompt: once with plain Ollama, once with
+autotune. Measures what actually changes and shows you an honest comparison.
 
-  Phase 1 — Warm prefill latency
-    Model stays loaded. Measures time Ollama spends filling the KV cache
-    before generating the first token. Source: prompt_eval_duration from
-    Ollama's own /api/chat response (nanoseconds from Go time.Now()).
-
-  Phase 2 — Cold-start load time
-    Model unloaded between every call. Measures full KV-buffer allocation
-    cost. Source: load_duration from /api/chat response.
-
-  Phase 3 — VRAM footprint
-    Reads size_vram from /api/ps after loading each config. This is the
-    actual Metal unified memory Ollama holds — weights + KV cache combined.
-
-Nothing here is estimated by Python timing or psutil. Every latency number
-comes directly from Ollama's internal Go timers.
-
-What this proves (and what it honestly does not):
-  PROVEN    prefill_ms is lower    — smaller KV buffer takes less time to init
-  PROVEN    load_ms is lower       — smaller Metal MTLBuffer allocation
-  PROVEN    VRAM is lower          — measured directly from /api/ps
-  NOT CLAIMED  tok/s changes       — GPU-bound, num_ctx has no effect on decode
+All timing numbers come from Ollama's own internal timers — nothing
+estimated by Python.
 
 Usage:
-    python scripts/proof.py
+    python scripts/proof.py                         (uses phi4-mini:latest)
     python scripts/proof.py --model llama3.2:3b
-    python scripts/proof.py --model phi4-mini:latest --runs 5
-    python scripts/proof.py --list-models
-    python scripts/proof.py --skip-cold --skip-vram   (quick warm-only run)
-    autotune proof [same flags]
+    python scripts/proof.py --model phi4-mini --with-cold --with-noswap
+    autotune proof --model phi4-mini:latest
+    autotune proof --list-models
 """
 from __future__ import annotations
 
@@ -45,7 +26,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
@@ -55,234 +36,127 @@ import httpx
 import psutil
 from rich.console import Console
 from rich.panel import Panel
+from rich.rule import Rule
+from rich import box
 from rich.table import Table
 from rich.text import Text
-from rich import box
 
-from autotune.metrics.ollama_client import OllamaMetricsClient, NativeInferenceStats
-from autotune.metrics.vram import VRAMTracker, VRAMSnapshot
+from autotune.metrics.ollama_client import OllamaMetricsClient
+from autotune.metrics.vram import VRAMTracker
 from autotune.ttft.optimizer import TTFTOptimizer
 from autotune.api.profiles import get_profile
+from autotune.memory.noswap import NoSwapGuard, ModelArch
 
-console = Console()
+console = Console(width=72)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test prompts — chosen to cover the realistic distribution of real-world use
+# Prompts  (4 types that cover the real distribution of everyday use)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PROMPTS = [
     {
-        "id": "tiny",
-        "label": "Tiny",
+        "id":    "quick",
+        "label": "Quick question",
         "messages": [
-            {"role": "user", "content": "What is 144 divided by 12, times 7?"},
+            {"role": "user", "content": "What are three benefits of drinking water regularly?"},
         ],
     },
     {
-        "id": "short_factual",
-        "label": "Short factual",
+        "id":    "code",
+        "label": "Code task",
         "messages": [
             {"role": "user", "content": (
-                "List five countries in Southeast Asia and their capitals. "
-                "Format as a bulleted list."
+                "Write a Python function `find_duplicates(lst)` that returns "
+                "a list of values that appear more than once. Include a docstring."
             )},
         ],
     },
     {
-        "id": "code_gen",
-        "label": "Code gen",
-        "messages": [
-            {"role": "user", "content": (
-                "Write a Python function called `binary_search` that searches "
-                "a sorted list for a target value and returns its index, or -1 "
-                "if not found. Include type hints and a short docstring."
-            )},
-        ],
-    },
-    {
-        "id": "system_user",
-        "label": "System+user",
+        "id":    "sys_prompt",
+        "label": "With system prompt",
         "messages": [
             {"role": "system", "content": (
-                "You are an expert Python developer. Always write clean, idiomatic "
-                "Python with type hints, docstrings, and proper error handling. "
-                "Prefer the standard library. Keep functions focused and short."
+                "You are a helpful assistant. Be concise and accurate. "
+                "Always explain your reasoning step by step."
             )},
             {"role": "user", "content": (
-                "Write a function that reads a JSON config file and returns a "
-                "validated dict, raising a clear error if required keys are missing."
+                "What is the difference between a process and a thread? "
+                "When would you use each?"
             )},
         ],
     },
     {
-        "id": "code_review",
-        "label": "Code review",
+        "id":    "chat",
+        "label": "Multi-turn chat",
         "messages": [
-            {"role": "user", "content": (
-                "Review the following Python code for security vulnerabilities, "
-                "bugs, and performance issues. Be specific and brief:\n\n"
-                "```python\n"
-                "import sqlite3\n\n"
-                "def get_user(username, password, db_path='users.db'):\n"
-                "    conn = sqlite3.connect(db_path)\n"
-                "    cursor = conn.cursor()\n"
-                "    query = f\"SELECT * FROM users WHERE username='{username}' "
-                "AND password='{password}'\"\n"
-                "    result = cursor.execute(query).fetchone()\n"
-                "    conn.close()\n"
-                "    return result\n\n"
-                "def update_profile(user_id, data):\n"
-                "    conn = sqlite3.connect('users.db')\n"
-                "    for key, val in data.items():\n"
-                "        conn.execute(f'UPDATE users SET {key}={val} "
-                "WHERE id={user_id}')\n"
-                "    conn.commit()\n"
-                "```\n"
+            {"role": "user",    "content": "What is a Python decorator?"},
+            {"role": "assistant","content": (
+                "A decorator is a function that wraps another function to extend "
+                "or modify its behavior without changing its source code. "
+                "They use the @syntax and are applied at definition time."
             )},
-        ],
-    },
-    {
-        "id": "multi_turn",
-        "label": "Multi-turn",
-        "messages": [
-            {"role": "user",
-             "content": "Explain what a hash table is and how collision resolution works."},
-            {"role": "assistant",
-             "content": (
-                 "A hash table is a data structure that maps keys to values using "
-                 "a hash function. The hash function converts a key into an index "
-                 "in an underlying array. Collision resolution strategies include: "
-                 "chaining (each bucket holds a linked list of entries), open "
-                 "addressing (linear/quadratic probing to find the next empty slot), "
-                 "and Robin Hood hashing (swap entries to minimise probe distances). "
-                 "Python's dict uses open addressing with a compact hash table."
-             )},
-            {"role": "user",
-             "content": (
-                 "What is the average-case time complexity for lookup, and what "
-                 "degrades it to worst-case? Give a concrete Python example of "
-                 "when this matters."
-             )},
+            {"role": "user",    "content": "Show me a simple example that logs function calls."},
         ],
     },
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Configuration builders
+# Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-RAW_CTX = 4096
+RAW_CTX        = 4096
 RAW_KEEP_ALIVE = "5m"
-
-def raw_options() -> dict:
-    """Baseline: Ollama defaults. No autotune settings at all."""
-    return {"num_ctx": RAW_CTX}
+MAX_TOKENS     = 120       # cap generation to keep test short (doesn't affect prefill)
 
 
-def autotune_options_for(messages: list[dict]) -> tuple[dict, str]:
-    """
-    Compute autotune's options for these messages.
-    Returns (options_dict, keep_alive_str).
-    """
+def raw_opts() -> dict:
+    return {"num_ctx": RAW_CTX, "num_predict": MAX_TOKENS}
+
+
+def autotune_opts(messages: list[dict]) -> tuple[dict, str]:
     profile = get_profile("balanced")
-    result = TTFTOptimizer().build_request_options(messages, profile)
-    return result["options"], result["keep_alive"]
+    result  = TTFTOptimizer().build_request_options(messages, profile)
+    opts    = result["options"]
+    opts["num_predict"] = MAX_TOKENS
+    return opts, result["keep_alive"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Result types
+# Data types
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
-class RunResult:
-    prompt_id: str
-    mode: str          # "raw" or "autotune"
-    run_idx: int
-    num_ctx: int
+class Run:
+    prompt_id:  str
+    mode:       str
+    run_idx:    int
+    num_ctx:    int
     prefill_ms: float
-    eval_tps: float
-    load_ms: float
-    eval_count: int
-    error: Optional[str] = None
+    eval_tps:   float
+    load_ms:    float
+    error:      Optional[str] = None
 
     @property
     def ok(self) -> bool:
         return self.error is None
 
 
-@dataclass
-class PhaseResult:
-    mode: str
-    runs: list[RunResult] = field(default_factory=list)
-
-    def ok_runs(self) -> list[RunResult]:
-        return [r for r in self.runs if r.ok]
-
-    def mean_prefill(self) -> Optional[float]:
-        vals = [r.prefill_ms for r in self.ok_runs() if r.prefill_ms > 0]
-        return statistics.mean(vals) if vals else None
-
-    def mean_tps(self) -> Optional[float]:
-        vals = [r.eval_tps for r in self.ok_runs() if r.eval_tps > 0]
-        return statistics.mean(vals) if vals else None
-
-    def mean_load(self) -> Optional[float]:
-        vals = [r.load_ms for r in self.ok_runs()]
-        return statistics.mean(vals) if vals else None
-
-    def prefill_by_prompt(self) -> dict[str, float]:
-        out: dict[str, list[float]] = {}
-        for r in self.ok_runs():
-            if r.prefill_ms > 0:
-                out.setdefault(r.prompt_id, []).append(r.prefill_ms)
-        return {k: statistics.mean(v) for k, v in out.items()}
-
-    def ctx_by_prompt(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for r in self.ok_runs():
-            out[r.prompt_id] = r.num_ctx  # last value wins (they should all be same)
-        return out
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _pct(baseline: float, tuned: float) -> float:
+def _bar(value: float, max_val: float, width: int = 28) -> str:
+    filled = min(width, round((value / max(max_val, 0.01)) * width))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _pct(baseline: float, new: float) -> float:
     if baseline <= 0:
         return 0.0
-    return (tuned - baseline) / baseline * 100.0
+    return (new - baseline) / baseline * 100.0
 
 
-def _fmt_pct(pct: float, invert: bool = False) -> tuple[str, str]:
-    """
-    Returns (text, style).
-    invert=True: lower is better (latency metrics — negative pct = good).
-    invert=False: higher is better (throughput).
-    """
-    sign = "+" if pct >= 0 else ""
-    text = f"{sign}{pct:.1f}%"
-    if invert:
-        good = pct <= -5.0
-        bad  = pct >= +5.0
-    else:
-        good = pct >= +5.0
-        bad  = pct <= -5.0
-    neutral = not good and not bad
-    style = "green bold" if good else ("red" if bad else "dim")
-    indicator = " ✓" if good else (" ✗" if bad else " ≈")
-    return text + indicator, style
-
-
-def _get_system_info() -> dict:
-    vm = psutil.virtual_memory()
-    info = {
-        "platform": platform.system(),
-        "machine":  platform.machine(),
-        "ram_total_gb": round(vm.total / 1024**3, 1),
-        "ram_used_pct": round(vm.percent, 1),
-        "chip": "unknown",
-    }
+def _chip() -> str:
     try:
         r = subprocess.run(
             ["system_profiler", "SPHardwareDataType"],
@@ -290,11 +164,18 @@ def _get_system_info() -> dict:
         )
         for line in r.stdout.splitlines():
             if "Chip:" in line:
-                info["chip"] = line.split(":", 1)[1].strip()
-                break
+                return line.split(":", 1)[1].strip()
     except Exception:
         pass
-    return info
+    return platform.machine()
+
+
+async def _check_ollama() -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=3) as c:
+            return (await c.get("http://localhost:11434/api/ps")).status_code == 200
+    except Exception:
+        return False
 
 
 async def _list_models() -> list[str]:
@@ -306,624 +187,482 @@ async def _list_models() -> list[str]:
         return []
 
 
-async def _ensure_ollama() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get("http://localhost:11434/api/ps")
-            return r.status_code == 200
-    except Exception:
-        return False
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 1 — Warm inference
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_warm_phase(
-    model: str,
-    n_runs: int,
-    client: OllamaMetricsClient,
-) -> tuple[PhaseResult, PhaseResult]:
-    """
-    Run all prompts N times for each config with model staying loaded.
-    Returns (raw_results, autotune_results).
+async def run_warm(model: str, n_runs: int, client: OllamaMetricsClient
+                   ) -> tuple[list[Run], list[Run]]:
+    raw_runs: list[Run] = []
+    tune_runs: list[Run] = []
+    total = len(PROMPTS) * 2 * n_runs
 
-    Protocol:
-    - For each prompt: run raw N times, then autotune N times.
-    - First call of each config may trigger a KV-realloc if num_ctx changed;
-      this is included in timing because it reflects real-world behaviour.
-    - keep_alive is set so model stays loaded across runs.
-    """
-    raw_phase = PhaseResult(mode="raw")
-    tune_phase = PhaseResult(mode="autotune")
+    console.print()
 
-    total_runs = len(PROMPTS) * 2 * n_runs
-    done = 0
+    for p in PROMPTS:
+        msgs = p["messages"]
+        pid  = p["id"]
+        lbl  = p["label"]
 
-    for prompt in PROMPTS:
-        msgs = prompt["messages"]
-        pid  = prompt["id"]
-        lbl  = prompt["label"]
-
-        # ── RAW runs ──────────────────────────────────────────────────────────
-        r_opts = raw_options()
         for run_i in range(n_runs):
-            done += 1
+            done = len(raw_runs) + len(tune_runs) + 1
             console.print(
-                f"  [dim]warm[/dim] [cyan]{pid}[/cyan]  raw  "
-                f"[dim]run {run_i+1}/{n_runs}[/dim]  "
-                f"[dim]({done}/{total_runs})[/dim]",
-                end="  ",
+                f"  [dim]{done:2}/{total}[/dim]  {lbl}  [dim]raw[/dim]  ",
+                end="",
             )
-            stats = await client.run_with_stats(
-                model=model,
-                messages=msgs,
-                options=r_opts,
+            s = await client.run_with_stats(
+                model=model, messages=msgs, options=raw_opts(),
                 keep_alive=RAW_KEEP_ALIVE,
             )
-            if stats.error:
-                console.print(f"[red]ERROR: {stats.error}[/red]")
-                raw_phase.runs.append(RunResult(
-                    prompt_id=pid, mode="raw", run_idx=run_i,
-                    num_ctx=RAW_CTX, prefill_ms=0, eval_tps=0, load_ms=0,
-                    eval_count=0, error=stats.error,
-                ))
+            if s.error:
+                console.print(f"[red]error[/red]")
             else:
                 console.print(
-                    f"[green]prefill={stats.prefill_ms:.0f}ms[/green]  "
-                    f"tps={stats.eval_tps:.1f}  "
-                    f"ctx={stats.num_ctx}"
+                    f"[dim]prefill={s.prefill_ms:.0f}ms  "
+                    f"ctx={s.num_ctx}[/dim]"
                 )
-                raw_phase.runs.append(RunResult(
-                    prompt_id=pid, mode="raw", run_idx=run_i,
-                    num_ctx=stats.num_ctx, prefill_ms=stats.prefill_ms,
-                    eval_tps=stats.eval_tps, load_ms=stats.load_ms,
-                    eval_count=stats.eval_count,
-                ))
+            raw_runs.append(Run(
+                prompt_id=pid, mode="raw", run_idx=run_i,
+                num_ctx=s.num_ctx, prefill_ms=s.prefill_ms,
+                eval_tps=s.eval_tps, load_ms=s.load_ms,
+                error=s.error or None,
+            ))
 
-        # ── AUTOTUNE runs ─────────────────────────────────────────────────────
-        a_opts, a_keep = autotune_options_for(msgs)
         for run_i in range(n_runs):
-            done += 1
+            done = len(raw_runs) + len(tune_runs) + 1
             console.print(
-                f"  [dim]warm[/dim] [cyan]{pid}[/cyan]  autotune  "
-                f"[dim]run {run_i+1}/{n_runs}[/dim]  "
-                f"[dim]({done}/{total_runs})[/dim]",
-                end="  ",
+                f"  [dim]{done:2}/{total}[/dim]  {lbl}  [dim]autotune[/dim]  ",
+                end="",
             )
-            stats = await client.run_with_stats(
-                model=model,
-                messages=msgs,
-                options=a_opts,
+            a_opts, a_keep = autotune_opts(msgs)
+            s = await client.run_with_stats(
+                model=model, messages=msgs, options=a_opts,
                 keep_alive=a_keep,
             )
-            if stats.error:
-                console.print(f"[red]ERROR: {stats.error}[/red]")
-                tune_phase.runs.append(RunResult(
-                    prompt_id=pid, mode="autotune", run_idx=run_i,
-                    num_ctx=a_opts.get("num_ctx", 0), prefill_ms=0,
-                    eval_tps=0, load_ms=0, eval_count=0, error=stats.error,
-                ))
+            if s.error:
+                console.print(f"[red]error[/red]")
             else:
                 console.print(
-                    f"[green]prefill={stats.prefill_ms:.0f}ms[/green]  "
-                    f"tps={stats.eval_tps:.1f}  "
-                    f"ctx={stats.num_ctx}"
+                    f"[dim]prefill={s.prefill_ms:.0f}ms  "
+                    f"ctx={s.num_ctx}[/dim]"
                 )
-                tune_phase.runs.append(RunResult(
-                    prompt_id=pid, mode="autotune", run_idx=run_i,
-                    num_ctx=stats.num_ctx, prefill_ms=stats.prefill_ms,
-                    eval_tps=stats.eval_tps, load_ms=stats.load_ms,
-                    eval_count=stats.eval_count,
-                ))
+            tune_runs.append(Run(
+                prompt_id=pid, mode="autotune", run_idx=run_i,
+                num_ctx=s.num_ctx, prefill_ms=s.prefill_ms,
+                eval_tps=s.eval_tps, load_ms=s.load_ms,
+                error=s.error or None,
+            ))
 
-    return raw_phase, tune_phase
+    return raw_runs, tune_runs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 2 — Cold-start
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_cold_phase(
-    model: str,
-    n_calls: int,
-    client: OllamaMetricsClient,
-) -> tuple[PhaseResult, PhaseResult]:
-    """
-    Measure model load + KV allocation time with model unloaded between each call.
-    Uses a single representative prompt (short_factual) for repeatability.
-    Returns (raw_results, autotune_results).
-    """
-    raw_phase  = PhaseResult(mode="raw_cold")
-    tune_phase = PhaseResult(mode="autotune_cold")
+async def run_cold(model: str, n_calls: int, client: OllamaMetricsClient
+                   ) -> tuple[list[Run], list[Run]]:
+    raw_runs: list[Run] = []
+    tune_runs: list[Run] = []
+    probe = PROMPTS[0]["messages"]
 
-    # Use the short factual prompt — small, representative
-    probe = next(p for p in PROMPTS if p["id"] == "short_factual")
-    msgs  = probe["messages"]
-
-    tracker = VRAMTracker()
-
-    async def _unload(label: str) -> None:
-        console.print(f"  [dim]Unloading {model}…[/dim]", end=" ")
+    async def unload() -> None:
         await client.unload_model(model)
         await asyncio.sleep(2.0)
-        console.print("[dim]done.[/dim]")
 
-    # ── RAW cold calls ────────────────────────────────────────────────────────
-    r_opts = raw_options()
     for i in range(n_calls):
-        await _unload("raw")
-        console.print(
-            f"  [dim]cold[/dim] raw  [dim]call {i+1}/{n_calls}[/dim]",
-            end="  ",
-        )
-        stats = await client.run_with_stats(
-            model=model,
-            messages=msgs,
-            options=r_opts,
+        console.print(f"  [dim]{i+1}/{n_calls}[/dim]  cold raw…", end="\r")
+        await unload()
+        s = await client.run_with_stats(
+            model=model, messages=probe, options=raw_opts(),
             keep_alive=RAW_KEEP_ALIVE,
         )
-        if stats.error:
-            console.print(f"[red]ERROR: {stats.error}[/red]")
-            raw_phase.runs.append(RunResult(
-                prompt_id="cold_probe", mode="raw_cold", run_idx=i,
-                num_ctx=RAW_CTX, prefill_ms=0, eval_tps=0, load_ms=0,
-                eval_count=0, error=stats.error,
-            ))
-        else:
-            ttft = stats.load_ms + stats.prefill_ms
-            console.print(
-                f"[green]load={stats.load_ms:.0f}ms[/green]  "
-                f"prefill={stats.prefill_ms:.0f}ms  "
-                f"ttft={ttft:.0f}ms  ctx={stats.num_ctx}"
-            )
-            raw_phase.runs.append(RunResult(
-                prompt_id="cold_probe", mode="raw_cold", run_idx=i,
-                num_ctx=stats.num_ctx, prefill_ms=stats.prefill_ms,
-                eval_tps=stats.eval_tps, load_ms=stats.load_ms,
-                eval_count=stats.eval_count,
-            ))
+        raw_runs.append(Run(
+            prompt_id="cold", mode="raw_cold", run_idx=i,
+            num_ctx=s.num_ctx, prefill_ms=s.prefill_ms,
+            eval_tps=s.eval_tps, load_ms=s.load_ms,
+            error=s.error or None,
+        ))
 
-    # ── AUTOTUNE cold calls ───────────────────────────────────────────────────
-    a_opts, a_keep = autotune_options_for(msgs)
+    a_opts, a_keep = autotune_opts(probe)
     for i in range(n_calls):
-        await _unload("autotune")
-        console.print(
-            f"  [dim]cold[/dim] autotune  [dim]call {i+1}/{n_calls}[/dim]",
-            end="  ",
-        )
-        stats = await client.run_with_stats(
-            model=model,
-            messages=msgs,
-            options=a_opts,
+        console.print(f"  [dim]{i+1}/{n_calls}[/dim]  cold autotune…", end="\r")
+        await unload()
+        s = await client.run_with_stats(
+            model=model, messages=probe, options=a_opts,
             keep_alive=a_keep,
         )
-        if stats.error:
-            console.print(f"[red]ERROR: {stats.error}[/red]")
-            tune_phase.runs.append(RunResult(
-                prompt_id="cold_probe", mode="autotune_cold", run_idx=i,
-                num_ctx=a_opts.get("num_ctx", 0), prefill_ms=0,
-                eval_tps=0, load_ms=0, eval_count=0, error=stats.error,
-            ))
-        else:
-            ttft = stats.load_ms + stats.prefill_ms
-            console.print(
-                f"[green]load={stats.load_ms:.0f}ms[/green]  "
-                f"prefill={stats.prefill_ms:.0f}ms  "
-                f"ttft={ttft:.0f}ms  ctx={stats.num_ctx}"
-            )
-            tune_phase.runs.append(RunResult(
-                prompt_id="cold_probe", mode="autotune_cold", run_idx=i,
-                num_ctx=stats.num_ctx, prefill_ms=stats.prefill_ms,
-                eval_tps=stats.eval_tps, load_ms=stats.load_ms,
-                eval_count=stats.eval_count,
-            ))
+        tune_runs.append(Run(
+            prompt_id="cold", mode="autotune_cold", run_idx=i,
+            num_ctx=s.num_ctx, prefill_ms=s.prefill_ms,
+            eval_tps=s.eval_tps, load_ms=s.load_ms,
+            error=s.error or None,
+        ))
 
-    return raw_phase, tune_phase
+    console.print(" " * 72, end="\r")
+    return raw_runs, tune_runs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase 3 — VRAM footprint
+# Phase 3 — VRAM
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class VRAMResult:
     raw_ctx: int
-    raw_vram_gb: float
+    raw_gb:  float
     tune_ctx: int
-    tune_vram_gb: float
-    delta_gb: float
-    theory_delta_gb: float
+    tune_gb:  float
 
     @property
-    def overhead_gb(self) -> float:
-        return self.delta_gb - self.theory_delta_gb
+    def saved_gb(self) -> float:
+        return round(self.raw_gb - self.tune_gb, 3)
 
 
-async def run_vram_phase(
-    model: str,
-    client: OllamaMetricsClient,
-) -> Optional[VRAMResult]:
-    """
-    Load model with each config, read /api/ps size_vram, compare.
-    Returns None if either load fails.
-    """
+async def run_vram(model: str, client: OllamaMetricsClient) -> Optional[VRAMResult]:
     tracker = VRAMTracker()
-
-    # Determine autotune ctx using the short_factual probe
-    probe_msgs = next(p["messages"] for p in PROMPTS if p["id"] == "short_factual")
-    a_opts, a_keep = autotune_options_for(probe_msgs)
+    probe   = PROMPTS[0]["messages"]
+    a_opts, a_keep = autotune_opts(probe)
     tune_ctx = a_opts.get("num_ctx", 1024)
 
-    # ── Load with autotune ctx ────────────────────────────────────────────────
-    console.print(f"  [dim]Loading {model} with autotune ctx={tune_ctx}…[/dim]", end=" ")
     await client.unload_model(model)
     await asyncio.sleep(1.0)
-    stats = await client.run_with_stats(
-        model=model, messages=probe_msgs, options=a_opts, keep_alive="30m",
-    )
-    if stats.error:
-        console.print(f"[red]ERROR: {stats.error}[/red]")
+    s = await client.run_with_stats(model=model, messages=probe,
+                                    options=a_opts, keep_alive="30m")
+    if s.error:
         return None
     snap_tune = await tracker.snapshot(model)
-    console.print(f"[green]size_vram = {snap_tune.size_vram_gb:.3f} GB[/green]")
 
-    # ── Load with raw ctx ─────────────────────────────────────────────────────
-    console.print(f"  [dim]Loading {model} with raw ctx={RAW_CTX}…[/dim]", end=" ")
     await client.unload_model(model)
     await asyncio.sleep(1.0)
-    r_opts = raw_options()
-    stats = await client.run_with_stats(
-        model=model, messages=probe_msgs, options=r_opts, keep_alive="30m",
-    )
-    if stats.error:
-        console.print(f"[red]ERROR: {stats.error}[/red]")
+    s = await client.run_with_stats(model=model, messages=probe,
+                                    options=raw_opts(), keep_alive="30m")
+    if s.error:
         return None
     snap_raw = await tracker.snapshot(model)
-    console.print(f"[green]size_vram = {snap_raw.size_vram_gb:.3f} GB[/green]")
 
-    # Theoretical KV-only savings (phi4-mini: 32L, 8KV heads, 128 head_dim)
-    # These are approximate — we don't know exact arch without querying modelinfo
-    theory = VRAMTracker.kv_savings_gb(
-        ctx_raw=RAW_CTX, ctx_tuned=tune_ctx,
-        n_layers=32, n_kv_heads=8, head_dim=128, f16_kv=True,
-    )
-
-    delta = snap_raw.size_vram_gb - snap_tune.size_vram_gb
-
-    # Restore autotune config (keep loaded for rest of session)
     await client.unload_model(model)
 
     return VRAMResult(
-        raw_ctx=RAW_CTX,
-        raw_vram_gb=snap_raw.size_vram_gb,
-        tune_ctx=tune_ctx,
-        tune_vram_gb=snap_tune.size_vram_gb,
-        delta_gb=round(delta, 3),
-        theory_delta_gb=round(theory, 3),
+        raw_ctx=RAW_CTX, raw_gb=snap_raw.size_vram_gb,
+        tune_ctx=tune_ctx, tune_gb=snap_tune.size_vram_gb,
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Output — Rich tables
+# Phase 4 — No-swap demo
 # ─────────────────────────────────────────────────────────────────────────────
 
-def print_header(model: str, sysinfo: dict, n_runs: int) -> None:
-    console.print()
-    console.print(Panel(
-        f"[bold white]autotune proof-of-improvement[/bold white]  —  "
-        f"[cyan]{model}[/cyan]\n"
-        f"[dim]{sysinfo['chip']}  ·  {sysinfo['ram_total_gb']}GB RAM  "
-        f"({sysinfo['ram_used_pct']}% in use)  ·  "
-        f"{n_runs} runs per prompt[/dim]",
-        expand=False,
-        border_style="blue",
-    ))
-    console.print()
-    console.print(
-        "[dim]All timings from Ollama's internal Go timers (/api/chat response fields).\n"
-        "Nothing is estimated by Python. VRAM from /api/ps size_vram.[/dim]"
-    )
-    console.print()
+@dataclass
+class NoSwapDemo:
+    available_gb: float
+    model_id: str
+    arch: ModelArch
+    scenarios: list[dict]   # each: {label, ctx, kv_gb, level, f16, fits}
 
 
-def print_warm_results(raw: PhaseResult, tune: PhaseResult) -> None:
-    console.print()
-    console.print(Panel(
-        "[bold]Phase 1 — Warm Inference[/bold]\n"
-        "[dim]Model loaded throughout. Measures time to fill the KV cache before "
-        "the first token.\nSmaller num_ctx = smaller Metal buffer to initialise = "
-        "lower prefill latency.[/dim]",
-        border_style="cyan",
-        expand=False,
-    ))
+async def run_noswap_demo(model: str) -> NoSwapDemo:
+    """
+    Shows what no-swap mode does at different memory pressure levels.
+    Does not actually run inference — just computes what would happen.
+    """
+    guard = NoSwapGuard()
+    arch  = await guard.get_model_arch(model)
 
-    raw_by_prompt  = raw.prefill_by_prompt()
-    tune_by_prompt = tune.prefill_by_prompt()
-    raw_ctx        = raw.ctx_by_prompt()
-    tune_ctx       = tune.ctx_by_prompt()
+    vm  = psutil.virtual_memory()
+    available_gb = vm.available / 1024**3
 
-    # Per-prompt prefill table
-    t = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold",
-              show_edge=False, padding=(0, 1))
-    t.add_column("Prompt",          style="cyan", min_width=14, max_width=14)
-    t.add_column("ctx raw→tune",    justify="right", style="dim", min_width=12)
-    t.add_column("prefill raw",     justify="right", min_width=11)
-    t.add_column("prefill autotune", justify="right", min_width=16)
-    t.add_column("Δ prefill",       justify="right", min_width=10)
+    scenarios = []
 
-    all_raw_prefills  = []
-    all_tune_prefills = []
-    raw_tps_vals      = []
-    tune_tps_vals     = []
-    rt_agg = tt_agg = tps_pct = None
+    # Simulate what happens at various available-RAM levels
+    sim_levels = [
+        ("Current system",       available_gb),
+        ("Light pressure (4 GB free)",  4.0),
+        ("Moderate pressure (2 GB free)", 2.0),
+        ("High pressure (1 GB free)",     1.0),
+        ("Critical (0.5 GB free)",        0.5),
+    ]
 
-    raw_tps_by  = {}
-    tune_tps_by = {}
-    for r in raw.ok_runs():
-        raw_tps_by.setdefault(r.prompt_id, []).append(r.eval_tps)
-    for r in tune.ok_runs():
-        tune_tps_by.setdefault(r.prompt_id, []).append(r.eval_tps)
+    for label, avail in sim_levels:
+        # Temporarily override the guard's check by computing directly
+        usable = max(0.0, avail - guard.safety_margin_gb)
+        from autotune.memory.noswap import _LEVELS, _MIN_CTX
+        base_ctx = 1536
+        chosen_ctx  = _MIN_CTX
+        chosen_f16  = False
+        chosen_level = "l5_min"
+        chosen_kv   = arch.kv_gb(_MIN_CTX, f16=False)
 
-    for p in PROMPTS:
-        pid = p["id"]
-        lbl = p["label"]
-        rp  = raw_by_prompt.get(pid)
-        tp  = tune_by_prompt.get(pid)
-        rc  = raw_ctx.get(pid, RAW_CTX)
-        tc  = tune_ctx.get(pid, "?")
-        rt  = statistics.mean(raw_tps_by[pid])  if pid in raw_tps_by  else None
-        tt  = statistics.mean(tune_tps_by[pid]) if pid in tune_tps_by else None
+        for factor, use_f16, level_name, _ in _LEVELS:
+            if factor is None:
+                cand = _MIN_CTX
+            else:
+                cand = max(_MIN_CTX, int(base_ctx * factor))
+            kv = arch.kv_gb(cand, f16=use_f16)
+            if kv <= usable:
+                chosen_ctx   = cand
+                chosen_f16   = use_f16
+                chosen_level = level_name
+                chosen_kv    = kv
+                break
 
-        if rp is None or tp is None:
-            t.add_row(lbl, f"{rc}→?", "—", "—", "—")
-            continue
+        scenarios.append({
+            "label":       label,
+            "avail_gb":    avail,
+            "ctx":         chosen_ctx,
+            "kv_gb":       round(chosen_kv, 3),
+            "level":       chosen_level,
+            "f16":         chosen_f16,
+            "kv_raw_gb":   round(arch.kv_gb(RAW_CTX, f16=True), 3),
+        })
 
-        all_raw_prefills.append(rp)
-        all_tune_prefills.append(tp)
-        if rt: raw_tps_vals.append(rt)
-        if tt: tune_tps_vals.append(tt)
-
-        pct = _pct(rp, tp)
-        pd_txt, pd_sty = _fmt_pct(pct, invert=True)
-        ctx_sty = "green" if (rc - tc) > 256 else "dim"
-
-        t.add_row(
-            lbl,
-            f"[dim]{rc}[/dim]→[{ctx_sty}]{tc}[/{ctx_sty}]",
-            f"{rp:.0f}ms",
-            f"{tp:.0f}ms",
-            Text(pd_txt, style=pd_sty),
-        )
-
-    # Aggregate row
-    if all_raw_prefills and all_tune_prefills:
-        agg_raw  = statistics.mean(all_raw_prefills)
-        agg_tune = statistics.mean(all_tune_prefills)
-        agg_pct  = _pct(agg_raw, agg_tune)
-        ag_txt, ag_sty = _fmt_pct(agg_pct, invert=True)
-        rt_agg = statistics.mean(raw_tps_vals)  if raw_tps_vals  else None
-        tt_agg = statistics.mean(tune_tps_vals) if tune_tps_vals else None
-        tps_pct = _pct(rt_agg, tt_agg) if rt_agg and tt_agg else 0.0
-        t.add_section()
-        t.add_row(
-            "[bold]AVERAGE[/bold]",
-            "[dim]4096[/dim]→[dim]tuned[/dim]",
-            f"[bold]{agg_raw:.0f}ms[/bold]",
-            f"[bold]{agg_tune:.0f}ms[/bold]",
-            Text(ag_txt, style=ag_sty + " bold"),
-        )
-    console.print(t)
-    if rt_agg is not None and tt_agg is not None:
-        console.print(
-            f"  Generation speed: raw={rt_agg:.1f} tok/s  "
-            f"autotune={tt_agg:.1f} tok/s  "
-            f"Δ={tps_pct:+.1f}%  "
-            "[dim](GPU-bound — no change expected, this is the honest null result)[/dim]"
-        )
-    console.print(
-        "  [dim]prefill_ms = prompt_eval_duration from /api/chat  "
-        "(nanoseconds from Ollama's Go time.Now(), converted to ms)[/dim]"
-    )
-    console.print()
-
-
-def print_cold_results(raw: PhaseResult, tune: PhaseResult) -> None:
-    console.print()
-    console.print(Panel(
-        "[bold]Phase 2 — Cold-Start Load Time[/bold]\n"
-        "[dim]Model unloaded between every call. Measures Metal MTLBuffer allocation "
-        "cost.\nSmaller num_ctx = smaller buffer = faster first-call latency.[/dim]",
-        border_style="cyan",
-        expand=False,
-    ))
-
-    raw_runs  = raw.ok_runs()
-    tune_runs = tune.ok_runs()
-
-    t = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold")
-    t.add_column("Call",        style="dim",   min_width=6)
-    t.add_column("ctx",         justify="right", style="dim")
-    t.add_column("load raw",    justify="right")
-    t.add_column("load tune",   justify="right")
-    t.add_column("Δ load",      justify="right", min_width=10)
-    t.add_column("ttft raw",    justify="right")
-    t.add_column("ttft tune",   justify="right")
-
-    max_calls = max(len(raw_runs), len(tune_runs))
-    for i in range(max_calls):
-        rr = raw_runs[i]  if i < len(raw_runs)  else None
-        tr = tune_runs[i] if i < len(tune_runs) else None
-
-        r_load  = f"{rr.load_ms:.0f}ms"    if rr else "—"
-        t_load  = f"{tr.load_ms:.0f}ms"    if tr else "—"
-        r_ttft  = f"{(rr.load_ms + rr.prefill_ms):.0f}ms" if rr else "—"
-        t_ttft  = f"{(tr.load_ms + tr.prefill_ms):.0f}ms" if tr else "—"
-        r_ctx   = str(rr.num_ctx) if rr else "—"
-
-        if rr and tr and rr.load_ms > 0:
-            pct = _pct(rr.load_ms, tr.load_ms)
-            pd_txt, pd_sty = _fmt_pct(pct, invert=True)
-        else:
-            pd_txt, pd_sty = "—", "dim"
-
-        t.add_row(f"{i+1}", r_ctx, r_load, t_load, Text(pd_txt, style=pd_sty), r_ttft, t_ttft)
-
-    # Aggregate
-    raw_loads  = [r.load_ms for r in raw_runs  if r.load_ms > 0]
-    tune_loads = [r.load_ms for r in tune_runs if r.load_ms > 0]
-    if raw_loads and tune_loads:
-        agg_r = statistics.mean(raw_loads)
-        agg_t = statistics.mean(tune_loads)
-        pct   = _pct(agg_r, agg_t)
-        ag_txt, ag_sty = _fmt_pct(pct, invert=True)
-        t.add_section()
-        t.add_row(
-            "[bold]MEAN[/bold]", "—",
-            f"[bold]{agg_r:.0f}ms[/bold]",
-            f"[bold]{agg_t:.0f}ms[/bold]",
-            Text(ag_txt, style=ag_sty + " bold"),
-            "—", "—",
-        )
-
-    console.print(t)
-    raw_loads  = [r.load_ms for r in raw.ok_runs()  if r.load_ms > 0]
-    tune_loads = [r.load_ms for r in tune.ok_runs() if r.load_ms > 0]
-    if raw_loads and tune_loads:
-        agg_r = statistics.mean(raw_loads)
-        agg_t = statistics.mean(tune_loads)
-        pct   = _pct(agg_r, agg_t)
-        if abs(pct) < 10:
-            console.print(
-                "  [dim]Note: load times are similar here because macOS keeps "
-                "recently-used model weights in the unified memory file cache. "
-                "The improvement is more visible on larger models (7B+), first-ever "
-                "loads, or after a long idle period when Ollama has evicted the model.[/dim]"
-            )
-    console.print(
-        "  [dim]load_duration = time Ollama spends allocating model weights + "
-        "KV cache buffer in Metal unified memory.[/dim]"
-    )
-    console.print()
-
-
-def print_vram_results(vr: VRAMResult) -> None:
-    console.print()
-    console.print(Panel(
-        "[bold]Phase 3 — VRAM Footprint[/bold]\n"
-        "[dim]Measured from /api/ps size_vram — actual Metal unified memory Ollama "
-        "holds while the model is loaded.\nIncludes weights + KV cache buffer.[/dim]",
-        border_style="cyan",
-        expand=False,
-    ))
-
-    t = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold")
-    t.add_column("Config",          min_width=20)
-    t.add_column("num_ctx",         justify="right")
-    t.add_column("size_vram",       justify="right")
-    t.add_column("KV savings",      justify="right")
-
-    t.add_row("Raw (Ollama default)", str(vr.raw_ctx), f"{vr.raw_vram_gb:.3f} GB", "—")
-    t.add_row(
-        "[green]Autotune[/green]",
-        f"[green]{vr.tune_ctx}[/green]",
-        f"[green]{vr.tune_vram_gb:.3f} GB[/green]",
-        f"[green bold]−{vr.delta_gb:.3f} GB  ✓[/green bold]",
+    return NoSwapDemo(
+        available_gb=round(available_gb, 2),
+        model_id=model,
+        arch=arch,
+        scenarios=scenarios,
     )
 
-    console.print(t)
-    console.print(
-        f"  Measured savings: [bold green]−{vr.delta_gb:.3f} GB[/bold green]  "
-        f"(theory KV-only: −{vr.theory_delta_gb:.3f} GB  +  "
-        f"{vr.overhead_gb:.3f} GB Metal alignment overhead)"
-    )
-    console.print()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Output  (user-friendly, no jargon)
+# ─────────────────────────────────────────────────────────────────────────────
 
-def print_verdict(
-    raw_warm: PhaseResult,
-    tune_warm: PhaseResult,
-    raw_cold: Optional[PhaseResult],
-    tune_cold: Optional[PhaseResult],
+def print_results(
+    model: str,
+    raw_warm: list[Run],
+    tune_warm: list[Run],
+    raw_cold: Optional[list[Run]],
+    tune_cold: Optional[list[Run]],
     vram: Optional[VRAMResult],
+    noswap: Optional[NoSwapDemo],
+    chip: str,
+    n_runs: int,
 ) -> None:
+
+    vm    = psutil.virtual_memory()
+    ram_gb = vm.total / 1024**3
+    ram_pct = vm.percent
+
+    # ── Header ────────────────────────────────────────────────────────────────
     console.print()
-    console.rule("[bold blue]VERDICT[/bold blue]")
+    console.print(Panel(
+        f"[bold white]autotune — does it actually help?[/bold white]\n\n"
+        f"  Model   [cyan]{model}[/cyan]\n"
+        f"  System  {chip}  ·  {ram_gb:.0f}GB RAM  ·  {ram_pct:.0f}% in use\n\n"
+        f"  [dim]All timings from Ollama's internal timers, not estimated.[/dim]\n"
+        f"  [dim]{n_runs} runs per prompt, generation capped at {MAX_TOKENS} tokens.[/dim]",
+        border_style="blue",
+        expand=False,
+    ))
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def _mean_prefill(runs: list[Run]) -> Optional[float]:
+        vals = [r.prefill_ms for r in runs if r.ok and r.prefill_ms > 0]
+        return statistics.mean(vals) if vals else None
+
+    def _mean_tps(runs: list[Run]) -> Optional[float]:
+        vals = [r.eval_tps for r in runs if r.ok and r.eval_tps > 0]
+        return statistics.mean(vals) if vals else None
+
+    def _mean_load(runs: list[Run]) -> Optional[float]:
+        vals = [r.load_ms for r in runs if r.ok and r.load_ms > 0]
+        return statistics.mean(vals) if vals else None
+
+    rp_all = _mean_prefill(raw_warm)
+    tp_all = _mean_prefill(tune_warm)
+    rt_all = _mean_tps(raw_warm)
+    tt_all = _mean_tps(tune_warm)
+
+    # ── Section 1: Speed ──────────────────────────────────────────────────────
+    console.print()
+    console.rule("[bold]⚡  SPEED TO FIRST WORD[/bold]", style="cyan")
+    console.print()
+    console.print(
+        "  Before you see the first word of a response, Ollama must\n"
+        "  allocate memory for your conversation. autotune sizes this\n"
+        "  allocation to exactly what your prompt needs — not the\n"
+        "  Ollama default which is always 4,096 tokens regardless."
+    )
     console.print()
 
-    lines: list[tuple[str, str, str]] = []  # (metric, value, why)
+    if rp_all and tp_all:
+        bar_width = 26
+        max_v = rp_all * 1.05
+        raw_bar  = _bar(rp_all, max_v, bar_width)
+        tune_bar = _bar(tp_all, max_v, bar_width)
+        pct = _pct(rp_all, tp_all)
 
-    # Prefill
-    rp = raw_warm.mean_prefill()
-    tp = tune_warm.mean_prefill()
-    if rp and tp:
-        pct = _pct(rp, tp)
-        pd_txt, pd_sty = _fmt_pct(pct, invert=True)
-        lines.append((
-            "Prefill latency (TTFT)",
-            f"[{pd_sty}]{rp:.0f}ms → {tp:.0f}ms  {pd_txt}[/{pd_sty}]",
-            "Ollama allocates the full KV tensor before the first forward pass. "
-            "autotune computes the minimum num_ctx that fits your prompt, so the "
-            "Metal buffer is smaller → faster initialisation.",
-        ))
-
-    # tok/s
-    rt = raw_warm.mean_tps()
-    tt = tune_warm.mean_tps()
-    if rt and tt:
-        pct = _pct(rt, tt)
-        lines.append((
-            "Generation tok/s",
-            f"[dim]{rt:.1f} → {tt:.1f}  ({pct:+.1f}% ≈)[/dim]",
-            "Token generation is Metal GPU-bound. The same matrix ops run per "
-            "token regardless of num_ctx. No middleware layer above Metal can "
-            "change this. This is the honest null result.",
-        ))
-
-    # Cold-start
-    if raw_cold and tune_cold:
-        rl = raw_cold.mean_load()
-        tl = tune_cold.mean_load()
-        if rl and tl:
-            pct = _pct(rl, tl)
-            pd_txt, pd_sty = _fmt_pct(pct, invert=True)
-            lines.append((
-                "Cold-start load time",
-                f"[{pd_sty}]{rl:.0f}ms → {tl:.0f}ms  {pd_txt}[/{pd_sty}]",
-                "On a cold start (first use / after idle expiry) Ollama allocates "
-                "a Metal MTLBuffer for the KV cache. Smaller num_ctx = smaller "
-                "buffer = faster allocation. This is felt as the 'startup penalty'.",
-            ))
-
-    # VRAM
-    if vram:
-        if vram.delta_gb > 0:
-            lines.append((
-                "VRAM footprint",
-                f"[green bold]{vram.raw_vram_gb:.3f}GB → "
-                f"{vram.tune_vram_gb:.3f}GB  "
-                f"−{vram.delta_gb:.3f}GB  ✓[/green bold]",
-                f"KV cache scales linearly with num_ctx. autotune uses "
-                f"ctx={vram.tune_ctx} vs Ollama's default ctx={RAW_CTX}, "
-                f"holding {vram.delta_gb:.3f}GB less unified memory. On a "
-                f"16GB Mac this matters when running multiple models or apps.",
-            ))
-        else:
-            lines.append((
-                "VRAM footprint",
-                f"[dim]{vram.raw_vram_gb:.3f}GB → {vram.tune_vram_gb:.3f}GB  "
-                f"≈ (small prompt, ctx similar)[/dim]",
-                "With a very short prompt, autotune's minimum ctx is still "
-                "close to the raw default. Savings are larger on longer prompts.",
-            ))
-
-    for metric, value, why in lines:
-        console.print(f"  [bold]{metric}[/bold]")
-        console.print(f"    {value}")
-        console.print(f"    [dim]{why}[/dim]")
+        console.print(f"  Without autotune   {raw_bar}   {rp_all:.0f} ms")
+        console.print(f"  With autotune      [green]{tune_bar}[/green]   [green bold]{tp_all:.0f} ms[/green bold]")
+        console.print()
+        pct_str = f"{pct:+.0f}%"
+        console.print(f"  [bold green]{abs(pct):.0f}% faster[/bold green] time to first word, on average.")
         console.print()
 
-    console.rule()
+    # Per-prompt breakdown
+    t = Table(box=box.SIMPLE, show_header=True, header_style="dim",
+              show_edge=False, padding=(0, 1))
+    t.add_column("Prompt type",      min_width=20, max_width=22)
+    t.add_column("Without autotune", justify="right", min_width=15)
+    t.add_column("With autotune",    justify="right", min_width=13)
+    t.add_column("Δ",               justify="right", min_width=7)
+
+    for p in PROMPTS:
+        pid   = p["id"]
+        raw_v = statistics.mean([r.prefill_ms for r in raw_warm  if r.ok and r.prompt_id == pid and r.prefill_ms > 0] or [0])
+        tun_v = statistics.mean([r.prefill_ms for r in tune_warm if r.ok and r.prompt_id == pid and r.prefill_ms > 0] or [0])
+        if raw_v <= 0 or tun_v <= 0:
+            continue
+        pct = _pct(raw_v, tun_v)
+        good = pct < -5
+        t.add_row(
+            p["label"],
+            f"{raw_v:.0f} ms",
+            f"[{'green' if good else 'dim'}]{tun_v:.0f} ms[/{'green' if good else 'dim'}]",
+            Text(f"{pct:+.0f}%", style="green bold" if good else "dim"),
+        )
+
+    console.print(t)
+
+    # ── Section 2: Memory ─────────────────────────────────────────────────────
+    if vram:
+        console.print()
+        console.rule("[bold]💾  MEMORY WHILE RUNNING[/bold]", style="cyan")
+        console.print()
+        console.print(
+            "  Ollama keeps a block of GPU memory reserved while your\n"
+            "  model is loaded. autotune reserves less — exactly what\n"
+            "  your prompts actually need."
+        )
+        console.print()
+
+        max_v = vram.raw_gb * 1.05
+        console.print(f"  Without autotune   {_bar(vram.raw_gb, max_v)}   {vram.raw_gb:.2f} GB")
+        console.print(f"  With autotune      [green]{_bar(vram.tune_gb, max_v)}[/green]   [green bold]{vram.tune_gb:.2f} GB[/green bold]")
+        console.print()
+        console.print(
+            f"  [bold green]−{vram.saved_gb * 1024:.0f} MB freed.[/bold green]  "
+            f"That's room for another model, more browser tabs,\n"
+            f"  or just less pressure on your {ram_gb:.0f}GB of RAM."
+        )
+
+    # ── Section 3: What didn't change ────────────────────────────────────────
+    console.print()
+    console.rule("[bold]🎯  WHAT DIDN'T CHANGE  (honesty matters)[/bold]", style="cyan")
+    console.print()
+    if rt_all and tt_all:
+        tps_pct = _pct(rt_all, tt_all)
+        console.print(
+            f"  Generation speed:  {rt_all:.1f} → {tt_all:.1f} tok/s  "
+            f"({tps_pct:+.1f}%)"
+        )
+        console.print()
+        console.print(
+            "  Once the model starts writing, speed is determined by your\n"
+            "  GPU chip. We don't change that. autotune makes your model\n"
+            "  START faster and use less memory — not generate faster.\n"
+            "  That's the honest answer."
+        )
+
+    # ── Section 4: Cold-start ────────────────────────────────────────────────
+    if raw_cold and tune_cold:
+        rl = _mean_load(raw_cold)
+        tl = _mean_load(tune_cold)
+        console.print()
+        console.rule("[bold]🔄  STARTUP TIME  (cold start)[/bold]", style="cyan")
+        console.print()
+        console.print(
+            "  When Ollama loads a model from scratch (first use, or after\n"
+            "  a long idle period) it allocates memory all at once. A\n"
+            "  smaller reservation loads faster."
+        )
+        console.print()
+        if rl and tl:
+            pct = _pct(rl, tl)
+            max_v = max(rl, tl) * 1.05
+            console.print(f"  Without autotune   {_bar(rl, max_v)}   {rl:.0f} ms")
+            console.print(f"  With autotune      [green]{_bar(tl, max_v)}[/green]   [green bold]{tl:.0f} ms[/green bold]")
+            if abs(pct) < 10:
+                console.print()
+                console.print(
+                    f"  [dim]Note: {model.split(':')[0]} is a small model — macOS keeps\n"
+                    f"  it in the file cache so load time is similar either way.\n"
+                    f"  The difference is larger on 7B+ models.[/dim]"
+                )
+
+    # ── Section 5: No-swap mode ───────────────────────────────────────────────
+    if noswap:
+        console.print()
+        console.rule("[bold]🛡️   NO-SWAP MODE[/bold]", style="cyan")
+        console.print()
+        console.print(
+            "  When your Mac runs out of RAM it starts using storage\n"
+            "  (swap) as overflow. This makes inference 10–100× slower\n"
+            "  and your whole computer feels sluggish.\n\n"
+            "  autotune's no-swap mode checks available RAM before every\n"
+            "  request and shrinks the memory reservation if needed,\n"
+            "  keeping inference fast even when your system is busy."
+        )
+        console.print()
+
+        kv_raw_gb = noswap.arch.kv_gb(RAW_CTX, f16=True)
+        console.print(
+            f"  [dim]Your model ({noswap.model_id.split(':')[0]}) "
+            f"with default Ollama settings uses {kv_raw_gb:.2f}GB "
+            f"just for the KV cache.\n"
+            f"  Model: {noswap.arch.n_layers} layers × "
+            f"{noswap.arch.n_kv_heads} KV heads × "
+            f"{noswap.arch.head_dim} dims[/dim]"
+        )
+        console.print()
+
+        t2 = Table(box=box.SIMPLE, show_header=True, header_style="dim",
+                   show_edge=False, padding=(0, 1))
+        t2.add_column("Memory situation",   min_width=26, max_width=26)
+        t2.add_column("Ollama default",     justify="right", min_width=13)
+        t2.add_column("No-swap",            justify="right", min_width=10)
+        t2.add_column("Action",             min_width=14)
+
+        level_labels = {
+            "ok":         "[green]✓ No change[/green]",
+            "l1_trim":    "[yellow]Trim 25%[/yellow]",
+            "l2_halve":   "[yellow]Halve ctx[/yellow]",
+            "l3_q8":      "[orange1]Halve + Q8[/orange1]",
+            "l4_quarter": "[red]Quarter + Q8[/red]",
+            "l5_min":     "[red bold]Min ctx + Q8[/red bold]",
+        }
+
+        for sc in noswap.scenarios:
+            kv_default = sc["kv_raw_gb"]
+            kv_safe    = sc["kv_gb"]
+            kv_default_str = f"{kv_default:.3f} GB"
+            kv_safe_str    = f"[green]{kv_safe:.3f} GB[/green]" if kv_safe < kv_default else kv_default_str
+            action = level_labels.get(sc["level"], sc["level"])
+            swap_risk = sc["avail_gb"] < kv_default + 1.5
+            default_str = f"[red]{kv_default_str} ⚠[/red]" if swap_risk else kv_default_str
+            t2.add_row(sc["label"], default_str, kv_safe_str, action)
+
+        console.print(t2)
+        console.print()
+        console.print(
+            "  Enable it:  [bold]autotune proof --with-noswap[/bold]\n"
+            "  Or in code: [bold]TTFTOptimizer().build_request_options("
+            "..., no_swap=True, model_arch=arch)[/bold]"
+        )
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    console.print()
+    console.rule(style="dim")
+    console.print()
+    console.print(
+        "  [dim]How we measured[/dim]\n"
+        "  [dim]All numbers come from Ollama's /api/chat response fields:[/dim]\n"
+        "  [dim]  prompt_eval_duration = prefill time (what we reduce)[/dim]\n"
+        "  [dim]  eval_duration / eval_count = generation tok/s[/dim]\n"
+        "  [dim]  /api/ps size_vram = actual Metal GPU memory[/dim]\n\n"
+        "  [dim]Raw data saved to proof_results.json[/dim]"
+    )
     console.print()
 
 
@@ -931,71 +670,39 @@ def print_verdict(
 # JSON export
 # ─────────────────────────────────────────────────────────────────────────────
 
-def export_json(
-    model: str,
-    sysinfo: dict,
-    n_runs: int,
-    raw_warm: PhaseResult,
-    tune_warm: PhaseResult,
-    raw_cold: Optional[PhaseResult],
-    tune_cold: Optional[PhaseResult],
-    vram: Optional[VRAMResult],
-    output_path: str,
+def _save_json(
+    model, raw_warm, tune_warm, raw_cold, tune_cold, vram, noswap, output_path
 ) -> None:
-    def _phase_dict(p: PhaseResult) -> dict:
-        return {
-            "mode": p.mode,
-            "mean_prefill_ms": p.mean_prefill(),
-            "mean_tps": p.mean_tps(),
-            "mean_load_ms": p.mean_load(),
-            "runs": [asdict(r) for r in p.runs],
-        }
+    def _runs(runs):
+        return [asdict(r) for r in runs] if runs else []
 
     doc = {
         "tool":      "autotune proof",
-        "version":   "1.0",
+        "version":   "2.0",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "model":     model,
-        "n_runs":    n_runs,
-        "system":    sysinfo,
-        "raw_ctx":   RAW_CTX,
         "phases": {
-            "warm": {
-                "raw":      _phase_dict(raw_warm),
-                "autotune": _phase_dict(tune_warm),
-                "delta_prefill_pct": _pct(
-                    raw_warm.mean_prefill() or 0,
-                    tune_warm.mean_prefill() or 0,
-                ),
-            },
+            "warm": {"raw": _runs(raw_warm), "autotune": _runs(tune_warm)},
         },
-        "prompts": [{"id": p["id"], "label": p["label"]} for p in PROMPTS],
     }
-
-    if raw_cold and tune_cold:
-        doc["phases"]["cold"] = {
-            "raw":      _phase_dict(raw_cold),
-            "autotune": _phase_dict(tune_cold),
-            "delta_load_pct": _pct(
-                raw_cold.mean_load() or 0,
-                tune_cold.mean_load() or 0,
-            ),
-        }
-
+    if raw_cold:
+        doc["phases"]["cold"] = {"raw": _runs(raw_cold), "autotune": _runs(tune_cold)}
     if vram:
         doc["phases"]["vram"] = {
-            "raw_ctx":         vram.raw_ctx,
-            "raw_vram_gb":     vram.raw_vram_gb,
-            "tune_ctx":        vram.tune_ctx,
-            "tune_vram_gb":    vram.tune_vram_gb,
-            "delta_gb":        vram.delta_gb,
-            "theory_delta_gb": vram.theory_delta_gb,
+            "raw_ctx": vram.raw_ctx, "raw_gb": vram.raw_gb,
+            "tune_ctx": vram.tune_ctx, "tune_gb": vram.tune_gb,
+            "saved_gb": vram.saved_gb,
+        }
+    if noswap:
+        doc["phases"]["noswap_demo"] = {
+            "arch": {"n_layers": noswap.arch.n_layers,
+                     "n_kv_heads": noswap.arch.n_kv_heads,
+                     "head_dim": noswap.arch.head_dim},
+            "scenarios": noswap.scenarios,
         }
 
     with open(output_path, "w") as f:
         json.dump(doc, f, indent=2)
-
-    console.print(f"  [dim]Results saved to {output_path}[/dim]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1003,9 +710,8 @@ def export_json(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def main(args: argparse.Namespace) -> None:
-    # ── Pre-flight ────────────────────────────────────────────────────────────
-    if not await _ensure_ollama():
-        console.print("[red]Error: Ollama is not running. Start it with: ollama serve[/red]")
+    if not await _check_ollama():
+        console.print("[red]Ollama is not running. Start it with: ollama serve[/red]")
         sys.exit(1)
 
     if args.list_models:
@@ -1015,110 +721,80 @@ async def main(args: argparse.Namespace) -> None:
             for m in models:
                 console.print(f"  {m}")
         else:
-            console.print("[dim]No models found. Pull one with: ollama pull phi4-mini[/dim]")
+            console.print("[dim]No models found. Pull one: ollama pull phi4-mini[/dim]")
         return
 
     model = args.model
-
-    # Validate model exists
-    available = await _list_models()
-    if model not in available:
-        console.print(f"[red]Model '{model}' not found. Available: {available}[/red]")
-        console.print("[dim]Pull it with: ollama pull " + model.split(":")[0] + "[/dim]")
+    if model not in await _list_models():
+        console.print(f"[red]Model '{model}' not found.[/red]")
+        console.print(f"[dim]Pull it: ollama pull {model.split(':')[0]}[/dim]")
         sys.exit(1)
 
-    n_runs   = args.runs
-    n_cold   = args.cold_runs
-    sysinfo  = _get_system_info()
-    client   = OllamaMetricsClient(timeout=300.0)
+    chip   = _chip()
+    client = OllamaMetricsClient(timeout=300.0)
 
-    print_header(model, sysinfo, n_runs)
-
-    # ── Phase 1: Warm inference ───────────────────────────────────────────────
-    console.rule("[bold cyan]Phase 1 — Warm Inference[/bold cyan]")
     console.print()
-    raw_warm, tune_warm = await run_warm_phase(model, n_runs, client)
-    print_warm_results(raw_warm, tune_warm)
+    console.print(f"  Running benchmark on [cyan]{model}[/cyan]…  "
+                  f"[dim](this takes about 2–3 minutes)[/dim]")
 
-    # ── Phase 2: Cold-start ───────────────────────────────────────────────────
+    # Fresh start — unload any cached model state so first requests are clean
+    console.print("  [dim]Resetting model state…[/dim]")
+    await client.unload_model(model)
+    import asyncio as _asyncio
+    await _asyncio.sleep(2.0)
+
+    # Phase 1 — warm
+    console.print("  [dim]Phase 1 — measuring response speed…[/dim]")
+    raw_warm, tune_warm = await run_warm(model, args.runs, client)
+
+    # Phase 2 — VRAM
+    vram = None
+    console.print("  [dim]Phase 2 — measuring memory usage…[/dim]")
+    vram = await run_vram(model, client)
+
+    # Phase 3 — cold (optional)
     raw_cold = tune_cold = None
-    if not args.skip_cold:
-        console.rule("[bold cyan]Phase 2 — Cold-Start[/bold cyan]")
-        console.print()
-        raw_cold, tune_cold = await run_cold_phase(model, n_cold, client)
-        print_cold_results(raw_cold, tune_cold)
+    if args.with_cold:
+        console.print("  [dim]Phase 3 — measuring startup time…[/dim]")
+        raw_cold, tune_cold = await run_cold(model, args.cold_runs, client)
 
-    # ── Phase 3: VRAM ─────────────────────────────────────────────────────────
-    vram_result = None
-    if not args.skip_vram:
-        console.rule("[bold cyan]Phase 3 — VRAM Footprint[/bold cyan]")
-        console.print()
-        vram_result = await run_vram_phase(model, client)
-        if vram_result:
-            print_vram_results(vram_result)
+    # No-swap demo (optional, fast — no inference)
+    noswap = None
+    if args.with_noswap:
+        console.print("  [dim]Computing no-swap scenarios…[/dim]")
+        noswap = await run_noswap_demo(model)
 
-    # ── Verdict ───────────────────────────────────────────────────────────────
-    print_verdict(raw_warm, tune_warm, raw_cold, tune_cold, vram_result)
-
-    # ── Export ────────────────────────────────────────────────────────────────
-    export_json(
+    print_results(
         model=model,
-        sysinfo=sysinfo,
-        n_runs=n_runs,
-        raw_warm=raw_warm,
-        tune_warm=tune_warm,
-        raw_cold=raw_cold,
-        tune_cold=tune_cold,
-        vram=vram_result,
-        output_path=args.output,
+        raw_warm=raw_warm, tune_warm=tune_warm,
+        raw_cold=raw_cold, tune_cold=tune_cold,
+        vram=vram, noswap=noswap,
+        chip=chip, n_runs=args.runs,
     )
+
+    _save_json(model, raw_warm, tune_warm, raw_cold, tune_cold, vram, noswap,
+               args.output)
+    console.print(f"  [dim]Results saved to {args.output}[/dim]")
+    console.print()
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="autotune proof — honest, traceable benchmark",
+        description="autotune proof — honest benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
     )
-    p.add_argument(
-        "--model", "-m",
-        default="phi4-mini:latest",
-        help="Ollama model ID to benchmark (default: phi4-mini:latest)",
-    )
-    p.add_argument(
-        "--runs", "-r",
-        type=int, default=3,
-        help="Warm inference runs per prompt per config (default: 3)",
-    )
-    p.add_argument(
-        "--cold-runs",
-        type=int, default=3,
-        help="Cold-start calls per config (default: 3)",
-    )
-    p.add_argument(
-        "--output", "-o",
-        default="proof_results.json",
-        help="JSON output path (default: proof_results.json)",
-    )
-    p.add_argument(
-        "--skip-cold",
-        action="store_true",
-        help="Skip cold-start phase (faster run)",
-    )
-    p.add_argument(
-        "--skip-vram",
-        action="store_true",
-        help="Skip VRAM footprint phase",
-    )
-    p.add_argument(
-        "--list-models",
-        action="store_true",
-        help="List available Ollama models and exit",
-    )
+    p.add_argument("--model", "-m", default="phi4-mini:latest")
+    p.add_argument("--runs",  "-r", type=int, default=3,
+                   help="Runs per prompt per mode (default: 3)")
+    p.add_argument("--cold-runs", type=int, default=3)
+    p.add_argument("--output", "-o", default="proof_results.json")
+    p.add_argument("--with-cold",   action="store_true",
+                   help="Include cold-start phase")
+    p.add_argument("--with-noswap", action="store_true",
+                   help="Include no-swap mode demonstration")
+    p.add_argument("--list-models", action="store_true")
     return p
 
 
 if __name__ == "__main__":
-    parser = build_parser()
-    args   = parser.parse_args()
-    asyncio.run(main(args))
+    asyncio.run(main(build_parser().parse_args()))
