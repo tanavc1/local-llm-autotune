@@ -81,6 +81,7 @@ def build_ollama_options(
     profile: "Profile",
     context_ceiling: Optional[int] = None,
     kv_precision_override: Optional[str] = None,
+    no_swap_arch=None,   # Optional[autotune.memory.noswap.ModelArch]
 ) -> dict:
     """
     Return the complete Ollama `options` dict for this request.
@@ -107,6 +108,11 @@ def build_ollama_options(
                       Overrides the profile default before pressure checks.
                       Useful when ModelSelector assessed MARGINAL/SWAP_RISK fit
                       and recommends Q8 to halve KV memory consumption.
+    no_swap_arch : ModelArch instance from autotune.memory.noswap.  When
+                      provided, NoSwapGuard runs after all other reductions
+                      and guarantees the request will not trigger swap by
+                      computing actual KV bytes and further reducing num_ctx /
+                      KV precision as needed.
     """
     # Start with the base options (num_ctx + f16_kv from profile)
     opts = ollama_options_for_profile(messages, profile)
@@ -183,6 +189,33 @@ def build_ollama_options(
                 "will downgrade at %.1f%%",
                 ram_pct, _PRESSURE_HIGH_PCT,
             )
+
+    # ── No-swap guarantee (applied last, after all other reductions) ────────
+    # When the caller provides a ModelArch, NoSwapGuard computes the actual
+    # KV bytes for the current num_ctx and f16_kv setting and further reduces
+    # them — at multiple progressive levels — until the allocation fits
+    # comfortably in available RAM.  This prevents macOS from compressing or
+    # paging memory during inference (which causes a catastrophic perf drop).
+    if no_swap_arch is not None:
+        from autotune.memory.noswap import NoSwapGuard
+        from autotune.ttft.optimizer import _snap_to_bucket
+        guard = NoSwapGuard()
+        decision = guard.apply(
+            num_ctx=opts["num_ctx"],
+            f16_kv=opts.get("f16_kv", True),
+            arch=no_swap_arch,
+            snap_fn=_snap_to_bucket,
+        )
+        if decision.ctx_changed:
+            logger.info(
+                "NoSwapGuard: ctx %d→%d, KV %s  (level=%s, avail=%.2fGB)",
+                opts["num_ctx"], decision.num_ctx,
+                "F16" if decision.f16_kv else "Q8",
+                decision.level,
+                decision.available_gb,
+            )
+        opts["num_ctx"] = decision.num_ctx
+        opts["f16_kv"] = decision.f16_kv
 
     return opts
 

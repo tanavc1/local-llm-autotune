@@ -89,11 +89,13 @@ class ChatSession:
         system_prompt: Optional[str] = None,
         conv_id: Optional[str] = None,
         optimize: bool = True,
+        no_swap: bool = False,
     ) -> None:
         self.model_id = model_id
         self.profile_name = profile_name
         self.system_prompt = system_prompt
         self.optimize = optimize
+        self.no_swap = no_swap
         self.conv_mgr = get_conv_manager()
         self.chain = get_chain()
         self.tuner = get_tuner()
@@ -111,6 +113,9 @@ class ChatSession:
         self._sess_cfg = None
         self._ctx_ceiling: Optional[int] = None           # lowered by advisor under pressure
         self._kv_precision_override: Optional[str] = None  # "Q8_0" or "F16" from advisor
+
+        # No-swap: model architecture, fetched lazily on first request
+        self._no_swap_arch = None   # autotune.memory.noswap.ModelArch, populated lazily
 
         # Telemetry / hardware
         self._hw_id: Optional[str] = None
@@ -134,12 +139,13 @@ class ChatSession:
     def _print_header(self) -> None:
         profile = PROFILES[self.profile_name]
         opt_tag = "" if self.optimize else "  [dim]│  optimize=off[/dim]"
+        swap_tag = "  [dim]│[/dim]  [green]no-swap[/green]" if self.no_swap else ""
         console.print()
         console.print(Panel(
             f"[bold cyan]{self.model_id}[/bold cyan]  │  "
             f"[yellow]{profile.label}[/yellow]  │  "
             f"[dim]conv:{self.conv_id}[/dim]  │  "
-            f"[dim]Type [/dim][cyan]/help[/cyan][dim] for commands[/dim]{opt_tag}",
+            f"[dim]Type [/dim][cyan]/help[/cyan][dim] for commands[/dim]{opt_tag}{swap_tag}",
             box=_rich_box.HORIZONTALS,
             padding=(0, 1),
         ))
@@ -552,12 +558,19 @@ class ChatSession:
         header_shown = False
         error_msg: Optional[str] = None
 
+        # Lazily fetch model architecture for no-swap guarantee.
+        # Done once per session — cached in self._no_swap_arch.
+        if self.no_swap and self._no_swap_arch is None:
+            from autotune.memory.noswap import NoSwapGuard
+            self._no_swap_arch = await NoSwapGuard.get_model_arch(self.model_id)
+
         # Compute dynamic num_ctx and KV precision, applying any live
         # optimizer overrides (context ceiling / KV precision downgrade).
         ollama_opts = build_ollama_options(
             msgs, profile,
             context_ceiling=self._ctx_ceiling,
             kv_precision_override=self._kv_precision_override,
+            no_swap_arch=self._no_swap_arch if self.no_swap else None,
         )
 
         # Show a subtle loading hint.  Printed with \r so the first token
@@ -862,6 +875,7 @@ async def _run_chat(
     system_prompt: Optional[str],
     conv_id: Optional[str],
     optimize: bool = True,
+    no_swap: bool = False,
 ) -> None:
     session = ChatSession(
         model_id=model_id,
@@ -869,6 +883,7 @@ async def _run_chat(
         system_prompt=system_prompt,
         conv_id=conv_id,
         optimize=optimize,
+        no_swap=no_swap,
     )
     await session.run()
 
@@ -879,6 +894,7 @@ def start_chat(
     system_prompt: Optional[str] = None,
     conv_id: Optional[str] = None,
     optimize: bool = True,
+    no_swap: bool = False,
 ) -> None:
     """Entry point called from the CLI."""
-    asyncio.run(_run_chat(model_id, profile, system_prompt, conv_id, optimize))
+    asyncio.run(_run_chat(model_id, profile, system_prompt, conv_id, optimize, no_swap))

@@ -1871,12 +1871,24 @@ def serve(host: str, port: int, reload: bool) -> None:
     is_flag=True, default=False,
     help="Disable real-time hardware/context optimization (use static profile settings).",
 )
+@click.option(
+    "--no-swap", "no_swap",
+    is_flag=True, default=False,
+    help=(
+        "Guarantee that inference will not trigger macOS swap.  "
+        "Before each request, autotune measures available RAM, computes the exact "
+        "KV cache size needed, and reduces context size / KV precision until it fits — "
+        "keeping a 1.5 GB safety margin.  Prevents the catastrophic perf drop that "
+        "occurs when Metal buffers spill to NVMe."
+    ),
+)
 def chat(
     model: str,
     profile: str,
     system: Optional[str],
     conv_id: Optional[str],
     no_optimize: bool,
+    no_swap: bool,
 ) -> None:
     """Start an optimized terminal chat session with any model.
 
@@ -1893,6 +1905,7 @@ def chat(
       autotune chat --model Qwen/Qwen2.5-7B-Instruct --profile fast
       autotune chat --model llama3.2 --system "You are a concise assistant"
       autotune chat --model phi4-mini --no-optimize
+      autotune chat --model phi4-mini --no-swap
     """
     from autotune.api.chat import start_chat
     start_chat(
@@ -1901,6 +1914,7 @@ def chat(
         system_prompt=system,
         conv_id=conv_id,
         optimize=not no_optimize,
+        no_swap=no_swap,
     )
 
 
