@@ -41,11 +41,55 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Bucket helper
+# ---------------------------------------------------------------------------
+
+def _snap_to_bucket(num_ctx: int) -> int:
+    """
+    Snap num_ctx to the nearest bucket that is >= num_ctx.
+
+    Returns the smallest bucket that is >= num_ctx, or the largest bucket
+    if num_ctx exceeds all of them.
+
+    Example
+    -------
+    >>> _snap_to_bucket(1286)   # prompt needs 1286 tokens
+    1536                        # snapped up to next bucket
+    >>> _snap_to_bucket(1157)   # slightly different prompt
+    1536                        # SAME bucket → Ollama reuses KV cache
+    >>> _snap_to_bucket(512)
+    512
+    """
+    for bucket in _CTX_BUCKETS:
+        if bucket >= num_ctx:
+            return bucket
+    return _CTX_BUCKETS[-1]
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 KEEP_ALIVE_FOREVER = "-1"   # tell Ollama: never unload the model
+
+# Stable size buckets for num_ctx.
+#
+# WHY BUCKETS: Ollama caches the KV buffer for the most-recently-used context
+# length.  If num_ctx changes between requests (e.g. 1286 → 1157 → 1308) Ollama
+# must REALLOCATE the Metal buffer on every call — even if the model is already
+# loaded.  This "KV thrashing" adds 100–300 ms to each warm prefill and negates
+# the benefit of a smaller context.
+#
+# Snapping to the nearest bucket guarantees that requests with similar prompt
+# lengths reuse the same pre-allocated KV buffer.  For example, prompts of
+# 50–200 tokens all map to bucket 1536 and benefit from cached reuse.
+#
+# Buckets are powers-of-two-ish with extra entries in the 1 k–4 k range where
+# most real-world prompts land.  All values are multiples of 256 (Metal
+# alignment boundary for F16 tensors).
+_CTX_BUCKETS = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 32768]
 
 # Memory-pressure thresholds that trigger num_ctx/KV reduction.
 # These are intentionally low — we'd rather accept a slightly smaller context
@@ -150,6 +194,18 @@ class TTFTOptimizer:
                 logger.debug("num_ctx capped by model selector: %d → %d", num_ctx, context_ceiling)
                 num_ctx = context_ceiling
 
+        # Snap to stable bucket BEFORE pressure adjustments.
+        # This ensures that requests with similar prompt sizes map to the same
+        # num_ctx value, which allows Ollama to reuse its cached KV buffer
+        # instead of reallocating on every call ("KV thrashing").
+        # Without snapping: prompts of 50–150 tokens produce values like
+        # 1286, 1157, 1308, 1177 — all different → Ollama re-allocates each time.
+        # With snapping:  all of the above snap to 1536 → Ollama reuses the buffer.
+        num_ctx_before_snap = num_ctx
+        num_ctx = _snap_to_bucket(num_ctx)
+        if num_ctx != num_ctx_before_snap:
+            logger.debug("num_ctx snapped to bucket: %d → %d", num_ctx_before_snap, num_ctx)
+
         # ── KV cache precision (f16_kv flag) ─────────────────────────────────
         # Profile default
         f16_kv: bool = profile.kv_cache_precision != "q8"
@@ -169,7 +225,7 @@ class TTFTOptimizer:
 
         if ram_pct >= _PRESSURE_CRITICAL:
             pressure_level = "critical"
-            num_ctx = max(512, num_ctx // 2)
+            num_ctx = _snap_to_bucket(max(512, num_ctx // 2))
             f16_kv = False
             logger.warning(
                 "TTFT: critical memory pressure %.1f%% — "
@@ -178,7 +234,7 @@ class TTFTOptimizer:
             )
         elif ram_pct >= _PRESSURE_HIGH:
             pressure_level = "high"
-            num_ctx = max(512, int(num_ctx * 0.75))
+            num_ctx = _snap_to_bucket(max(512, int(num_ctx * 0.75)))
             f16_kv = False
             logger.info(
                 "TTFT: high memory pressure %.1f%% — "
@@ -187,7 +243,7 @@ class TTFTOptimizer:
             )
         elif ram_pct >= _PRESSURE_MODERATE:
             pressure_level = "moderate"
-            num_ctx = max(512, int(num_ctx * 0.90))
+            num_ctx = _snap_to_bucket(max(512, int(num_ctx * 0.90)))
             logger.info(
                 "TTFT: moderate memory pressure %.1f%% — "
                 "num_ctx %d→%d",
@@ -212,13 +268,14 @@ class TTFTOptimizer:
             options["num_keep"] = num_keep
 
         debug = {
-            "pressure_level":  pressure_level,
-            "ram_pct":         round(ram_pct, 1),
-            "num_ctx_raw":     original_ctx,
-            "num_ctx_final":   num_ctx,
-            "num_keep":        num_keep,
-            "f16_kv":          f16_kv,
-            "keep_alive":      KEEP_ALIVE_FOREVER,
+            "pressure_level":    pressure_level,
+            "ram_pct":           round(ram_pct, 1),
+            "num_ctx_computed":  num_ctx_before_snap,
+            "num_ctx_bucketed":  _snap_to_bucket(num_ctx_before_snap),
+            "num_ctx_final":     num_ctx,
+            "num_keep":          num_keep,
+            "f16_kv":            f16_kv,
+            "keep_alive":        KEEP_ALIVE_FOREVER,
         }
         logger.debug("TTFTOptimizer: %s", debug)
 

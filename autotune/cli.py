@@ -926,7 +926,7 @@ def bench(
     """
     import asyncio
     import psutil as _psutil
-    from autotune.bench.runner import run_bench, run_raw_ollama, save_result
+    from autotune.bench.runner import run_bench, run_bench_ollama_only, run_raw_ollama, save_result
 
     # ── Compare mode ─────────────────────────────────────────────────────
     if compare:
@@ -1053,7 +1053,7 @@ def bench(
             f"repeat_penalty, QoS={profile.upper()}, GC suspend[/dim]"
         )
         with console.status(f"  [dim]Running autotune/{profile} inference…[/dim]", spinner="dots"):
-            tuned_result = asyncio.run(run_bench(
+            tuned_result = asyncio.run(run_bench_ollama_only(
                 model_id=model,
                 messages=messages,
                 profile_name=profile,
@@ -1182,7 +1182,7 @@ def bench(
                 tag=auto_tag,
             ))
         else:
-            result = asyncio.run(run_bench(
+            result = asyncio.run(run_bench_ollama_only(
                 model_id=model,
                 messages=messages,
                 profile_name=profile,
@@ -2053,6 +2053,621 @@ def mlx_resolve(model: str) -> None:
             f"Will fall back to Ollama.\n"
             f"Pull an MLX version with:  [bold]autotune mlx pull {model}[/bold]"
         )
+
+
+# ---------------------------------------------------------------------------
+# `autotune stress-test`  — multi-model proof-of-improvement benchmark
+# ---------------------------------------------------------------------------
+
+_STRESS_PROMPTS = [
+    {
+        "id": "short",
+        "label": "Short/Direct",
+        "messages": [
+            {"role": "user", "content": "List three benefits of regular exercise. Be concise."}
+        ],
+    },
+    {
+        "id": "code",
+        "label": "Code Generation",
+        "messages": [
+            {"role": "user",
+             "content": (
+                 "Write a Python function called `two_sum` that takes a list of integers "
+                 "and a target integer, and returns the indices of the two numbers that "
+                 "add up to the target. Include type hints and a brief docstring."
+             )}
+        ],
+    },
+    {
+        "id": "reasoning",
+        "label": "Reasoning/Comparison",
+        "messages": [
+            {"role": "user",
+             "content": (
+                 "Explain the difference between supervised learning, unsupervised learning, "
+                 "and reinforcement learning. Give one concrete real-world application of each."
+             )}
+        ],
+    },
+    {
+        "id": "analysis",
+        "label": "Analysis/Review",
+        "messages": [
+            {"role": "user",
+             "content": (
+                 "You are a senior software engineer reviewing the following code. "
+                 "Identify all security vulnerabilities, performance issues, and design problems. "
+                 "Be specific:\n\n"
+                 "def get_user(user_id, db):\n"
+                 "    result = db.execute('SELECT * FROM users WHERE id=' + str(user_id))\n"
+                 "    return result[0]\n\n"
+                 "def login(username, password, db):\n"
+                 "    user = db.execute(f'SELECT * FROM users WHERE name={username}').fetchone()\n"
+                 "    if user['password'] == password:\n"
+                 "        return {'token': user['id'], 'admin': user.get('is_admin', False)}\n"
+             )}
+        ],
+    },
+]
+
+# Models to recommend for auto-pull, in priority order, with min RAM (GB) required
+_RECOMMENDED_PULL_MODELS = [
+    ("qwen3:8b",      5.5, "Best general reasoning — Qwen3 text-only 8B"),
+    ("llama3.2:3b",   2.5, "Fast baseline — Llama 3.2 3B"),
+]
+
+# Models to skip (per user request or known bad performers)
+_SKIP_MODELS = {"phi4-mini:latest", "phi4-mini", "phi4"}
+
+
+def _ollama_list_models() -> list[dict]:
+    """Return list of {name, size_gb} from ollama list."""
+    import subprocess, re
+    try:
+        out = subprocess.check_output(["ollama", "list"], text=True, timeout=10)
+        models = []
+        for line in out.strip().splitlines()[1:]:  # skip header
+            parts = line.split()
+            if not parts:
+                continue
+            name = parts[0]
+            size_gb = 0.0
+            for i, p in enumerate(parts):
+                if p in ("GB", "MB") and i > 0:
+                    try:
+                        val = float(parts[i-1])
+                        size_gb = val if p == "GB" else val / 1024
+                    except ValueError:
+                        pass
+            models.append({"name": name, "size_gb": size_gb})
+        return models
+    except Exception:
+        return []
+
+
+def _ollama_pull_model(model: str) -> bool:
+    """Pull a model via ollama pull. Returns True on success."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ollama", "pull", model],
+            timeout=600,
+            capture_output=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _select_stress_models(
+    available_ram_gb: float,
+    force_models: list[str] | None,
+    auto_pull: bool,
+) -> list[str]:
+    """Choose which models to run. Returns list of model IDs."""
+    pulled = {m["name"] for m in _ollama_list_models()}
+
+    if force_models:
+        # Validate they're pulled
+        missing = [m for m in force_models if m not in pulled]
+        if missing:
+            console.print(f"[yellow]Warning: these models are not pulled: {', '.join(missing)}[/yellow]")
+        return force_models
+
+    # Start with what's already pulled, filtered by RAM and skip list
+    selected = []
+    for m in _ollama_list_models():
+        name = m["name"]
+        if any(skip in name for skip in _SKIP_MODELS):
+            continue
+        # Model should fit with ~4GB OS headroom
+        if m["size_gb"] > 0 and m["size_gb"] > available_ram_gb - 4.0:
+            console.print(
+                f"  [yellow]Skipping {name} ({m['size_gb']:.1f} GB) — "
+                f"too large for {available_ram_gb:.0f} GB RAM[/yellow]"
+            )
+            continue
+        selected.append(name)
+
+    # Auto-pull recommended models that fit and aren't already pulled
+    if auto_pull:
+        for model_id, min_ram, desc in _RECOMMENDED_PULL_MODELS:
+            if model_id in pulled:
+                continue
+            if available_ram_gb < min_ram + 4.0:
+                console.print(f"  [dim]Skipping auto-pull {model_id} — not enough RAM[/dim]")
+                continue
+            console.print(f"\n  [bold cyan]Auto-pulling {model_id}[/bold cyan]  ({desc})")
+            ok = _ollama_pull_model(model_id)
+            if ok:
+                console.print(f"  [green]✓  {model_id} pulled[/green]")
+                selected.append(model_id)
+            else:
+                console.print(f"  [red]✗  Failed to pull {model_id}[/red]")
+
+    return selected
+
+
+@cli.command("stress-test")
+@click.option(
+    "--models", "model_list", default=None, metavar="MODEL,MODEL,...",
+    help=(
+        "Comma-separated Ollama model IDs to test. "
+        "If omitted, auto-selects all pulled models that fit in RAM."
+    ),
+)
+@click.option(
+    "--runs", default=3, show_default=True, type=int,
+    help="Inference runs per model per mode (raw + autotune). Min 1, recommended 3.",
+)
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune optimization profile to benchmark against raw Ollama.",
+)
+@click.option(
+    "--output", "-o", default=None, type=click.Path(),
+    help="Path to save full JSON results (auto-named if omitted).",
+)
+@click.option(
+    "--auto-pull", "auto_pull", is_flag=True, default=False,
+    help="Automatically pull recommended models (qwen3:8b, llama3.2:3b) if not present.",
+)
+@click.option(
+    "--fast", is_flag=True, default=False,
+    help="1 run per cell instead of 3 — quick proof-of-concept (less statistically robust).",
+)
+@click.option(
+    "--prompts", "prompt_filter", default=None, metavar="ID,ID,...",
+    help=f"Run only specific prompt IDs: {', '.join(p['id'] for p in _STRESS_PROMPTS)}. "
+         "Default: all 4.",
+)
+def stress_test(
+    model_list: str | None,
+    runs: int,
+    profile: str,
+    output: str | None,
+    auto_pull: bool,
+    fast: bool,
+    prompt_filter: str | None,
+) -> None:
+    """Multi-model stress test: raw Ollama vs autotune, side-by-side proof.
+
+    Runs every pulled model (or the ones you specify) through 4 diverse
+    prompts × N runs each, sampling CPU/RAM every 250 ms. Produces
+    per-model comparison tables and a final aggregate verdict.
+
+    \b
+    Quick start (uses all pulled models, 3 runs each):
+      autotune stress-test
+
+    \b
+    With auto-pull of best models:
+      autotune stress-test --auto-pull
+
+    \b
+    Test specific models:
+      autotune stress-test --models qwen3-vl:8b,qwen2.5-coder:14b
+
+    \b
+    Fast 1-run proof-of-concept:
+      autotune stress-test --fast
+
+    \b
+    Save results to a specific file:
+      autotune stress-test --output results/stress_$(date +%Y%m%d).json
+    """
+    import asyncio
+    import json
+    import statistics
+    import time as _time
+    from datetime import datetime
+    from pathlib import Path
+
+    import psutil as _psutil
+    from rich import box
+    from rich.panel import Panel
+    from rich.rule import Rule
+    from rich.table import Table
+
+    from autotune.bench.runner import run_bench_ollama_only, run_raw_ollama, save_result
+
+    n_runs = 1 if fast else max(1, runs)
+    active_prompts = _STRESS_PROMPTS
+    if prompt_filter:
+        ids = {p.strip() for p in prompt_filter.split(",")}
+        active_prompts = [p for p in _STRESS_PROMPTS if p["id"] in ids]
+        if not active_prompts:
+            console.print(f"[red]No prompts matched filter '{prompt_filter}'[/red]")
+            raise SystemExit(1)
+
+    # ── System check ─────────────────────────────────────────────────────
+    console.print()
+    console.print(Rule("[bold]autotune stress-test[/bold]", style="cyan"))
+    console.print()
+
+    vm = _psutil.virtual_memory()
+    total_ram_gb = vm.total / 1024**3
+    avail_ram_gb = vm.available / 1024**3
+
+    console.print(f"[bold]Step 1 of 5[/bold]  Checking system resources…")
+    console.print(f"  RAM: [cyan]{total_ram_gb:.1f} GB[/cyan] total  /  "
+                  f"[green]{avail_ram_gb:.1f} GB[/green] available")
+
+    swap = _psutil.swap_memory()
+    if swap.used > 0.5 * 1024**3:
+        console.print(
+            f"  [yellow]⚠  Swap already in use ({swap.used/1024**3:.1f} GB) — "
+            f"results may be noisier.[/yellow]"
+        )
+
+    # ── Model selection ───────────────────────────────────────────────────
+    console.print(f"\n[bold]Step 2 of 5[/bold]  Selecting models to test…")
+    force_models = [m.strip() for m in model_list.split(",")] if model_list else None
+    selected_models = _select_stress_models(total_ram_gb, force_models, auto_pull)
+
+    if not selected_models:
+        console.print(
+            "[red]No models available to test.[/red]\n"
+            "Pull a model first:  [bold]ollama pull qwen3-vl:8b[/bold]\n"
+            "Or use --auto-pull to download recommended models automatically."
+        )
+        raise SystemExit(1)
+
+    console.print(f"  [green]✓  {len(selected_models)} model(s) selected:[/green]  "
+                  f"{', '.join(selected_models)}")
+
+    # ── Plan overview ─────────────────────────────────────────────────────
+    console.print(f"\n[bold]Step 3 of 5[/bold]  Planning test matrix…")
+    total_calls = len(selected_models) * len(active_prompts) * n_runs * 2  # raw + autotune
+    console.print(f"  Models:   [cyan]{len(selected_models)}[/cyan]")
+    console.print(f"  Prompts:  [cyan]{len(active_prompts)}[/cyan]  "
+                  f"({', '.join(p['label'] for p in active_prompts)})")
+    console.print(f"  Runs/cell:[cyan]{n_runs}[/cyan]  (raw + autotune = {n_runs*2} calls per prompt)")
+    console.print(f"  Total inference calls: [bold cyan]{total_calls}[/bold cyan]")
+    if fast:
+        console.print("  [dim]Fast mode: 1 run per cell — less noise averaging but faster.[/dim]")
+    console.print()
+    console.print(f"[bold]Step 4 of 5[/bold]  Running benchmarks…")
+    console.print(f"  [dim]psutil sampling every 250 ms · 3 s cooldown between runs · "
+                  f"10 s cooldown between models[/dim]")
+    console.print()
+
+    # ── Main benchmark loop ───────────────────────────────────────────────
+    all_results: list[dict] = []   # raw storage for JSON export
+    model_summaries: list[dict] = []  # per-model aggregate for final table
+
+    run_start_wall = _time.time()
+
+    for m_idx, model_id in enumerate(selected_models):
+        console.print(Rule(
+            f"[bold cyan]Model {m_idx+1}/{len(selected_models)}: {model_id}[/bold cyan]",
+            style="cyan",
+        ))
+
+        raw_cells: dict[str, list[float]] = {
+            "ttft": [], "tps": [], "cpu": [], "ram_delta": [], "elapsed": []
+        }
+        tune_cells: dict[str, list[float]] = {
+            "ttft": [], "tps": [], "cpu": [], "ram_delta": [], "elapsed": []
+        }
+
+        for p_idx, prompt in enumerate(active_prompts):
+            console.print(
+                f"\n  [bold]Prompt {p_idx+1}/{len(active_prompts)}:[/bold]  "
+                f"[dim]{prompt['label']}[/dim]"
+            )
+
+            # ── RAW OLLAMA ────────────────────────────────────────────────
+            console.print(f"    [white]▷ Raw Ollama[/white]  ({n_runs} run{'s' if n_runs>1 else ''})…")
+            for r in range(n_runs):
+                with console.status(
+                    f"      [dim]Raw run {r+1}/{n_runs}…[/dim]", spinner="dots"
+                ):
+                    res = asyncio.run(
+                        run_raw_ollama(
+                            model_id,
+                            prompt["messages"],
+                            tag=f"stress_raw_{model_id}_{prompt['id']}",
+                        )
+                    )
+                if res.error:
+                    console.print(f"      [red]✗ Error: {res.error[:80]}[/red]")
+                else:
+                    raw_cells["ttft"].append(res.ttft_ms)
+                    raw_cells["tps"].append(res.tokens_per_sec)
+                    raw_cells["cpu"].append(res.cpu_avg_pct)
+                    raw_cells["ram_delta"].append(res.delta_ram_gb)
+                    raw_cells["elapsed"].append(res.elapsed_sec)
+                    save_result(res)
+                    console.print(
+                        f"      [green]✓[/green]  TTFT [bold]{res.ttft_ms:.0f}ms[/bold]  "
+                        f"· {res.tokens_per_sec:.1f} tok/s  "
+                        f"· CPU {res.cpu_avg_pct:.0f}%  "
+                        f"· ΔRAM {res.delta_ram_gb:+.2f}GB"
+                    )
+                    all_results.append({
+                        "model": model_id, "prompt": prompt["id"],
+                        "mode": "raw", "run": r+1,
+                        "ttft_ms": res.ttft_ms, "tps": res.tokens_per_sec,
+                        "cpu_avg_pct": res.cpu_avg_pct, "delta_ram_gb": res.delta_ram_gb,
+                        "elapsed_sec": res.elapsed_sec, "error": res.error,
+                    })
+                if r < n_runs - 1:
+                    _time.sleep(3)
+
+            _time.sleep(3)  # cooldown before autotune
+
+            # ── AUTOTUNE ──────────────────────────────────────────────────
+            console.print(
+                f"    [bold green]▷ autotune/{profile}[/bold green]  "
+                f"({n_runs} run{'s' if n_runs>1 else ''})…"
+            )
+            for r in range(n_runs):
+                with console.status(
+                    f"      [dim]Autotune run {r+1}/{n_runs}…[/dim]", spinner="dots"
+                ):
+                    res = asyncio.run(
+                        run_bench_ollama_only(
+                            model_id,
+                            prompt["messages"],
+                            profile_name=profile,
+                            tag=f"stress_autotune_{model_id}_{prompt['id']}",
+                        )
+                    )
+                if res.error:
+                    console.print(f"      [red]✗ Error: {res.error[:80]}[/red]")
+                else:
+                    tune_cells["ttft"].append(res.ttft_ms)
+                    tune_cells["tps"].append(res.tokens_per_sec)
+                    tune_cells["cpu"].append(res.cpu_avg_pct)
+                    tune_cells["ram_delta"].append(res.delta_ram_gb)
+                    tune_cells["elapsed"].append(res.elapsed_sec)
+                    save_result(res)
+                    console.print(
+                        f"      [green]✓[/green]  TTFT [bold]{res.ttft_ms:.0f}ms[/bold]  "
+                        f"· {res.tokens_per_sec:.1f} tok/s  "
+                        f"· CPU {res.cpu_avg_pct:.0f}%  "
+                        f"· ΔRAM {res.delta_ram_gb:+.2f}GB"
+                    )
+                    all_results.append({
+                        "model": model_id, "prompt": prompt["id"],
+                        "mode": "autotune", "run": r+1, "profile": profile,
+                        "ttft_ms": res.ttft_ms, "tps": res.tokens_per_sec,
+                        "cpu_avg_pct": res.cpu_avg_pct, "delta_ram_gb": res.delta_ram_gb,
+                        "elapsed_sec": res.elapsed_sec, "error": res.error,
+                    })
+                if r < n_runs - 1:
+                    _time.sleep(3)
+
+            _time.sleep(3)  # cooldown before next prompt
+
+        # ── Per-model comparison table ─────────────────────────────────
+        def _avg(lst: list[float]) -> float:
+            return statistics.mean(lst) if lst else float("nan")
+
+        def _win(raw_v: float, tune_v: float, lower_is_better: bool = True) -> str:
+            if lower_is_better:
+                diff_pct = (tune_v - raw_v) / max(raw_v, 0.01) * 100
+                if tune_v < raw_v * 0.97:
+                    return f"[green]✓ {diff_pct:+.1f}%[/green]"
+                elif tune_v > raw_v * 1.03:
+                    return f"[red]✗ {diff_pct:+.1f}%[/red]"
+                return f"[dim]≈ {diff_pct:+.1f}%[/dim]"
+            else:
+                diff_pct = (tune_v - raw_v) / max(raw_v, 0.01) * 100
+                if tune_v > raw_v * 1.03:
+                    return f"[green]✓ +{diff_pct:.1f}%[/green]"
+                elif tune_v < raw_v * 0.97:
+                    return f"[red]✗ {diff_pct:+.1f}%[/red]"
+                return f"[dim]≈ {diff_pct:+.1f}%[/dim]"
+
+        r_ttft  = _avg(raw_cells["ttft"])
+        t_ttft  = _avg(tune_cells["ttft"])
+        r_tps   = _avg(raw_cells["tps"])
+        t_tps   = _avg(tune_cells["tps"])
+        r_cpu   = _avg(raw_cells["cpu"])
+        t_cpu   = _avg(tune_cells["cpu"])
+        r_ram   = _avg(raw_cells["ram_delta"])
+        t_ram   = _avg(tune_cells["ram_delta"])
+        r_elap  = _avg(raw_cells["elapsed"])
+        t_elap  = _avg(tune_cells["elapsed"])
+
+        tbl = Table(
+            title=f"  {model_id}  —  {n_runs * len(active_prompts)} total runs per mode",
+            box=box.ROUNDED, show_header=True, header_style="bold",
+            title_style="bold cyan",
+        )
+        tbl.add_column("Metric",         style="bold", min_width=18)
+        tbl.add_column("Raw Ollama",     style="white",  justify="right", min_width=14)
+        tbl.add_column(f"autotune/{profile}", style="cyan", justify="right", min_width=14)
+        tbl.add_column("Result",         justify="center", min_width=14)
+
+        tbl.add_row(
+            "TTFT (ms)", f"{r_ttft:.0f}", f"{t_ttft:.0f}",
+            _win(r_ttft, t_ttft, lower_is_better=True),
+        )
+        tbl.add_row(
+            "Throughput (tok/s)", f"{r_tps:.1f}", f"{t_tps:.1f}",
+            _win(r_tps, t_tps, lower_is_better=False),
+        )
+        tbl.add_row(
+            "CPU avg (%)", f"{r_cpu:.1f}", f"{t_cpu:.1f}",
+            _win(r_cpu, t_cpu, lower_is_better=True),
+        )
+        tbl.add_row(
+            "Elapsed (s)", f"{r_elap:.2f}", f"{t_elap:.2f}",
+            _win(r_elap, t_elap, lower_is_better=True),
+        )
+        tbl.add_row(
+            "ΔRAM (GB)", f"{r_ram:+.3f}", f"{t_ram:+.3f}",
+            _win(r_ram, t_ram, lower_is_better=True),
+        )
+
+        console.print()
+        console.print(tbl)
+
+        # Count autotune wins for this model
+        wins = 0
+        total_metrics = 5
+        if t_ttft  < r_ttft  * 0.97: wins += 1
+        if t_tps   > r_tps   * 1.03: wins += 1
+        if t_cpu   < r_cpu   * 0.97: wins += 1
+        if t_elap  < r_elap  * 0.97: wins += 1
+        if t_ram   < r_ram   * 0.97: wins += 1
+
+        model_summaries.append({
+            "model": model_id,
+            "raw_ttft":  r_ttft,  "tune_ttft":  t_ttft,
+            "raw_tps":   r_tps,   "tune_tps":   t_tps,
+            "raw_cpu":   r_cpu,   "tune_cpu":   t_cpu,
+            "raw_elap":  r_elap,  "tune_elap":  t_elap,
+            "raw_ram":   r_ram,   "tune_ram":   t_ram,
+            "wins": wins, "total_metrics": total_metrics,
+        })
+
+        if m_idx < len(selected_models) - 1:
+            console.print(f"\n  [dim]Cooling down 10 s before next model…[/dim]")
+            _time.sleep(10)
+
+    # ── Step 5: Aggregate verdict ──────────────────────────────────────
+    console.print()
+    console.print(Rule("[bold]Step 5 of 5 — Final Verdict[/bold]", style="cyan"))
+    console.print()
+
+    agg = Table(
+        title="Aggregate Results — All Models",
+        box=box.HEAVY_EDGE, show_header=True, header_style="bold",
+        title_style="bold white",
+    )
+    agg.add_column("Model",       style="cyan",  min_width=22)
+    agg.add_column("TTFT raw→tune",  justify="right", min_width=16)
+    agg.add_column("tok/s raw→tune", justify="right", min_width=16)
+    agg.add_column("CPU raw→tune",   justify="right", min_width=14)
+    agg.add_column("Wins",           justify="center", min_width=10)
+
+    total_wins = 0
+    total_possible = 0
+
+    for s in model_summaries:
+        ttft_arrow  = "→" if abs(s["tune_ttft"] - s["raw_ttft"]) / max(s["raw_ttft"], 1) < 0.03 else (
+            "↓" if s["tune_ttft"] < s["raw_ttft"] else "↑"
+        )
+        tps_arrow   = "→" if abs(s["tune_tps"]  - s["raw_tps"])  / max(s["raw_tps"],  0.01) < 0.03 else (
+            "↑" if s["tune_tps"] > s["raw_tps"] else "↓"
+        )
+        cpu_arrow   = "→" if abs(s["tune_cpu"]  - s["raw_cpu"])  / max(s["raw_cpu"],  0.01) < 0.03 else (
+            "↓" if s["tune_cpu"] < s["raw_cpu"] else "↑"
+        )
+
+        ttft_color  = "green" if ttft_arrow == "↓" else ("red" if ttft_arrow == "↑" else "dim")
+        tps_color   = "green" if tps_arrow  == "↑" else ("red" if tps_arrow  == "↓" else "dim")
+        cpu_color   = "green" if cpu_arrow  == "↓" else ("red" if cpu_arrow  == "↑" else "dim")
+
+        wins_str = f"{s['wins']}/{s['total_metrics']}"
+        wins_color = "green" if s["wins"] >= 4 else ("yellow" if s["wins"] >= 2 else "red")
+
+        agg.add_row(
+            s["model"],
+            f"[{ttft_color}]{s['raw_ttft']:.0f} {ttft_arrow} {s['tune_ttft']:.0f} ms[/{ttft_color}]",
+            f"[{tps_color}]{s['raw_tps']:.1f} {tps_arrow} {s['tune_tps']:.1f}[/{tps_color}]",
+            f"[{cpu_color}]{s['raw_cpu']:.0f} {cpu_arrow} {s['tune_cpu']:.0f}%[/{cpu_color}]",
+            f"[{wins_color}]{wins_str}[/{wins_color}]",
+        )
+        total_wins += s["wins"]
+        total_possible += s["total_metrics"]
+
+    console.print(agg)
+    console.print()
+
+    # Verdict banner
+    win_rate = total_wins / max(total_possible, 1)
+    total_wall = _time.time() - run_start_wall
+
+    if win_rate >= 0.70:
+        verdict_color = "bold green"
+        verdict_icon  = "🏆"
+        verdict_text  = (
+            f"autotune OUTPERFORMS raw Ollama on [bold]{total_wins}/{total_possible}[/bold] metrics "
+            f"across {len(selected_models)} model(s) — "
+            f"strong proof of improvement"
+        )
+    elif win_rate >= 0.50:
+        verdict_color = "bold yellow"
+        verdict_icon  = "▲"
+        verdict_text  = (
+            f"autotune IMPROVES raw Ollama on [bold]{total_wins}/{total_possible}[/bold] metrics "
+            f"across {len(selected_models)} model(s)"
+        )
+    else:
+        verdict_color = "bold red"
+        verdict_icon  = "⚠"
+        verdict_text  = (
+            f"Mixed results: autotune wins {total_wins}/{total_possible} metrics. "
+            f"Consider tuning profile or reviewing system state."
+        )
+
+    console.print(Panel(
+        f"[{verdict_color}]{verdict_icon}  {verdict_text}[/{verdict_color}]\n\n"
+        f"[dim]{len(selected_models)} model(s) · "
+        f"{len(active_prompts)} prompt(s) · "
+        f"{n_runs} run(s)/cell · "
+        f"{total_calls} total inference calls · "
+        f"wall time {total_wall/60:.1f} min[/dim]",
+        title="[bold]Stress-Test Verdict[/bold]",
+        border_style=verdict_color,
+        padding=(1, 2),
+    ))
+    console.print()
+
+    # ── Save JSON ──────────────────────────────────────────────────────
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = output or f"stress_test_{ts}.json"
+    payload = {
+        "generated_at": datetime.now().isoformat(),
+        "profile": profile,
+        "runs_per_cell": n_runs,
+        "models": selected_models,
+        "prompts": [p["id"] for p in active_prompts],
+        "total_inference_calls": total_calls,
+        "wall_time_sec": round(total_wall, 1),
+        "win_rate": round(win_rate, 3),
+        "total_wins": total_wins,
+        "total_possible": total_possible,
+        "model_summaries": model_summaries,
+        "raw_results": all_results,
+    }
+    Path(out_path).write_text(json.dumps(payload, indent=2))
+    console.print(f"  [green]✓  Full results saved →[/green] [bold]{out_path}[/bold]")
+    console.print(
+        f"\n  [dim]Reproduce this run:[/dim]\n"
+        f"  [bold]autotune stress-test "
+        f"--models {','.join(selected_models)} "
+        f"--runs {n_runs} "
+        f"--profile {profile}[/bold]\n"
+    )
 
 
 # ---------------------------------------------------------------------------
