@@ -1,0 +1,551 @@
+{
+  "tool": "autotune proof",
+  "version": "1.0",
+  "timestamp": "2026-04-09T10:00:11Z",
+  "model": "phi4-mini:latest",
+  "n_runs": 3,
+  "system": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "ram_total_gb": 16.0,
+    "ram_used_pct": 68.0,
+    "chip": "Apple M2"
+  },
+  "raw_ctx": 4096,
+  "phases": {
+    "warm": {
+      "raw": {
+        "mode": "raw",
+        "mean_prefill_ms": 240.84903705555556,
+        "mean_tps": 32.14276752186725,
+        "mean_load_ms": 424.2506158333333,
+        "runs": [
+          {
+            "prompt_id": "tiny",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 971.086708,
+            "eval_tps": 31.718256622518236,
+            "load_ms": 1716.187833,
+            "eval_count": 57,
+            "error": null
+          },
+          {
+            "prompt_id": "tiny",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 31.994375,
+            "eval_tps": 32.676482795276684,
+            "load_ms": 80.69475,
+            "eval_count": 87,
+            "error": null
+          },
+          {
+            "prompt_id": "tiny",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 31.035375,
+            "eval_tps": 32.666344826948645,
+            "load_ms": 73.32225,
+            "eval_count": 78,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 351.561792,
+            "eval_tps": 33.003943136676554,
+            "load_ms": 936.97725,
+            "eval_count": 49,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 32.280791,
+            "eval_tps": 33.73899233420378,
+            "load_ms": 96.710584,
+            "eval_count": 26,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 30.674834,
+            "eval_tps": 33.39600187707572,
+            "load_ms": 84.59075,
+            "eval_count": 40,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 429.093542,
+            "eval_tps": 32.960871494053535,
+            "load_ms": 970.568584,
+            "eval_count": 207,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 37.169125,
+            "eval_tps": 32.09672602733204,
+            "load_ms": 86.344291,
+            "eval_count": 185,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 39.141542,
+            "eval_tps": 32.28922946533983,
+            "load_ms": 95.576167,
+            "eval_count": 274,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 681.777041,
+            "eval_tps": 32.52294580285462,
+            "load_ms": 989.349,
+            "eval_count": 363,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 42.558917,
+            "eval_tps": 32.61268815326836,
+            "load_ms": 99.444666,
+            "eval_count": 469,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 41.194208,
+            "eval_tps": 32.71235850135017,
+            "load_ms": 95.23575,
+            "eval_count": 288,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 705.944209,
+            "eval_tps": 32.24415048209867,
+            "load_ms": 967.816417,
+            "eval_count": 638,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 35.14075,
+            "eval_tps": 29.200949339002133,
+            "load_ms": 95.417875,
+            "eval_count": 613,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 44.050875,
+            "eval_tps": 30.972084781110407,
+            "load_ms": 107.412292,
+            "eval_count": 514,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "raw",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 753.129083,
+            "eval_tps": 31.346808894123154,
+            "load_ms": 963.201083,
+            "eval_count": 225,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "raw",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 37.135458,
+            "eval_tps": 30.7043955278745,
+            "load_ms": 90.343584,
+            "eval_count": 566,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "raw",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 40.314042,
+            "eval_tps": 31.706585332503458,
+            "load_ms": 87.317959,
+            "eval_count": 218,
+            "error": null
+          }
+        ]
+      },
+      "autotune": {
+        "mode": "autotune",
+        "mean_prefill_ms": 140.49247466666668,
+        "mean_tps": 31.74631085083819,
+        "mean_load_ms": 385.70132177777776,
+        "runs": [
+          {
+            "prompt_id": "tiny",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 221.90225,
+            "eval_tps": 31.616360209769564,
+            "load_ms": 963.484667,
+            "eval_count": 71,
+            "error": null
+          },
+          {
+            "prompt_id": "tiny",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 33.220708,
+            "eval_tps": 31.538988041594028,
+            "load_ms": 129.135333,
+            "eval_count": 75,
+            "error": null
+          },
+          {
+            "prompt_id": "tiny",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 31.671583,
+            "eval_tps": 32.48503844908441,
+            "load_ms": 76.410417,
+            "eval_count": 80,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 195.423917,
+            "eval_tps": 32.702844442545576,
+            "load_ms": 965.638375,
+            "eval_count": 103,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 30.801959,
+            "eval_tps": 32.11324804621697,
+            "load_ms": 85.568959,
+            "eval_count": 37,
+            "error": null
+          },
+          {
+            "prompt_id": "short_factual",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 33.277042,
+            "eval_tps": 31.02851596382228,
+            "load_ms": 81.056583,
+            "eval_count": 67,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 293.225875,
+            "eval_tps": 32.277228390624536,
+            "load_ms": 964.425833,
+            "eval_count": 255,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 31.247417,
+            "eval_tps": 32.271302472874346,
+            "load_ms": 84.717541,
+            "eval_count": 190,
+            "error": null
+          },
+          {
+            "prompt_id": "code_gen",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 30.743125,
+            "eval_tps": 30.392025039819497,
+            "load_ms": 84.867125,
+            "eval_count": 186,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 378.760416,
+            "eval_tps": 32.3443898791233,
+            "load_ms": 962.953208,
+            "eval_count": 615,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 31.682584,
+            "eval_tps": 32.345431851826554,
+            "load_ms": 87.805792,
+            "eval_count": 435,
+            "error": null
+          },
+          {
+            "prompt_id": "system_user",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 37.968792,
+            "eval_tps": 32.55072493091265,
+            "load_ms": 88.361417,
+            "eval_count": 350,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 538.960334,
+            "eval_tps": 30.33282267084211,
+            "load_ms": 1002.930209,
+            "eval_count": 660,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 33.436959,
+            "eval_tps": 30.866022207883137,
+            "load_ms": 99.944042,
+            "eval_count": 556,
+            "error": null
+          },
+          {
+            "prompt_id": "code_review",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 31.971375,
+            "eval_tps": 31.50639741695878,
+            "load_ms": 80.885875,
+            "eval_count": 462,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "autotune",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 505.572083,
+            "eval_tps": 31.892281741631354,
+            "load_ms": 1020.061208,
+            "eval_count": 522,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "autotune",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 37.585875,
+            "eval_tps": 31.46509394839318,
+            "load_ms": 85.574208,
+            "eval_count": 694,
+            "error": null
+          },
+          {
+            "prompt_id": "multi_turn",
+            "mode": "autotune",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 31.41225,
+            "eval_tps": 31.704879611165104,
+            "load_ms": 78.803,
+            "eval_count": 286,
+            "error": null
+          }
+        ]
+      },
+      "delta_prefill_pct": -41.66782795388137
+    },
+    "cold": {
+      "raw": {
+        "mode": "raw_cold",
+        "mean_prefill_ms": 252.02704133333333,
+        "mean_tps": 32.83177482152951,
+        "mean_load_ms": 938.137236,
+        "runs": [
+          {
+            "prompt_id": "cold_probe",
+            "mode": "raw_cold",
+            "run_idx": 0,
+            "num_ctx": 4096,
+            "prefill_ms": 315.311458,
+            "eval_tps": 32.34241619980147,
+            "load_ms": 942.438167,
+            "eval_count": 29,
+            "error": null
+          },
+          {
+            "prompt_id": "cold_probe",
+            "mode": "raw_cold",
+            "run_idx": 1,
+            "num_ctx": 4096,
+            "prefill_ms": 214.395875,
+            "eval_tps": 32.94065638055702,
+            "load_ms": 934.788791,
+            "eval_count": 102,
+            "error": null
+          },
+          {
+            "prompt_id": "cold_probe",
+            "mode": "raw_cold",
+            "run_idx": 2,
+            "num_ctx": 4096,
+            "prefill_ms": 226.373791,
+            "eval_tps": 33.21225188423003,
+            "load_ms": 937.18475,
+            "eval_count": 75,
+            "error": null
+          }
+        ]
+      },
+      "autotune": {
+        "mode": "autotune_cold",
+        "mean_prefill_ms": 216.73238866666668,
+        "mean_tps": 33.512016948495116,
+        "mean_load_ms": 935.532639,
+        "runs": [
+          {
+            "prompt_id": "cold_probe",
+            "mode": "autotune_cold",
+            "run_idx": 0,
+            "num_ctx": 1536,
+            "prefill_ms": 219.040792,
+            "eval_tps": 33.75616737024971,
+            "load_ms": 937.231167,
+            "eval_count": 26,
+            "error": null
+          },
+          {
+            "prompt_id": "cold_probe",
+            "mode": "autotune_cold",
+            "run_idx": 1,
+            "num_ctx": 1536,
+            "prefill_ms": 217.699833,
+            "eval_tps": 32.597591193150755,
+            "load_ms": 932.049125,
+            "eval_count": 265,
+            "error": null
+          },
+          {
+            "prompt_id": "cold_probe",
+            "mode": "autotune_cold",
+            "run_idx": 2,
+            "num_ctx": 1536,
+            "prefill_ms": 213.456541,
+            "eval_tps": 34.18229228208487,
+            "load_ms": 937.317625,
+            "eval_count": 26,
+            "error": null
+          }
+        ]
+      },
+      "delta_load_pct": -0.2776349664048526
+    },
+    "vram": {
+      "raw_ctx": 4096,
+      "raw_vram_gb": 3.063,
+      "tune_ctx": 1536,
+      "tune_vram_gb": 2.594,
+      "delta_gb": 0.469,
+      "theory_delta_gb": 0.312
+    }
+  },
+  "prompts": [
+    {
+      "id": "tiny",
+      "label": "Tiny"
+    },
+    {
+      "id": "short_factual",
+      "label": "Short factual"
+    },
+    {
+      "id": "code_gen",
+      "label": "Code gen"
+    },
+    {
+      "id": "system_user",
+      "label": "System+user"
+    },
+    {
+      "id": "code_review",
+      "label": "Code review"
+    },
+    {
+      "id": "multi_turn",
+      "label": "Multi-turn"
+    }
+  ]
+}

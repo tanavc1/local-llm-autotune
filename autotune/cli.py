@@ -2671,6 +2671,62 @@ def stress_test(
 
 
 # ---------------------------------------------------------------------------
+# `autotune proof`  — honest, traceable benchmark
+# ---------------------------------------------------------------------------
+
+@cli.command("proof")
+@click.option("--model", "-m", default="phi4-mini:latest",
+              help="Ollama model to benchmark (default: phi4-mini:latest)")
+@click.option("--runs", "-r", type=int, default=3,
+              help="Warm inference runs per prompt per config (default: 3)")
+@click.option("--cold-runs", type=int, default=3,
+              help="Cold-start calls per config (default: 3)")
+@click.option("--output", "-o", default="proof_results.json",
+              help="JSON output path (default: proof_results.json)")
+@click.option("--skip-cold", is_flag=True, help="Skip cold-start phase")
+@click.option("--skip-vram", is_flag=True, help="Skip VRAM footprint phase")
+@click.option("--list-models", is_flag=True, help="List available Ollama models and exit")
+def proof(
+    model: str,
+    runs: int,
+    cold_runs: int,
+    output: str,
+    skip_cold: bool,
+    skip_vram: bool,
+    list_models: bool,
+) -> None:
+    """
+    Honest, traceable proof-of-improvement benchmark.
+
+    Compares raw Ollama (zero middleware) vs autotune on:\n
+      Phase 1 — Warm prefill latency (time before first token)\n
+      Phase 2 — Cold-start load time (model unloaded between calls)\n
+      Phase 3 — VRAM footprint (from /api/ps size_vram)\n
+
+    All numbers come from Ollama's internal Go timers. Nothing is estimated
+    by Python. Results are saved to JSON for full reproducibility.
+    """
+    import asyncio as _asyncio
+    import argparse as _argparse
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
+    from proof import main as _proof_main, build_parser as _build_parser
+
+    # Build a compatible namespace for the proof script's main()
+    ns = _argparse.Namespace(
+        model=model,
+        runs=runs,
+        cold_runs=cold_runs,
+        output=output,
+        skip_cold=skip_cold,
+        skip_vram=skip_vram,
+        list_models=list_models,
+    )
+    _asyncio.run(_proof_main(ns))
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint (for `python -m autotune`)
 # ---------------------------------------------------------------------------
 

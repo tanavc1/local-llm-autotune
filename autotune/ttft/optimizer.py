@@ -72,7 +72,7 @@ def _snap_to_bucket(num_ctx: int) -> int:
 # Constants
 # ---------------------------------------------------------------------------
 
-KEEP_ALIVE_FOREVER = "-1"   # tell Ollama: never unload the model
+KEEP_ALIVE_FOREVER = "-1s"  # tell Ollama: never unload the model (negative = keep forever)
 
 # Stable size buckets for num_ctx.
 #
