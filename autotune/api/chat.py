@@ -74,6 +74,7 @@ HELP_TEXT = """
   [cyan]/profile[/cyan] [yellow]<name>[/yellow]     Switch profile: [yellow]fast[/yellow] | [yellow]balanced[/yellow] | [yellow]quality[/yellow]
   [cyan]/model[/cyan] [yellow]<id>[/yellow]         Switch to a different model (HF ID or local name)
   [cyan]/pull[/cyan] [yellow][model][/yellow]       Download an Ollama model (omit model to browse popular ones)
+  [cyan]/delete[/cyan] [yellow][model][/yellow]     Delete a locally cached Ollama model
   [cyan]/system[/cyan] [yellow]<text>[/yellow]      Set / replace the system prompt
   [cyan]/export[/cyan]             Export conversation as Markdown
   [cyan]/metrics[/cyan]            Show session performance stats
@@ -237,10 +238,12 @@ class ChatSession:
                 from .backends.mlx_backend import (
                     mlx_available, resolve_mlx_model_id,
                     _load_model_sync, is_mlx_model_loaded,
+                    list_cached_mlx_models,
                 )
                 if mlx_available():
                     mlx_id = resolve_mlx_model_id(self.model_id)
-                    if mlx_id:
+                    cached_ids = {m["id"] for m in list_cached_mlx_models()} if mlx_id else set()
+                    if mlx_id and mlx_id in cached_ids:
                         if is_mlx_model_loaded(mlx_id):
                             console.print("[dim]Model already in memory.[/dim]\n")
                             return
@@ -895,6 +898,59 @@ class ChatSession:
                             console.print(
                                 f"  [cyan]{m.id}[/cyan][dim]  {m.source}{size}[/dim]"
                             )
+
+                    elif cmd == "/delete":
+                        from .ollama_pull import OllamaNotRunningError, PullError, delete_model
+                        from .local_models import list_local_models
+                        target = arg
+                        if not target:
+                            # Interactive picker: list Ollama models
+                            ollama_models = [m for m in list_local_models() if m.source == "ollama"]
+                            if not ollama_models:
+                                console.print("[yellow]No Ollama models found.[/yellow]")
+                                continue
+                            for i, m in enumerate(ollama_models, 1):
+                                size = f"  {m.size_gb:.1f} GB" if m.size_gb else ""
+                                console.print(f"  [dim]{i}.[/dim] [cyan]{m.id}[/cyan][dim]{size}[/dim]")
+                            try:
+                                console.file.flush()
+                                sys.stdout.flush()
+                                choice = input("  Model to delete (Enter to cancel): ").strip()
+                            except (EOFError, KeyboardInterrupt):
+                                choice = ""
+                            if not choice:
+                                continue
+                            if choice.isdigit():
+                                idx = int(choice) - 1
+                                if 0 <= idx < len(ollama_models):
+                                    target = ollama_models[idx].id
+                                else:
+                                    console.print("[red]Invalid selection.[/red]")
+                                    continue
+                            else:
+                                target = choice
+                        # Confirm
+                        try:
+                            console.file.flush()
+                            sys.stdout.flush()
+                            ans = input(f"  Delete {target}? This cannot be undone. [y/N] ").strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            ans = ""
+                        if ans not in ("y", "yes"):
+                            console.print("[dim]Cancelled.[/dim]")
+                            continue
+                        try:
+                            delete_model(target, console)
+                            # If we deleted the current model, warn the user
+                            if target == self.model_id:
+                                console.print(
+                                    "[yellow]Warning:[/yellow] You just deleted the active model. "
+                                    "Use [cyan]/model <id>[/cyan] to switch to another."
+                                )
+                        except OllamaNotRunningError as exc:
+                            console.print(f"[red]Ollama not running:[/red] {exc}")
+                        except PullError as exc:
+                            console.print(f"[red]Delete failed:[/red] {exc}")
 
                     else:
                         console.print(f"[dim]Unknown command: {cmd}. Type /help.[/dim]")

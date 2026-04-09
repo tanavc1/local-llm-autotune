@@ -267,3 +267,41 @@ def pull_model(model_id: str, console: Optional[Console] = None) -> bool:
 
     con.print(f"[green]✓[/green] [bold]{model_id}[/bold] is ready.\n")
     return True
+
+
+# ---------------------------------------------------------------------------
+# Delete
+# ---------------------------------------------------------------------------
+
+def delete_model(model_id: str, console: Optional[Console] = None) -> bool:
+    """Delete a locally cached Ollama model via DELETE /api/delete.
+
+    Raises
+    ------
+    OllamaNotRunningError   if Ollama is unreachable
+    PullError               if the model doesn't exist or the server errors
+    """
+    con = console or Console()
+    if not is_ollama_running():
+        raise OllamaNotRunningError(
+            "Ollama is not running. Start it with: ollama serve"
+        )
+    body = json.dumps({"model": model_id}).encode()
+    req = urllib.request.Request(
+        f"{_OLLAMA_BASE}/api/delete",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")[:300]
+        if e.code == 404:
+            raise PullError(f"Model '{model_id}' not found in Ollama.")
+        raise PullError(f"Ollama returned HTTP {e.code}: {body_text}")
+    except urllib.error.URLError as e:
+        raise PullError(f"Cannot reach Ollama: {e.reason}")
+    con.print(f"[green]✓[/green] [bold]{model_id}[/bold] deleted.")
+    return True

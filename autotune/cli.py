@@ -356,6 +356,97 @@ def pull(model: Optional[str], show_list: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `autotune delete`
+# ---------------------------------------------------------------------------
+
+@cli.command("delete")
+@click.argument("model", required=False, default=None)
+@click.option(
+    "--yes", "-y",
+    is_flag=True, default=False,
+    help="Skip confirmation prompt.",
+)
+def delete(model: Optional[str], yes: bool) -> None:
+    """Delete a locally cached Ollama model.
+
+    MODEL is an Ollama model tag, e.g. qwen3:8b or gemma4:e4b.
+    Run without arguments to pick from a list of downloaded models.
+
+    \b
+      autotune delete qwen3:8b
+      autotune delete               # interactive picker
+    """
+    from autotune.api.local_models import list_local_models, is_ollama_running
+    from autotune.api.ollama_pull import OllamaNotRunningError, PullError, delete_model
+
+    # If no model given, show interactive picker
+    if not model:
+        if not is_ollama_running():
+            console.print("[red]Ollama is not running.[/red] Start it with: [bold]ollama serve[/bold]")
+            raise SystemExit(1)
+        local = [m for m in list_local_models() if m.source == "ollama"]
+        if not local:
+            console.print("[yellow]No Ollama models found.[/yellow]")
+            raise SystemExit(0)
+
+        from rich.table import Table
+        from rich import box as _box
+        tbl = Table(box=_box.SIMPLE, show_header=True, header_style="bold")
+        tbl.add_column("#", style="dim", width=4)
+        tbl.add_column("Model")
+        tbl.add_column("Size", justify="right")
+        tbl.add_column("Family")
+        for i, m in enumerate(local, 1):
+            size_str = f"{m.size_gb:.1f} GB" if m.size_gb else "—"
+            tbl.add_row(str(i), m.id, size_str, m.family or "—")
+        console.print(tbl)
+
+        try:
+            choice = input("Enter number or model name to delete (blank to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            raise SystemExit(0)
+
+        if not choice:
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise SystemExit(0)
+
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(local):
+                console.print(f"[red]Invalid selection:[/red] {choice}")
+                raise SystemExit(1)
+            model = local[idx].id
+        else:
+            model = choice
+
+    # Confirm
+    if not yes:
+        try:
+            ans = input(f"Delete [bold]{model}[/bold]? This cannot be undone. [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            raise SystemExit(0)
+        if ans not in ("y", "yes"):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise SystemExit(0)
+
+    try:
+        delete_model(model, console)
+        console.print(
+            f"[dim]List remaining models: [bold]autotune ls[/bold][/dim]"
+        )
+    except OllamaNotRunningError as e:
+        console.print(f"[red]Ollama not running:[/red] {e}")
+        raise SystemExit(1)
+    except PullError as e:
+        console.print(f"[red]Delete failed:[/red] {e}")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
 # `autotune benchmark`
 # ---------------------------------------------------------------------------
 

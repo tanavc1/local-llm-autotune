@@ -288,10 +288,15 @@ class BackendChain:
         Raises ModelNotAvailableError if nothing can serve the model.
         """
         # 1. MLX — Apple Silicon only, highest throughput
+        # Only route to MLX if the model is *locally cached* — we never want to
+        # hit HuggingFace just because a mapping entry exists.
         if IS_APPLE_SILICON and mlx_available():
             mlx_id = resolve_mlx_model_id(model_id)
             if mlx_id is not None:
-                return get_mlx_backend(), mlx_id
+                cached_ids = {m["id"] for m in list_cached_mlx_models()}
+                if mlx_id in cached_ids:
+                    return get_mlx_backend(), mlx_id
+                # Mapping exists but model not downloaded — fall through to Ollama
 
         # 2. Ollama
         if await self.ollama_running():
