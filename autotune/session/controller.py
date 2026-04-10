@@ -363,6 +363,7 @@ class SessionController:
 
         # ── 7. Main live loop ───────────────────────────────────────────
         all_decisions: list[AdvisorDecision] = []
+        applied_optimizations: list[str] = []   # human-readable applied changes
 
         def _handle_sigint(sig, frame):
             self._stop = True
@@ -370,7 +371,7 @@ class SessionController:
         signal.signal(signal.SIGINT, _handle_sigint)
 
         with Live(
-            dashboard.render(None, advisor.current_state, advisor.events, all_decisions),
+            dashboard.render(None, advisor.current_state, advisor.events, all_decisions, stats={}),
             refresh_per_second=2,
             screen=True,
             console=Console(stderr=False),
@@ -385,6 +386,25 @@ class SessionController:
                         all_decisions = new_decisions + all_decisions
                         for d in new_decisions:
                             self._apply_decision(config, d)
+                            # Record applied optimizations for dashboard display
+                            ch = d.suggested_changes
+                            if "context_len" in ch:
+                                applied_optimizations.insert(
+                                    0, f"ctx→{ch['context_len']:,} tokens"
+                                )
+                            if "kv_cache_precision" in ch:
+                                applied_optimizations.insert(
+                                    0,
+                                    f"KV {ch['kv_cache_precision'].upper()} precision",
+                                )
+                            if "prompt_caching" in ch:
+                                applied_optimizations.insert(0, "prompt caching on")
+                            if "concurrency" in ch:
+                                applied_optimizations.insert(
+                                    0, f"concurrency→{ch['concurrency']}"
+                                )
+                        # Keep list bounded
+                        del applied_optimizations[6:]
 
                     # DB logging every 30 seconds
                     now = time.time()
@@ -415,6 +435,11 @@ class SessionController:
                         advisor.current_state,
                         advisor.events,
                         all_decisions[:3],
+                        stats={
+                            "baseline_tps": advisor.baseline.tokens_per_sec,
+                            "baseline_ttft": advisor.baseline.ttft_ms,
+                            "applied_changes": list(applied_optimizations),
+                        },
                     )
                 )
 

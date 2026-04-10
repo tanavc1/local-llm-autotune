@@ -171,16 +171,52 @@ def recommend(
 # ---------------------------------------------------------------------------
 
 @cli.command()
-def hardware() -> None:
-    """Detect and display the hardware profile without generating recommendations."""
-    from autotune.hardware.profiler import profile_hardware
-    from autotune.output.formatter import print_hardware_profile
+@click.option(
+    "--ram-tips/--no-ram-tips",
+    default=True,
+    show_default=True,
+    help="Show top RAM consumers and model-unlock suggestions.",
+)
+def hardware(ram_tips: bool) -> None:
+    """Detect and display the hardware profile without generating recommendations.
+
+    Also shows which apps are consuming the most RAM and which models you could
+    run if you closed them (use --no-ram-tips to skip this section).
+    """
+    from autotune.hardware.profiler import profile_hardware, get_ram_hogs
+    from autotune.hardware.ram_advisor import compute_unlock_suggestions
+    from autotune.output.formatter import print_hardware_profile, print_ram_pressure_report
 
     console.print("[dim]Scanning CPU, RAM, GPU, OS version…[/dim]")
     with console.status("[cyan]Profiling hardware…[/cyan]", spinner="dots"):
         hw = profile_hardware()
+        if ram_tips:
+            hogs = get_ram_hogs(top_n=10)
+            suggestions = compute_unlock_suggestions(hw.effective_memory_gb, hogs)
 
     print_hardware_profile(hw)
+
+    if ram_tips:
+        console.print()
+        console.rule("[bold blue]RAM Pressure & Model Unlock Tips[/bold blue]")
+        console.print()
+        print_ram_pressure_report(hogs, suggestions, hw.effective_memory_gb)
+
+
+# ---------------------------------------------------------------------------
+# `autotune ps`
+# ---------------------------------------------------------------------------
+
+@cli.command()
+def ps() -> None:
+    """Show all LLMs currently loaded in memory across Ollama, MLX, and LM Studio."""
+    from autotune.api.running_models import get_running_models
+    from autotune.output.formatter import print_running_models
+
+    with console.status("[cyan]Querying backends…[/cyan]", spinner="dots"):
+        models = get_running_models()
+
+    print_running_models(models)
 
 
 # ---------------------------------------------------------------------------
@@ -1596,10 +1632,19 @@ def ls(as_json: bool) -> None:
 @click.option("--force", is_flag=True, default=False,
               help="Start even if memory analysis predicts swap risk (not recommended).")
 def run(model_name: str, profile: str, system: Optional[str], force: bool) -> None:
-    """Launch an optimised chat session with a locally downloaded Ollama model.
+    """Pre-flight analysis + optimized chat for a locally downloaded Ollama model.
 
-    Runs a pre-flight memory analysis (weights + KV cache + runtime) to select
-    the correct profile and safe context window before loading the model.
+    Difference from `autotune chat`:
+      run  = pre-flight (memory fit, swap risk, auto-profile) + chat
+      chat = chat only (connects directly, optimization still active by default)
+
+    Use `run` when you want autotune to analyze the model's memory requirements
+    before loading it — it will warn you about swap risk and automatically pick
+    the safest profile and context window.  Use `chat` for HuggingFace/MLX models
+    or when you already know the profile you want.
+
+    Both commands run the same real-time optimizer during inference (adaptive RAM
+    monitor, KV manager, context optimizer).
 
     \b
     Examples:
@@ -1735,6 +1780,15 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
             f"+{report.suggested_headroom_gb:.1f} GB headroom.[/dim]"
         )
 
+    console.print()
+    console.print(
+        f"[bold green]✓ Pre-flight passed[/bold green]  —  "
+        f"launching [cyan]autotune chat[/cyan] "
+        f"(profile=[yellow]{chosen}[/yellow], optimize=on)\n"
+        f"[dim]Equivalent command: autotune chat --model {model_name} --profile {chosen}"
+        + (f" --system \"{system}\"" if system else "")
+        + "[/dim]\n"
+    )
     start_chat(model_id=model_name, profile=chosen, system_prompt=system)
 
 
@@ -1983,12 +2037,17 @@ def chat(
 ) -> None:
     """Start an optimized terminal chat session with any model.
 
-    The chat connects directly to Ollama / LM Studio / HuggingFace Inference API
-    (whichever is available) without needing `autotune serve` to be running.
+    Connects directly to Ollama / LM Studio / HuggingFace / MLX (whichever is
+    available) — no `autotune serve` needed.
 
-    Real-time optimization runs by default: the session monitors RAM, thermals,
-    and token throughput, and adjusts context size and KV precision automatically
-    when pressure builds.  Use --no-optimize to disable this.
+    Real-time optimization is ON by default:
+      adaptive-RAM    monitors RAM each request, reduces context if pressure builds
+      KV-manager      dynamically sizes and precision-tunes the KV cache
+      context-optimizer  clips context to minimum needed, not profile maximum
+
+    Use --no-optimize to disable adaptive overrides (static profile settings only).
+    Use `autotune run <model>` instead if you want a pre-flight memory analysis
+    before loading (swap risk warnings, auto-profile selection).
 
     \b
     Examples:

@@ -48,12 +48,22 @@ from .profiles import PROFILES, get_profile
 # Up/Down arrow work without breaking anything else.
 try:
     import readline as _rl
-    # libedit (macOS) uses "bind" syntax; GNU readline uses "Control-p: ..."
-    if "libedit" in getattr(_rl, "__doc__", "") or sys.platform == "darwin":
-        _rl.parse_and_bind("bind ^[[A ed-prev-history")
-        _rl.parse_and_bind("bind ^[[B ed-next-history")
+    # Detect the actual readline backend from the module docstring.
+    # DO NOT use `sys.platform == "darwin"` as a proxy — Anaconda and
+    # Homebrew Python ship GNU readline on macOS, so the platform check
+    # is unreliable and causes GNU readline to receive libedit-syntax
+    # bind commands, which misbind bare letters (e.g. 'b').
+    _rl_doc = getattr(_rl, "__doc__", "") or ""
+    if "libedit" in _rl_doc:
+        # macOS system Python backed by Apple's libedit.
+        # libedit maps arrow keys to history in its default emacs mode —
+        # no parse_and_bind needed.  Calling parse_and_bind with escape
+        # sequences is unreliable across libedit versions and risks binding
+        # bare letters as a side-effect.
+        pass
     else:
-        _rl.parse_and_bind("tab: complete")
+        # GNU readline (Linux, or macOS with Anaconda/Homebrew readline).
+        # Use standard inputrc syntax: "keyseq": function-name.
         _rl.parse_and_bind('"\\e[A": previous-history')
         _rl.parse_and_bind('"\\e[B": next-history')
     del _rl
@@ -134,6 +144,14 @@ class ChatSession:
         self._hw_profile = None
         self._last_run_id: Optional[int] = None
 
+        # Track which backend handled the last request so we can unload correctly
+        self._active_backend: str = ""   # "ollama" | "mlx" | ""
+
+        # Live optimizer overrides — set by the adaptive advisor, applied each request
+        # (in addition to _ctx_ceiling and _kv_precision_override defined above)
+        self._prompt_caching_override: bool = False  # advisor: improve_cache_reuse
+        self._speculative_decoding_off: bool = False  # advisor: disable_speculative_decoding
+
         # Conversation ID
         if conv_id:
             self.conv_id = conv_id
@@ -150,14 +168,26 @@ class ChatSession:
 
     def _print_header(self) -> None:
         profile = PROFILES[self.profile_name]
-        opt_tag = "" if self.optimize else "  [dim]│  optimize=off[/dim]"
-        swap_tag = "  [dim]│[/dim]  [green]no-swap[/green]" if self.no_swap else ""
+
+        # Build a readable list of active optimization features
+        opt_parts: list[str] = []
+        if self.optimize:
+            opt_parts.append("[cyan]adaptive-RAM[/cyan]")
+            opt_parts.append("[cyan]KV-manager[/cyan]")
+            opt_parts.append("[cyan]context-optimizer[/cyan]")
+        else:
+            opt_parts.append("[dim]optimize=off[/dim]")
+        if self.no_swap:
+            opt_parts.append("[green]no-swap[/green]")
+
+        opt_str = "  ".join(opt_parts)
+
         console.print()
         console.print(Panel(
-            f"[bold cyan]{self.model_id}[/bold cyan]  │  "
-            f"[yellow]{profile.label}[/yellow]  │  "
-            f"[dim]conv:{self.conv_id}[/dim]  │  "
-            f"[dim]Type [/dim][cyan]/help[/cyan][dim] for commands[/dim]{opt_tag}{swap_tag}",
+            f"[bold cyan]{self.model_id}[/bold cyan]  [dim]│[/dim]  "
+            f"[yellow]{profile.label}[/yellow]  [dim]│[/dim]  "
+            f"{opt_str}  [dim]│[/dim]  "
+            f"[dim]conv:{self.conv_id}  │  /help for commands[/dim]",
             box=_rich_box.HORIZONTALS,
             padding=(0, 1),
         ))
@@ -366,28 +396,76 @@ class ChatSession:
         except Exception:
             pass
 
+    @staticmethod
+    def _autotune_notice(msg: str) -> None:
+        """Print a single standardised Autotune status line."""
+        console.print(f"[bold cyan]▸ Autotune[/bold cyan][dim]: {msg}[/dim]")
+
     def _apply_optimizer_decisions(self, decisions: list) -> None:
-        """Apply advisor-recommended config changes and notify the user."""
+        """Apply advisor-recommended config changes and notify the user with full context."""
         for d in decisions:
             ch = d.suggested_changes
+
+            # ── Context window reduction ────────────────────────────────────
             if "context_len" in ch:
-                self._ctx_ceiling = ch["context_len"]
+                new_ctx = ch["context_len"]
+                profile = PROFILES[self.profile_name]
+                old_ctx = self._ctx_ceiling or profile.max_context_tokens
+                self._ctx_ceiling = new_ctx
                 if self._sess_cfg:
-                    self._sess_cfg.context_len = ch["context_len"]
-                # Extract just the action part of the reason for a clean message
-                reason_short = d.reason.split("(")[0].strip()
-                console.print(
-                    f"[dim]⚙ Optimizer: context → {ch['context_len']:,} tokens"
-                    f"  ({reason_short})[/dim]"
+                    self._sess_cfg.context_len = new_ctx
+                # Estimate KV saved
+                kv_note = ""
+                if self._sess_cfg and self._sess_cfg.kv_cache_gb > 0 and old_ctx > 0:
+                    ratio = new_ctx / old_ctx
+                    saved_gb = self._sess_cfg.kv_cache_gb * (1.0 - ratio)
+                    if saved_gb > 0.05:
+                        kv_note = f"  [dim](~{saved_gb:.1f} GB KV freed)[/dim]"
+                self._autotune_notice(
+                    f"context {old_ctx:,}→{new_ctx:,} tokens{kv_note}  "
+                    f"[dim]— {d.reason}[/dim]"
                 )
+
+            # ── KV cache precision downgrade ────────────────────────────────
             if "kv_cache_precision" in ch:
                 prec = ch["kv_cache_precision"]
-                self._kv_precision_override = "Q8_0" if prec in ("q8", "q4") else "F16"
+                is_q8 = prec in ("q8", "q4")
+                label_to = "Q8" if is_q8 else "F16"
+                label_from = self._sess_cfg.kv_cache_precision.upper() if self._sess_cfg else "F16"
+                self._kv_precision_override = "Q8_0" if is_q8 else "F16"
                 if self._sess_cfg:
                     self._sess_cfg.kv_cache_precision = prec
-                console.print(
-                    f"[dim]⚙ Optimizer: KV precision → {prec.upper()}[/dim]"
+                # Estimate memory freed
+                mem_note = ""
+                if self._sess_cfg and self._sess_cfg.kv_cache_gb > 0.1:
+                    freed_gb = self._sess_cfg.kv_cache_gb * 0.5
+                    mem_note = f"  [dim](~{freed_gb:.1f} GB freed)[/dim]"
+                self._autotune_notice(
+                    f"KV precision {label_from}→{label_to}{mem_note}  "
+                    f"[dim]— {d.reason}[/dim]"
                 )
+
+            # ── Prompt caching (improve_cache_reuse) ───────────────────────
+            if "prompt_caching" in ch and ch["prompt_caching"]:
+                if not self._prompt_caching_override:
+                    self._prompt_caching_override = True
+                    if self._sess_cfg:
+                        self._sess_cfg.prompt_caching = True
+                    self._autotune_notice(
+                        "prompt caching enabled  "
+                        "[dim]— pins system prompt in KV so it is never recomputed across turns[/dim]"
+                    )
+
+            # ── Speculative decoding disable ────────────────────────────────
+            if ch.get("speculative_decoding") is False:
+                if not self._speculative_decoding_off:
+                    self._speculative_decoding_off = True
+                    if self._sess_cfg:
+                        self._sess_cfg.speculative_decoding = False
+                    self._autotune_notice(
+                        "speculative decoding disabled  "
+                        "[dim]— frees draft-model memory, trades some speed for stability[/dim]"
+                    )
 
     # ------------------------------------------------------------------ #
     # Telemetry                                                            #
@@ -584,13 +662,19 @@ class ChatSession:
             self._no_swap_arch = await NoSwapGuard.get_model_arch(self.model_id)
 
         # Compute dynamic num_ctx and KV precision, applying any live
-        # optimizer overrides (context ceiling / KV precision downgrade).
-        ollama_opts = build_ollama_options(
+        # optimizer overrides (context ceiling, KV precision, prompt caching).
+        ollama_opts, pressure_notices = build_ollama_options(
             msgs, profile,
             context_ceiling=self._ctx_ceiling,
             kv_precision_override=self._kv_precision_override,
             no_swap_arch=self._no_swap_arch if self.no_swap else None,
+            prompt_caching_override=self._prompt_caching_override or None,
         )
+
+        # Surface any live RAM-pressure adjustments made this request so the
+        # user knows Autotune changed settings — not the model behaving oddly.
+        for note in pressure_notices:
+            self._autotune_notice(note)
 
         # Show a subtle loading hint.  Printed with \r so the first token
         # can overwrite it cleanly — this avoids the old "Assistant: [blank]"
@@ -611,6 +695,7 @@ class ChatSession:
                 ollama_options=ollama_opts,
             ):
                 backend_used = chunk.backend
+                self._active_backend = backend_used
                 if chunk.content:
                     if not header_shown:
                         # First token: clear the loading hint then print header
@@ -717,8 +802,34 @@ class ChatSession:
                 pass  # rollback is best-effort
 
         print()  # newline after streaming
+
+        # Build TPS display: show deviation from baseline if established
+        if self._tps_baseline and comp_tokens > 5 and tps > 0:
+            ratio = tps / self._tps_baseline
+            if ratio < 0.7:
+                pct_drop = (1.0 - ratio) * 100
+                tps_display = (
+                    f"[yellow]{tps:.1f} tok/s (↓{pct_drop:.0f}% vs baseline)[/yellow]"
+                )
+            elif ratio < 0.9:
+                pct_drop = (1.0 - ratio) * 100
+                tps_display = (
+                    f"[dim yellow]{tps:.1f} tok/s (↓{pct_drop:.0f}%)[/dim yellow]"
+                )
+            else:
+                tps_display = f"{tps:.1f} tok/s"
+        else:
+            tps_display = f"{tps:.1f} tok/s"
+
+        # TTFT annotation
+        ttft_display = f"{ttft_ms:.0f} ms"
+        if self._request_count > 2 and ttft_ms > 0:
+            avg_ttft = self._ttft_sum / max(self._request_count, 1)
+            if ttft_ms > avg_ttft * 1.8:
+                ttft_display = f"[yellow]{ttft_ms:.0f} ms (↑slow)[/yellow]"
+
         console.print(
-            f"[dim]  ⚡ {tps:.1f} tok/s  │  TTFT {ttft_ms:.0f} ms  │  "
+            f"[dim]  ⚡ {tps_display}  │  TTFT {ttft_display}  │  "
             f"{comp_tokens} tokens  │  [{backend_used}]  │  "
             f"{elapsed:.1f}s[/dim]"
         )
@@ -728,6 +839,40 @@ class ChatSession:
         self._log_run(tps, ttft_ms, elapsed, prompt_tokens, comp_tokens,
                       backend_used, ollama_opts, error_msg)
         self._update_optimizer(tps, ttft_ms)
+
+    # ------------------------------------------------------------------ #
+    # Model unload                                                         #
+    # ------------------------------------------------------------------ #
+
+    async def _unload_model(self) -> None:
+        """Release model weights from RAM/VRAM when the chat session ends.
+
+        Ollama: sends keep_alive=0 via the official generate endpoint.
+        MLX:    clears the module-level model cache and runs gc/Metal flush.
+        """
+        backend = self._active_backend
+        if not backend:
+            return  # no inference happened this session
+
+        if backend == "mlx":
+            try:
+                from .backends.mlx_backend import unload_mlx_model
+                if unload_mlx_model():
+                    console.print("[dim]Model unloaded from memory.[/dim]")
+            except Exception:
+                pass
+
+        elif backend == "ollama":
+            try:
+                from .backends.chain import unload_ollama_model
+                console.print("[dim]Unloading model from Ollama…[/dim]", end="\r")
+                ok = await unload_ollama_model(self.model_id)
+                if ok:
+                    console.print("[dim]Model unloaded from memory.    [/dim]")
+                else:
+                    console.print("[dim]                                [/dim]", end="\r")
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ #
     # Main loop                                                            #
@@ -961,6 +1106,8 @@ class ChatSession:
                 await self._chat(user_input)
 
         finally:
+            # Unload model weights so RAM is returned to the OS immediately
+            await self._unload_model()
             # Clean up background monitor thread
             if self._monitor:
                 try:

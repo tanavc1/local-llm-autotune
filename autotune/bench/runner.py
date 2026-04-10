@@ -209,7 +209,7 @@ async def run_bench(
     psutil.cpu_percent(interval=None)
 
     # Compute dynamic KV window + prefix-cache + pressure-adjusted num_ctx
-    ollama_opts = build_ollama_options(messages, profile)
+    ollama_opts, _ = build_ollama_options(messages, profile)
 
     sampler = _SystemSampler(interval_sec=0.25)
     sampler.start()

@@ -65,13 +65,13 @@ Scores every locally downloaded Ollama model against your hardware — shows whe
 
 ### 5. Start chatting
 
-The fastest way to get started — autotune analyses memory fit, picks the right profile automatically, and opens a chat session:
+**`autotune run`** — pre-flight memory analysis + optimized chat. Checks whether the model fits in RAM, picks the right profile, then opens a chat session:
 
 ```bash
 autotune run qwen3:8b
 ```
 
-Or start a chat with a specific profile:
+**`autotune chat`** — skip the pre-flight and go straight to optimized chat (adaptive-RAM monitoring, KV-manager, and context-optimizer are always active):
 
 ```bash
 autotune chat --model qwen3:8b                   # balanced (default)
@@ -91,6 +91,14 @@ Resume a previous conversation (the ID is shown in the chat header):
 ```bash
 autotune chat --model qwen3:8b --conv-id a3f92c1b
 ```
+
+### 6. Check what's running
+
+```bash
+autotune ps
+```
+
+Shows every model currently loaded in memory — across both Ollama and the MLX backend — with RAM usage, context size, quantization, and time loaded.
 
 ---
 
@@ -189,6 +197,7 @@ X-Conversation-Id: a3f92c1b     # attach to a persistent conversation
 | `GET /health` | Server status, queue depth, memory pressure |
 | `GET /api/hardware` | Live hardware snapshot |
 | `GET /api/profiles` | Profile definitions |
+| `GET /api/running_models` | All models currently in memory (Ollama + MLX), with RAM, ctx, quant, age |
 | `POST /api/conversations` | Create a persistent conversation |
 | `GET /api/conversations` | List conversations |
 | `GET /api/conversations/{id}` | Get conversation + full message history |
@@ -228,17 +237,24 @@ autotune telemetry               # last 20 inference runs
 autotune telemetry --events      # notable events: swap spikes, OOMs, slow tokens
 ```
 
-### Run a benchmark
+### Prove it works
 
 ```bash
-# Full side-by-side comparison (raw Ollama vs autotune profiles)
-python scripts/benchmark.py --model qwen3:8b --runs 3
-
-# Or using the CLI:
-autotune bench --model qwen3:8b --raw --tag baseline
-autotune bench --model qwen3:8b --profile fast --tag fast_opt
-autotune bench --compare baseline,fast_opt
+autotune proof                         # default model (qwen3:8b)
+autotune proof --model llama3.2:3b
+autotune proof --with-noswap           # include no-swap scenario analysis
+autotune proof --with-cold             # include cold-start phase
 ```
+
+Runs your model twice on each prompt — once with plain Ollama, once with autotune — and reports an honest side-by-side comparison. Covers:
+
+- **First response time** (cold KV allocation): load + prefill with raw `ctx=4096` vs autotune's tighter ctx
+- **Warm TTFT**: steady-state prefill per prompt type, including a ~700-token long-document test
+- **VRAM**: actual Metal GPU memory measured via `/api/ps`
+- **Generation speed**: shown unchanged (GPU-bound, autotune doesn't touch it — honesty matters)
+- **Swap** (with `--with-noswap`): actual swap bytes observed + scenario table for different memory pressure levels
+
+All timings come from Ollama's own internal timers, not estimated by Python.
 
 ### Where data is stored
 
@@ -429,7 +445,8 @@ autotune/
 ├── api/                   Inference pipeline
 │   ├── profiles.py        #   fast / balanced / quality profile definitions
 │   ├── server.py          #   FastAPI server — OpenAI-compatible /v1 + FIFO queue
-│   ├── chat.py            #   Terminal chat REPL
+│   ├── chat.py            #   Terminal chat REPL (adaptive-RAM + KV-manager + ctx-optimizer)
+│   ├── running_models.py  #   Cross-backend model visibility (Ollama + MLX state file)
 │   ├── conversation.py    #   SQLite-backed persistent conversation state
 │   ├── ctx_utils.py       #   Token estimation + compute_num_ctx (used by ttft/)
 │   ├── kv_manager.py      #   KV options builder (wraps ttft/ for legacy callers)
@@ -451,7 +468,8 @@ autotune/
 │   └── store.py           #   SQLite: models, hardware, run_observations, telemetry_events
 │
 ├── hardware/              Hardware detection
-│   └── profiler.py        #   CPU/GPU/RAM detection (psutil + py-cpuinfo)
+│   ├── profiler.py        #   CPU/GPU/RAM detection (psutil + py-cpuinfo)
+│   └── ram_advisor.py     #   Real-time RAM pressure advice and swap risk scoring
 │
 ├── memory/                Memory estimation
 │   └── estimator.py       #   Model weights + KV cache + runtime overhead

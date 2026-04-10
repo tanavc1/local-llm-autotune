@@ -240,8 +240,17 @@ def _cpu_thermal_panel(m: LiveMetrics) -> Panel:
 # Device status panel — replaces the useless "Current Config" panel
 # ---------------------------------------------------------------------------
 
-def _device_status_panel(m: LiveMetrics, score: int, start_time: float) -> Panel:
+def _device_status_panel(
+    m: LiveMetrics,
+    score: int,
+    start_time: float,
+    stats: Optional[dict] = None,
+) -> Panel:
     label, color, icon = health_status(score)
+    stats = stats or {}
+    baseline_tps: Optional[float] = stats.get("baseline_tps")
+    baseline_ttft: Optional[float] = stats.get("baseline_ttft")
+    applied: list[str] = stats.get("applied_changes", [])
 
     t = Table.grid(padding=(0, 1))
     t.add_column(width=14, style="bold dim")
@@ -264,23 +273,46 @@ def _device_status_panel(m: LiveMetrics, score: int, start_time: float) -> Panel
         for om in m.ollama_models[:2]:
             name_str = om.name[:24]
             ctx_str = f"ctx {om.context_len:,}" if om.context_len else ""
+            mem_note = f"{om.size_gb:.1f} GB weights" if om.size_gb > 0 else "size unknown"
             t.add_row(
                 f"  {name_str}",
-                Text(f"{om.size_gb:.1f} GB weights  {ctx_str}", style="cyan"),
+                Text(f"{mem_note}  {ctx_str}", style="cyan"),
             )
-        # Performance stats if available
+
+        # Throughput with baseline comparison
         if m.tokens_per_sec is not None:
-            tps_color = "green" if m.tokens_per_sec > 15 else "yellow"
-            t.add_row(
-                "  Throughput",
-                Text(f"{m.tokens_per_sec:.1f} tok/s", style=tps_color),
-            )
+            tps_val = m.tokens_per_sec
+            tps_text = Text()
+            if baseline_tps and tps_val > 0:
+                ratio = tps_val / baseline_tps
+                pct = (ratio - 1.0) * 100
+                tps_color = "green" if ratio > 0.9 else "yellow" if ratio > 0.7 else "red"
+                tps_text.append(f"{tps_val:.1f} tok/s", style=tps_color)
+                if abs(pct) >= 5:
+                    change_style = "dim green" if pct > 0 else ("yellow" if pct > -30 else "red")
+                    tps_text.append(f"  ({pct:+.0f}% vs baseline)", style=change_style)
+            else:
+                tps_color = "green" if tps_val > 15 else "yellow"
+                tps_text.append(f"{tps_val:.1f} tok/s", style=tps_color)
+                if baseline_tps is None:
+                    tps_text.append("  (building baseline…)", style="dim")
+            t.add_row("  Throughput", tps_text)
+
+        # TTFT with baseline comparison
         if m.ttft_ms is not None:
-            ttft_color = "green" if m.ttft_ms < 500 else "yellow" if m.ttft_ms < 2000 else "red"
-            t.add_row(
-                "  TTFT",
-                Text(f"{m.ttft_ms:.0f} ms", style=ttft_color),
-            )
+            ttft_val = m.ttft_ms
+            ttft_text = Text()
+            if baseline_ttft and ttft_val > 0:
+                ratio = ttft_val / baseline_ttft
+                ttft_color = "green" if ratio < 1.3 else "yellow" if ratio < 2.0 else "red"
+                ttft_text.append(f"{ttft_val:.0f} ms", style=ttft_color)
+                if ratio >= 1.3:
+                    ttft_text.append(f"  ({ratio:.1f}× baseline)", style="yellow")
+            else:
+                ttft_color = "green" if ttft_val < 500 else "yellow" if ttft_val < 2000 else "red"
+                ttft_text.append(f"{ttft_val:.0f} ms", style=ttft_color)
+            t.add_row("  TTFT", ttft_text)
+
     elif m.llm_processes:
         t.add_row("[bold]Active LLM[/bold]", Text(""))
         for proc in m.llm_processes[:2]:
@@ -295,29 +327,45 @@ def _device_status_panel(m: LiveMetrics, score: int, start_time: float) -> Panel
         t.add_row("[dim]LLM[/dim]", Text("No active LLM detected", style="dim"))
         t.add_row("", Text("Start one: ollama run qwen3:8b", style="dim"))
 
+    # Applied autotune optimizations
+    if applied:
+        t.add_row("", Text(""))
+        t.add_row("[bold]autotune[/bold]", Text("Active optimizations:", style="dim"))
+        for change in applied[:4]:
+            t.add_row("  ↳", Text(change, style="cyan dim"))
+
     t.add_row("", Text(""))
 
-    # Quick advice based on current state
+    # Situational advice
     ram_pct = m.vram_percent if m.vram_percent is not None else m.ram_percent
     if ram_pct >= 94:
         t.add_row(
-            "[red]⚠ Action[/red]",
-            Text("Reduce context or switch to lighter quant", style="red"),
+            "[red]⚠ Critical[/red]",
+            Text(
+                f"RAM {ram_pct:.0f}% — reduce context or reload with lighter quant",
+                style="red",
+            ),
         )
     elif ram_pct >= 85:
         t.add_row(
-            "[yellow]Tip[/yellow]",
-            Text("Close unused apps to free RAM headroom", style="yellow"),
+            "[yellow]⚠ Pressure[/yellow]",
+            Text(
+                f"RAM {ram_pct:.0f}% — close other apps or autotune will reduce context",
+                style="yellow",
+            ),
         )
     elif m.swap_used_gb > 0.1:
         t.add_row(
-            "[yellow]Tip[/yellow]",
-            Text("Swap in use — LLM speed may be degraded", style="yellow"),
+            "[yellow]⚠ Swap[/yellow]",
+            Text(
+                f"{m.swap_used_gb:.2f} GB on disk — inference is paging, expect slower tokens",
+                style="yellow",
+            ),
         )
     elif score >= 90:
         t.add_row(
-            "[green]Tip[/green]",
-            Text("Machine is healthy — inference unrestricted", style="dim green"),
+            "[green]●[/green]",
+            Text("System healthy — inference running at full speed", style="dim green"),
         )
 
     return Panel(t, title="[bold]Device Status[/bold]", box=box.ROUNDED, padding=(0, 1))
@@ -417,6 +465,7 @@ class LiveDashboard:
         state: SessionState,
         events: list[SessionEvent],
         decisions: list[AdvisorDecision],
+        stats: Optional[dict] = None,
     ) -> Layout:
         # Compute health score
         score = compute_health_score(metrics) if metrics else 85
@@ -446,7 +495,9 @@ class LiveDashboard:
         if metrics:
             layout["memory"].update(_memory_panel(metrics, self._is_unified))
             layout["cpu"].update(_cpu_thermal_panel(metrics))
-            layout["right_col"].update(_device_status_panel(metrics, score, self.start_time))
+            layout["right_col"].update(
+                _device_status_panel(metrics, score, self.start_time, stats)
+            )
         else:
             loading = Panel("[dim]Collecting first metrics…[/dim]", box=box.ROUNDED)
             layout["memory"].update(loading)

@@ -240,6 +240,104 @@ def _detect_gpu() -> Optional[GPUInfo]:
 
 
 # ---------------------------------------------------------------------------
+# RAM pressure helpers
+# ---------------------------------------------------------------------------
+
+# LLM inference backends — never suggest closing these, they ARE the tool
+_LLM_BACKENDS: frozenset[str] = frozenset({
+    "ollama", "ollama_llama_server", "llama-server", "llama.cpp",
+    "llamafile", "lmstudio", "LM Studio", "mlx_lm", "mlx_lm.server",
+    "koboldcpp", "text-generation-ui", "vllm", "tabbyml",
+    "localai", "jan", "Jan", "GPT4All",
+})
+
+# macOS / Linux system processes — never suggest closing
+_SYSTEM_PROCESSES: frozenset[str] = frozenset({
+    "kernel_task", "launchd", "loginwindow", "WindowServer", "Finder",
+    "systemd", "kthreadd", "init", "com.apple.dock", "Dock",
+    "SystemUIServer", "ControlCenter", "NotificationCenter", "Spotlight",
+    "mds", "mds_stores", "mdworker", "coreservicesd",
+})
+
+# IDE / editor helpers — functional, don't suggest closing
+_IDE_HELPERS: frozenset[str] = frozenset({
+    "Code Helper", "Code Helper (Renderer)", "Code Helper (Plugin)",
+    "Code Helper (GPU)", "Electron", "electron",
+    "cursor", "Cursor", "cursor-helper",
+    "JetBrains", "idea", "pycharm", "webstorm", "goland", "clion",
+    "Xcode", "xcodebuild",
+})
+
+
+def _classify(name: str) -> str:
+    """Return a process category: 'llm_backend' | 'system' | 'ide' | 'user_app'."""
+    if name in _LLM_BACKENDS or any(name.startswith(b) for b in _LLM_BACKENDS):
+        return "llm_backend"
+    if name in _SYSTEM_PROCESSES or name.startswith("com.apple."):
+        return "system"
+    if any(name.startswith(h) for h in _IDE_HELPERS) or name in _IDE_HELPERS:
+        return "ide"
+    # Generic daemon heuristic: short lowercase name ending in 'd'
+    if name.endswith("d") and len(name) <= 12 and name.islower():
+        return "system"
+    return "user_app"
+
+
+@dataclass
+class ProcessInfo:
+    pid: int
+    name: str
+    rss_gb: float
+    kind: str        # "user_app" | "llm_backend" | "system" | "ide"
+
+    @property
+    def is_closeable(self) -> bool:
+        """True only for ordinary user apps — safe to suggest closing."""
+        return self.kind == "user_app"
+
+
+def get_ram_hogs(top_n: int = 10, min_rss_mb: float = 100.0) -> list[ProcessInfo]:
+    """Return the top-N processes sorted by resident RAM usage.
+
+    All categories are returned (for display) but only user_app entries
+    are flagged as closeable (for suggestions).
+    """
+    import os
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    own_pid = os.getpid()
+    results: list[ProcessInfo] = []
+
+    for proc in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            info = proc.info
+            pid = info["pid"]
+            if pid in (0, 1, own_pid):
+                continue
+            mem = info.get("memory_info")
+            if mem is None:
+                continue
+            rss_gb = mem.rss / 1024**3
+            if rss_gb * 1024 < min_rss_mb:
+                continue
+            name = info.get("name") or "unknown"
+            results.append(ProcessInfo(
+                pid=pid,
+                name=name,
+                rss_gb=rss_gb,
+                kind=_classify(name),
+            ))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    results.sort(key=lambda p: p.rss_gb, reverse=True)
+    return results[:top_n]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 

@@ -219,6 +219,13 @@ class AdaptiveAdvisor:
         self._ram_action_fired: bool = False
         self._swap_warn_fired: bool = False
 
+        # Ollama model change tracking — for attributing RAM spikes
+        self._prev_ollama_model_names: Optional[frozenset] = None
+
+        # Performance degradation tracking — hysteresis flags
+        self._tps_drop_warned: bool = False
+        self._ttft_rise_warned: bool = False
+
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
@@ -243,6 +250,7 @@ class AdaptiveAdvisor:
         self._emit_proactive_events(metrics)
         self._emit_spike_events(metrics)
         self._emit_threshold_events(metrics)
+        self._emit_performance_events(metrics)
         signals = self._evaluate_signals(metrics)
         decisions = self._decide(signals, metrics)
 
@@ -255,6 +263,7 @@ class AdaptiveAdvisor:
         self._prev_cpu_pct = metrics.cpu_percent
         self._prev_swap_gb = metrics.swap_used_gb
         self._prev_ram_pct = metrics.ram_percent
+        self._prev_ollama_model_names = frozenset(m.name for m in metrics.ollama_models)
 
         return decisions
 
@@ -289,47 +298,123 @@ class AdaptiveAdvisor:
         self._last_proactive_event_time = now
 
     def _emit_spike_events(self, m: LiveMetrics) -> None:
-        """Detect sudden jumps in RAM or CPU and log an alert."""
-        # RAM spike: >0.4 GB increase in one tick
+        """
+        Detect sudden changes in RAM/CPU/swap and log attribution-aware alerts.
+
+        Rather than guessing, we correlate RAM jumps with Ollama model load/unload
+        events and with whether an inference session is actively running.
+        """
+        now_ollama = frozenset(om.name for om in m.ollama_models)
+        prev_ollama = self._prev_ollama_model_names   # None on first tick
+
+        # ── RAM spike / drop ────────────────────────────────────────────────
         if self._prev_ram_used_gb is not None:
             delta_ram = m.ram_used_gb - self._prev_ram_used_gb
-            if delta_ram > 0.4:
-                self._log(
-                    f"RAM jumped +{delta_ram:.1f} GB  "
-                    f"({self._prev_ram_used_gb:.1f} → {m.ram_used_gb:.1f} GB)  "
-                    f"— likely model loading or context expansion",
-                    "WARN",
-                )
-            elif delta_ram < -0.4:
-                self._log(
-                    f"RAM freed {abs(delta_ram):.1f} GB  "
-                    f"({self._prev_ram_used_gb:.1f} → {m.ram_used_gb:.1f} GB)  "
-                    f"— model unloaded or cache cleared",
-                    "INFO",
-                )
 
-        # CPU spike: >30 percentage points in one tick (from low baseline)
+            if delta_ram > 0.4:
+                if prev_ollama is not None:
+                    new_models = now_ollama - prev_ollama
+                    if new_models:
+                        # A model was loaded into Ollama this tick
+                        name = sorted(new_models)[0]
+                        size_info = ""
+                        for om in m.ollama_models:
+                            if om.name == name:
+                                size_info = f" ({om.size_gb:.1f} GB weights"
+                                if om.context_len:
+                                    size_info += f", ctx {om.context_len:,}"
+                                size_info += ")"
+                                break
+                        self._log(
+                            f"RAM +{delta_ram:.1f} GB "
+                            f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                            f"— Ollama loaded {name}{size_info}",
+                            "INFO",
+                        )
+                    elif m.ollama_models:
+                        # A model is running but didn't change — KV/context growth
+                        running = m.ollama_models[0]
+                        ctx_note = (
+                            f" (ctx {running.context_len:,} tokens)"
+                            if running.context_len else ""
+                        )
+                        self._log(
+                            f"RAM +{delta_ram:.1f} GB "
+                            f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                            f"— KV cache growth while {running.name.split(':')[0]} is running{ctx_note}",
+                            "WARN",
+                        )
+                    else:
+                        self._log(
+                            f"RAM +{delta_ram:.1f} GB "
+                            f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                            f"— model loading or background application",
+                            "WARN",
+                        )
+                else:
+                    self._log(
+                        f"RAM +{delta_ram:.1f} GB "
+                        f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB)",
+                        "WARN",
+                    )
+
+            elif delta_ram < -0.4:
+                if prev_ollama is not None:
+                    gone_models = prev_ollama - now_ollama
+                    if gone_models:
+                        name = sorted(gone_models)[0]
+                        self._log(
+                            f"RAM −{abs(delta_ram):.1f} GB "
+                            f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                            f"— Ollama unloaded {name}, weights freed",
+                            "OK",
+                        )
+                    else:
+                        self._log(
+                            f"RAM −{abs(delta_ram):.1f} GB "
+                            f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                            f"— cache cleared or application closed",
+                            "OK",
+                        )
+                else:
+                    self._log(
+                        f"RAM −{abs(delta_ram):.1f} GB "
+                        f"({self._prev_ram_used_gb:.1f}→{m.ram_used_gb:.1f} GB) "
+                        f"— model unloaded or cache cleared",
+                        "OK",
+                    )
+
+        # ── CPU spike ──────────────────────────────────────────────────────
         if self._prev_cpu_pct is not None:
             delta_cpu = m.cpu_percent - self._prev_cpu_pct
             if delta_cpu > 30 and self._prev_cpu_pct < 40:
+                cause = "inference burst" if m.ollama_models else "background process"
                 self._log(
-                    f"CPU spike: {self._prev_cpu_pct:.0f}% → {m.cpu_percent:.0f}%  "
-                    f"— inference burst or background process",
+                    f"CPU spike: {self._prev_cpu_pct:.0f}%→{m.cpu_percent:.0f}% — {cause}",
                     "INFO",
                 )
 
-        # Swap appeared from zero
-        if self._prev_swap_gb is not None and self._prev_swap_gb < 0.05 and m.swap_used_gb >= 0.1:
-            self._log(
-                f"Swap started: {m.swap_used_gb:.2f} GB in use  "
-                f"— RAM is full, OS is paging to disk (slows LLM significantly)",
-                "WARN",
-            )
-        elif self._prev_swap_gb is not None and self._prev_swap_gb >= 0.1 and m.swap_used_gb < 0.05:
-            self._log(
-                "Swap cleared — memory pressure resolved",
-                "OK",
-            )
+        # ── Swap state changes ─────────────────────────────────────────────
+        if self._prev_swap_gb is not None:
+            if self._prev_swap_gb < 0.05 and m.swap_used_gb >= 0.1:
+                model_note = ""
+                if m.ollama_models:
+                    model_note = (
+                        f" — {m.ollama_models[0].name.split(':')[0]} "
+                        f"is exceeding available RAM"
+                    )
+                self._log(
+                    f"Swap started: {m.swap_used_gb:.2f} GB now on disk "
+                    f"— RAM exhausted, OS is paging to NVMe; "
+                    f"inference will slow significantly{model_note}",
+                    "WARN",
+                )
+            elif self._prev_swap_gb >= 0.1 and m.swap_used_gb < 0.05:
+                self._log(
+                    "Swap cleared — memory pressure resolved, "
+                    "inference speed should recover",
+                    "OK",
+                )
 
     def _emit_threshold_events(self, m: LiveMetrics) -> None:
         """Fire events when RAM crosses warning/action thresholds."""
@@ -367,6 +452,82 @@ class AdaptiveAdvisor:
                 "OK",
             )
             self._ram_action_fired = False
+
+    def _emit_performance_events(self, m: LiveMetrics) -> None:
+        """
+        Detect throughput and TTFT degradation vs baseline and emit explanatory events.
+
+        Only fires after baseline is established (≥5 samples) to avoid false positives
+        during warm-up.  Uses hysteresis so the same event is not spammed.
+        """
+        b = self.baseline
+        if b.sample_count < 5:
+            return
+
+        ram_pct = m.vram_percent if m.vram_percent is not None else m.ram_percent
+
+        # ── TPS degradation / recovery ─────────────────────────────────────
+        if b.tokens_per_sec and m.tokens_per_sec:
+            ratio = m.tokens_per_sec / b.tokens_per_sec
+            pct_drop = (1.0 - ratio) * 100
+
+            if ratio < TPS_DROP_ACTION and not self._tps_drop_warned:
+                # Attribute the slowdown to the most likely cause
+                if m.swap_used_gb > 0.1:
+                    cause = (
+                        f" — {m.swap_used_gb:.1f} GB swap in use; "
+                        f"model KV cache is being paged to NVMe"
+                    )
+                elif ram_pct >= MEM_ACTION_PCT:
+                    cause = (
+                        f" — RAM at {ram_pct:.0f}%; "
+                        f"OS page cache is competing with inference"
+                    )
+                elif m.thermal_state in (ThermalState.THROTTLING, ThermalState.CRITICAL):
+                    cause = f" — CPU thermally throttled to {m.cpu_speed_limit_pct}% of max speed"
+                elif m.cpu_percent > 85:
+                    cause = f" — CPU at {m.cpu_percent:.0f}%; background processes competing"
+                else:
+                    cause = ""
+                self._log(
+                    f"Throughput dropped: {m.tokens_per_sec:.1f} tok/s "
+                    f"(was {b.tokens_per_sec:.1f}, −{pct_drop:.0f}%){cause}",
+                    "WARN",
+                )
+                self._tps_drop_warned = True
+
+            elif ratio > 0.85 and self._tps_drop_warned:
+                self._log(
+                    f"Throughput recovered: {m.tokens_per_sec:.1f} tok/s "
+                    f"(baseline {b.tokens_per_sec:.1f})",
+                    "OK",
+                )
+                self._tps_drop_warned = False
+
+        # ── TTFT degradation / recovery ────────────────────────────────────
+        if b.ttft_ms and m.ttft_ms:
+            ratio = m.ttft_ms / b.ttft_ms
+
+            if ratio > TTFT_RISE_ACTION and not self._ttft_rise_warned:
+                if m.swap_used_gb > 0.1:
+                    cause = " — swap is forcing KV data to load from disk each request"
+                elif ram_pct >= MEM_ACTION_PCT:
+                    cause = f" — RAM at {ram_pct:.0f}%; KV allocation is slow"
+                else:
+                    cause = ""
+                self._log(
+                    f"First-token delay: {m.ttft_ms:.0f} ms "
+                    f"(was {b.ttft_ms:.0f} ms, {ratio:.1f}× slower){cause}",
+                    "WARN",
+                )
+                self._ttft_rise_warned = True
+
+            elif ratio < 1.4 and self._ttft_rise_warned:
+                self._log(
+                    f"TTFT normalized: {m.ttft_ms:.0f} ms (was {b.ttft_ms:.0f} ms baseline)",
+                    "OK",
+                )
+                self._ttft_rise_warned = False
 
     # ------------------------------------------------------------------ #
     # Baseline tracking                                                    #
@@ -555,9 +716,11 @@ class AdaptiveAdvisor:
             current_ctx = cfg.context_len
             smaller = next((c for c in CONTEXT_LADDER if c < current_ctx), None)
             if smaller:
+                kv_saved = _kv_delta_gb(cfg, current_ctx, smaller)
+                kv_str = f" (~{kv_saved:.2f} GB KV freed)" if kv_saved > 0.01 else ""
                 reason = (
-                    f"Reducing context {current_ctx:,}→{smaller:,} tokens "
-                    f"(saves ~{_kv_delta_gb(cfg, current_ctx, smaller):.2f} GB)"
+                    f"Context {current_ctx:,}→{smaller:,} tokens{kv_str} "
+                    f"— RAM at {mem:.0f}%, KV cache is the largest lever"
                 )
                 return AdvisorDecision(
                     action=step, reason=reason,
@@ -570,7 +733,17 @@ class AdaptiveAdvisor:
             prec_idx = KV_PRECISION_LADDER.index(cfg.kv_cache_precision) if cfg.kv_cache_precision in KV_PRECISION_LADDER else 0
             if prec_idx < len(KV_PRECISION_LADDER) - 1:
                 new_prec = KV_PRECISION_LADDER[prec_idx + 1]
-                reason = f"Lowering KV-cache precision {cfg.kv_cache_precision}→{new_prec} (reduces KV memory ~{'50' if new_prec=='q4' else '30'}%)"
+                # Q8 = ~50% of F16 footprint; Q4 = ~25%
+                savings_pct = 50 if new_prec == "q8" else 75
+                savings_gb = cfg.kv_cache_gb * (savings_pct / 100)
+                savings_str = (
+                    f"~{savings_gb:.1f} GB freed" if savings_gb > 0.1
+                    else f"~{savings_pct}% smaller KV"
+                )
+                reason = (
+                    f"KV precision {cfg.kv_cache_precision.upper()}→{new_prec.upper()} "
+                    f"({savings_str}, RAM {mem:.0f}%)"
+                )
                 return AdvisorDecision(
                     action=step, reason=reason,
                     severity=SessionState.ACTION_NEEDED,

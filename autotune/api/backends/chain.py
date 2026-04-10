@@ -414,3 +414,21 @@ def get_chain() -> BackendChain:
 
 async def resolve_backend(model_id: str) -> tuple[Backend, str]:
     return await get_chain().resolve(model_id)
+
+
+async def unload_ollama_model(model_id: str) -> bool:
+    """Tell Ollama to immediately evict `model_id` from memory.
+
+    Sends a minimal POST /api/generate with keep_alive=0.  This is the
+    official Ollama mechanism for on-demand unloading.  Returns True if
+    Ollama acknowledged the request (status 200).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                "http://localhost:11434/api/generate",
+                json={"model": model_id, "keep_alive": 0},
+            )
+            return r.status_code == 200
+    except Exception:
+        return False

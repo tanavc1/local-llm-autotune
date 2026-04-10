@@ -23,7 +23,10 @@ Only activates on Darwin/arm64.  Silently unavailable on other platforms.
 from __future__ import annotations
 
 import asyncio
+import atexit
+import json
 import logging
+import os
 import platform
 import time
 from dataclasses import dataclass
@@ -251,6 +254,32 @@ class _LoadedModel:
 
 _model_cache: Optional[_LoadedModel] = None
 
+# State file: written on load, deleted on unload/exit.
+# Lets `autotune ps` (a separate process) see the loaded model.
+_STATE_FILE = Path.home() / ".autotune" / "mlx_running.json"
+
+
+def _write_mlx_state(model_id: str, loaded_at: float) -> None:
+    """Persist MLX model state to disk so other processes can read it."""
+    import json
+    try:
+        _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _STATE_FILE.write_text(json.dumps({
+            "model_id": model_id,
+            "loaded_at": loaded_at,
+            "pid": os.getpid(),
+        }))
+    except Exception:
+        pass
+
+
+def _clear_mlx_state() -> None:
+    """Remove the MLX state file (model unloaded or process exiting)."""
+    try:
+        _STATE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
 
 def _load_model_sync(model_id: str) -> _LoadedModel:
     """Load (or return cached) MLX model. Called from a thread pool."""
@@ -269,9 +298,11 @@ def _load_model_sync(model_id: str) -> _LoadedModel:
     elapsed = time.perf_counter() - t0
     logger.info("MLX: loaded %s in %.1fs", model_id, elapsed)
 
+    loaded_at = time.time()
     _model_cache = _LoadedModel(
-        model_id=model_id, model=model, tokenizer=tokenizer, loaded_at=time.time()
+        model_id=model_id, model=model, tokenizer=tokenizer, loaded_at=loaded_at,
     )
+    _write_mlx_state(model_id, loaded_at)
     return _model_cache
 
 
@@ -442,3 +473,30 @@ def get_mlx_backend() -> MLXBackend:
 def is_mlx_model_loaded(mlx_id: str) -> bool:
     """Return True if mlx_id is already resident in unified memory."""
     return _model_cache is not None and _model_cache.model_id == mlx_id
+
+
+def unload_mlx_model() -> bool:
+    """Release the MLX model from unified memory.
+
+    Clears the module-level cache and runs the garbage collector so the
+    Metal allocator can reclaim the weights immediately.  Returns True if
+    a model was actually unloaded.
+    """
+    global _model_cache
+    import gc
+    if _model_cache is None:
+        return False
+    _model_cache = None
+    _clear_mlx_state()
+    gc.collect()
+    # Best-effort: clear Metal cache if mlx exposes it
+    try:
+        import mlx.core as mx
+        mx.metal.clear_cache()
+    except Exception:
+        pass
+    return True
+
+
+# Ensure the state file is cleaned up if the process exits unexpectedly.
+atexit.register(_clear_mlx_state)

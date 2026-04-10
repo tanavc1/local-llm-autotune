@@ -497,7 +497,7 @@ async def _chat_completions_inner(
     # Compute only the context window this request actually needs instead of
     # always allocating profile.max_context_tokens.  Reduces both unified
     # memory pressure and KV-cache init latency (direct TTFT improvement).
-    ollama_opts = build_ollama_options(messages, profile)
+    ollama_opts, _ = build_ollama_options(messages, profile)
 
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     start_time = time.time()
@@ -663,6 +663,31 @@ async def health():
             "pressure_level": mem["pressure_level"],
         },
         "profiles": list(PROFILES.keys()),
+    }
+
+
+@app.get("/api/running_models")
+async def running_models_endpoint():
+    """Return all LLMs currently resident in memory across all local backends."""
+    from autotune.api.running_models import get_running_models
+    models = get_running_models()
+    return {
+        "models": [
+            {
+                "name": m.name,
+                "backend": m.backend,
+                "ram_gb": round(m.ram_gb, 3),
+                "context_len": m.context_len,
+                "loaded_since": m.loaded_since,
+                "expires_at": m.expires_at,
+                "quant": m.quant,
+                "family": m.family,
+                "age": m.age_str,
+                "expires_in": m.expires_str,
+            }
+            for m in models
+        ],
+        "count": len(models),
     }
 
 

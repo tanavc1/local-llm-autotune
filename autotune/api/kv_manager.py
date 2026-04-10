@@ -82,12 +82,13 @@ def build_ollama_options(
     context_ceiling: Optional[int] = None,
     kv_precision_override: Optional[str] = None,
     no_swap_arch=None,   # Optional[autotune.memory.noswap.ModelArch]
-) -> dict:
+    prompt_caching_override: Optional[bool] = None,
+) -> tuple[dict, list[str]]:
     """
-    Return the complete Ollama `options` dict for this request.
+    Return ``(options_dict, autotune_notices)`` for this Ollama request.
 
-    Fields set
-    ----------
+    ``options_dict`` fields
+    -----------------------
     num_ctx   — dynamic minimum that fits input + max_new_tokens + buffer,
                 further capped by context_ceiling and live RAM pressure
     f16_kv    — KV cache precision (F16 or Q8), determined by:
@@ -95,107 +96,122 @@ def build_ollama_options(
                   2. kv_precision_override from ModelSelector pre-flight
                   3. Live RAM pressure: HIGH/CRITICAL force Q8 regardless
                 Only Q8 and F16 are supported by Ollama's f16_kv flag.
-    num_keep  — system-prompt prefix tokens to pin in KV (if profile wants it)
+    num_keep  — system-prompt prefix tokens to pin in KV (if profile or
+                prompt_caching_override requests it)
+
+    ``autotune_notices``
+    --------------------
+    Human-readable strings describing live adjustments made this request
+    (e.g. "RAM 88% — context 8,192→6,144 tokens, KV F16→Q8").  Empty when
+    everything is nominal.  Callers decide whether/how to display them.
 
     Parameters
     ----------
-    context_ceiling : hard upper bound on num_ctx, set by ModelSelector from
-                      pre-flight fit analysis.  Prevents the context from
-                      exceeding what the model selector determined is safe
-                      for this model on this hardware.  When None, only live
-                      RAM pressure governs the ceiling.
-    kv_precision_override : "Q8_0" or "F16" from ModelSelector.recommended_kv.
-                      Overrides the profile default before pressure checks.
-                      Useful when ModelSelector assessed MARGINAL/SWAP_RISK fit
-                      and recommends Q8 to halve KV memory consumption.
-    no_swap_arch : ModelArch instance from autotune.memory.noswap.  When
-                      provided, NoSwapGuard runs after all other reductions
-                      and guarantees the request will not trigger swap by
-                      computing actual KV bytes and further reducing num_ctx /
-                      KV precision as needed.
+    context_ceiling : hard upper bound on num_ctx, set by the advisor or
+                      pre-flight fit analysis.
+    kv_precision_override : "Q8_0" or "F16" from the advisor.  Overrides
+                      the profile default before pressure checks run.
+    no_swap_arch : ModelArch from autotune.memory.noswap.  When provided,
+                      NoSwapGuard runs after all other reductions.
+    prompt_caching_override : when True, force prefix-cache pinning even if
+                      the active profile does not enable system_prompt_cache.
+                      Set by the advisor's improve_cache_reuse action.
     """
     # Start with the base options (num_ctx + f16_kv from profile)
     opts = ollama_options_for_profile(messages, profile)
+    notices: list[str] = []
 
-    # Apply ModelSelector KV precision override (pre-flight assessment).
-    # This takes priority over profile default but can still be further
-    # overridden by live RAM pressure below.
+    # Apply advisor KV precision override (pre-flight / live assessment).
+    # Takes priority over profile default, but can still be further overridden
+    # by live RAM pressure below.
     if kv_precision_override == "Q8_0":
         if opts.get("f16_kv", True):
-            logger.debug("KV precision: F16 → Q8 (model selector override)")
+            logger.debug("KV precision: F16 → Q8 (advisor override)")
             opts["f16_kv"] = False
     elif kv_precision_override == "F16":
         opts["f16_kv"] = True
 
-    # Apply ModelSelector ceiling BEFORE pressure reduction so pressure
-    # reduction can only further reduce, never expand beyond the safe limit.
+    # Apply context ceiling BEFORE pressure reduction so pressure can only
+    # further reduce, never expand beyond the safe limit.
     if context_ceiling is not None and context_ceiling > 0:
         if opts["num_ctx"] > context_ceiling:
             logger.debug(
-                "num_ctx capped by model selector: %d → %d",
+                "num_ctx capped by advisor: %d → %d",
                 opts["num_ctx"], context_ceiling,
             )
             opts["num_ctx"] = context_ceiling
 
-    # Add prefix-cache pinning
-    num_keep = compute_num_keep(messages, profile)
-    if num_keep > 0:
-        opts["num_keep"] = num_keep
-        logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
+    # Prefix-cache pinning: honour profile setting OR advisor override.
+    use_caching = profile.system_prompt_cache or bool(prompt_caching_override)
+    if use_caching:
+        num_keep = compute_num_keep(messages, profile)
+        # compute_num_keep respects profile.system_prompt_cache; if we only have
+        # the override, compute the token count directly.
+        if num_keep == 0 and prompt_caching_override:
+            for m in messages:
+                if m.get("role") == "system":
+                    num_keep += estimate_tokens(m.get("content", ""))
+                else:
+                    break
+        if num_keep > 0:
+            opts["num_keep"] = num_keep
+            logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
 
-    # Apply live memory-pressure reductions.
-    # num_ctx is reduced first (cheap, immediate).  KV precision is downgraded
-    # from F16 to Q8 under HIGH/CRITICAL pressure — this halves the KV cache
-    # memory footprint and is more effective than a num_ctx reduction alone
-    # because it applies across all future tokens, not just the current window.
+    # ── Live memory-pressure reductions ─────────────────────────────────────
+    # num_ctx is reduced first (cheap, immediate effect on KV allocation).
+    # KV precision is downgraded from F16→Q8 at HIGH/CRITICAL pressure —
+    # this halves the KV footprint and is more effective than context reduction
+    # alone because it applies to all future tokens, not just the current window.
     vm = psutil.virtual_memory()
     ram_pct = vm.percent
     original_ctx = opts["num_ctx"]
+    was_f16 = opts.get("f16_kv", True)
 
     if ram_pct >= _PRESSURE_CRITICAL_PCT:
         opts["num_ctx"] = max(512, int(original_ctx * 0.50))
         logger.warning(
-            "Critical memory pressure %.1f%% — halving num_ctx: %d → %d",
+            "Critical RAM %.1f%% — halving num_ctx %d→%d",
             ram_pct, original_ctx, opts["num_ctx"],
         )
-        if opts.get("f16_kv", True):
+        kv_note = ""
+        if was_f16:
             opts["f16_kv"] = False
-            logger.warning(
-                "Critical memory pressure %.1f%% — KV precision downgraded F16 → Q8",
-                ram_pct,
-            )
+            kv_note = ", KV F16→Q8"
+            logger.warning("Critical RAM %.1f%% — KV precision F16→Q8", ram_pct)
+        notices.append(
+            f"RAM {ram_pct:.0f}% (critical) — "
+            f"context {original_ctx:,}→{opts['num_ctx']:,} tokens{kv_note}"
+        )
+
     elif ram_pct >= _PRESSURE_HIGH_PCT:
         opts["num_ctx"] = max(512, int(original_ctx * 0.75))
         logger.debug(
-            "High memory pressure %.1f%% — reducing num_ctx: %d → %d",
+            "High RAM %.1f%% — reducing num_ctx %d→%d",
             ram_pct, original_ctx, opts["num_ctx"],
         )
-        if opts.get("f16_kv", True):
+        kv_note = ""
+        if was_f16:
             opts["f16_kv"] = False
-            logger.warning(
-                "High memory pressure %.1f%% — KV precision downgraded F16 → Q8",
-                ram_pct,
-            )
-    elif ram_pct >= _PRESSURE_MODERATE_PCT:
-        opts["num_ctx"] = max(512, int(original_ctx * 0.90))
-        logger.debug(
-            "Moderate memory pressure %.1f%% — reducing num_ctx: %d → %d",
-            ram_pct, original_ctx, opts["num_ctx"],
+            kv_note = ", KV F16→Q8"
+            logger.warning("High RAM %.1f%% — KV precision F16→Q8", ram_pct)
+        notices.append(
+            f"RAM {ram_pct:.0f}% — "
+            f"context {original_ctx:,}→{opts['num_ctx']:,} tokens{kv_note}"
         )
-        # Moderate pressure: keep KV precision but log a heads-up
-        if opts.get("f16_kv", True):
+
+    elif ram_pct >= _PRESSURE_MODERATE_PCT:
+        new_ctx = max(512, int(original_ctx * 0.90))
+        if new_ctx < original_ctx:
+            opts["num_ctx"] = new_ctx
             logger.debug(
-                "Moderate memory pressure %.1f%% — KV still F16; "
-                "will downgrade at %.1f%%",
-                ram_pct, _PRESSURE_HIGH_PCT,
+                "Moderate RAM %.1f%% — reducing num_ctx %d→%d",
+                ram_pct, original_ctx, new_ctx,
+            )
+            notices.append(
+                f"RAM {ram_pct:.0f}% — context {original_ctx:,}→{new_ctx:,} tokens"
             )
 
     # ── No-swap guarantee (applied last, after all other reductions) ────────
-    # When the caller provides a ModelArch, NoSwapGuard computes the actual
-    # KV bytes for the current num_ctx and f16_kv setting and further reduces
-    # them — at multiple progressive levels — until the allocation fits
-    # comfortably in available RAM.  This prevents macOS from compressing or
-    # paging memory during inference (which causes a catastrophic perf drop).
     if no_swap_arch is not None:
         from autotune.memory.noswap import NoSwapGuard
         from autotune.ttft.optimizer import _snap_to_bucket
@@ -217,7 +233,7 @@ def build_ollama_options(
         opts["num_ctx"] = decision.num_ctx
         opts["f16_kv"] = decision.f16_kv
 
-    return opts
+    return opts, notices
 
 
 def memory_pressure_snapshot() -> dict:
