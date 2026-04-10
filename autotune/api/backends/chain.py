@@ -383,7 +383,7 @@ class BackendChain:
                 options["repeat_penalty"] = repetition_penalty
             if options:
                 extra_body["options"] = options
-            extra_body["keep_alive"] = "-1"   # keep model in VRAM/unified-memory
+            extra_body["keep_alive"] = "-1m"   # keep model in VRAM/unified-memory
 
         async for chunk in backend.stream(
             canonical_id,
