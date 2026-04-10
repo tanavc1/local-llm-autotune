@@ -92,6 +92,8 @@ HELP_TEXT = """
   [cyan]/models[/cyan]             List locally available models
   [cyan]/memory[/cyan]             Show recalled context + memory stats
   [cyan]/memory search[/cyan] [yellow]<q>[/yellow]  Search your past conversations
+  [cyan]/recall[/cyan]             Browse past conversations and resume one
+  [cyan]/recall search[/cyan] [yellow]<q>[/yellow]  Search past conversations by topic
   [cyan]/quit[/cyan]               Exit
 
 [dim]Tip: /pull with no argument lists popular models you can download.[/dim]
@@ -643,7 +645,7 @@ class ChatSession:
         # Build context via the intelligent ContextWindow manager.
         # new_user_message=None because the user turn was just saved to DB above.
         # reserved_for_output ensures the model has headroom to reply.
-        msgs, _ = self.conv_mgr.build_context(
+        msgs, _, ctx_tier = self.conv_mgr.build_context(
             self.conv_id,
             profile.max_context_tokens,
             new_user_message=None,
@@ -837,9 +839,11 @@ class ChatSession:
             if ttft_ms > avg_ttft * 1.8:
                 ttft_display = f"[yellow]{ttft_ms:.0f} ms (↑slow)[/yellow]"
 
+        num_ctx = ollama_opts.get("num_ctx", 0)
+        ctx_str = f"ctx={num_ctx:,} ({ctx_tier})" if num_ctx else f"({ctx_tier})"
         console.print(
             f"[dim]  ⚡ {tps_display}  │  TTFT {ttft_display}  │  "
-            f"{comp_tokens} tokens  │  [{backend_used}]  │  "
+            f"{ctx_str}  │  [{backend_used}]  │  "
             f"{elapsed:.1f}s[/dim]"
         )
         console.print()
@@ -996,6 +1000,169 @@ class ChatSession:
         except Exception as exc:
             console.print(f"[yellow]Memory error:[/yellow] {exc}")
 
+    async def _handle_recall_cmd(self, arg: str) -> None:
+        """Handle /recall [search <query>] — browse and resume past conversations."""
+        try:
+            from autotune.recall.manager import get_recall_manager
+            mgr = get_recall_manager()
+
+            # /recall search <query> — search by topic, then offer to resume
+            if arg.startswith("search "):
+                query = arg[len("search "):].strip()
+                if not query:
+                    console.print("[dim]Usage: /recall search <query>[/dim]")
+                    return
+                with console.status("[dim]Searching memory…[/dim]", spinner="dots"):
+                    results = await mgr.search(query, top_k=10, min_score=0.15)
+                if not results:
+                    console.print(f"[dim]No past conversations found for: {query!r}[/dim]")
+                    return
+                # Deduplicate by conv_id, keep highest-scored result per conv
+                seen: dict[str, object] = {}
+                for r in results:
+                    if r.conv_id not in seen:
+                        seen[r.conv_id] = r
+                items = list(seen.values())
+                console.print(f"\n[bold]Recall search:[/bold] {query!r}\n")
+                for i, r in enumerate(items, 1):
+                    model_label = (r.model_id or "unknown").split(":")[0]
+                    # Show just the first line of the chunk (user's question)
+                    first_line = r.chunk_text.split("\n")[0][:100]
+                    console.print(
+                        f"  [dim]{i}.[/dim]  [{r.age_str} · {model_label}]  "
+                        f"[dim]{first_line}[/dim]"
+                    )
+                console.print()
+                await self._offer_resume(items)
+                return
+
+            # /recall — list all stored conversations
+            convs = mgr.list_conversations(limit=15)
+            if not convs:
+                console.print("[dim]No past conversations in memory yet.[/dim]")
+                console.print(
+                    "[dim]Conversations are saved automatically when you exit or use /new.[/dim]"
+                )
+                return
+
+            console.print("\n[bold]Past conversations[/bold]  [dim](most recent first)[/dim]\n")
+            for i, c in enumerate(convs, 1):
+                model_label = c["model_id"].split(":")[0]
+                delta = time.time() - c["last_at"]
+                if delta < 3600:
+                    age = f"{int(delta / 60)} min ago"
+                elif delta < 86400:
+                    age = f"{int(delta / 3600)} hr ago"
+                elif delta < 7 * 86400:
+                    age = f"{int(delta / 86400)} days ago"
+                else:
+                    age = f"{int(delta / 86400)} days ago"
+                # Extract opening user question from the chunk text
+                sample = c.get("sample_text") or ""
+                first_line = sample.split("\n")[0][:100]
+                exchanges = c["chunk_count"]
+                xchg = f"{exchanges} exchange{'s' if exchanges != 1 else ''}"
+                console.print(
+                    f"  [dim]{i}.[/dim]  [dim][{age} · {model_label} · {xchg}][/dim]\n"
+                    f"        {first_line}"
+                )
+            console.print()
+            await self._offer_resume(convs, conv_id_key="conv_id")
+
+        except Exception as exc:
+            console.print(f"[yellow]Recall error:[/yellow] {exc}")
+
+    async def _offer_resume(self, items: list, conv_id_key: str = "conv_id") -> None:
+        """
+        Display a 'resume?' prompt and switch conversation if the user picks one.
+
+        *items* is either a list of MemoryChunk objects (have .conv_id attribute)
+        or a list of dicts (keyed by *conv_id_key*).
+        """
+        try:
+            console.file.flush()
+            sys.stdout.flush()
+            choice = input(
+                "  Resume a conversation? (enter number or Enter to skip): "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not choice or not choice.isdigit():
+            return
+        idx = int(choice) - 1
+        if not (0 <= idx < len(items)):
+            console.print("[dim]Invalid selection.[/dim]")
+            return
+        item = items[idx]
+        conv_id = item[conv_id_key] if isinstance(item, dict) else item.conv_id
+        await self._resume_conversation(conv_id)
+
+    async def _resume_conversation(self, conv_id: str) -> None:
+        """Switch to a past conversation and restore its history."""
+        conv = self.conv_mgr.get(conv_id)
+        if not conv:
+            console.print(
+                f"[yellow]Original conversation data for {conv_id} is no longer available.[/yellow]\n"
+                "[dim]Start a new conversation and use /memory search to find related context.[/dim]"
+            )
+            return
+        # Save current conversation before switching
+        await self._save_memories()
+        self.conv_id = conv_id
+        self._memory_injected = True   # history already loaded; skip injection
+        self._injected_context = None
+        console.print(f"[green]Resumed conversation {conv_id}[/green]")
+        await self._show_history()
+
+    async def _watch_model_presence(self) -> None:
+        """
+        Background task — polls every 30 s to detect unexpected model unloads.
+
+        Notifies the user when the active model disappears from Ollama's /api/ps
+        so they know the next message will incur a reload delay.  Also notifies
+        if the model comes back (e.g. reloaded by another process).
+        """
+        was_loaded: Optional[bool] = None   # None = not yet observed
+        while True:
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                return
+
+            if not self._active_backend:
+                continue
+
+            # After first inference we know it was loaded
+            if was_loaded is None:
+                was_loaded = True
+
+            try:
+                if self._active_backend == "ollama":
+                    loop = asyncio.get_running_loop()
+                    from .running_models import get_running_models
+                    models = await loop.run_in_executor(None, get_running_models)
+                    ollama_names = {m.name.lower() for m in models if m.backend == "ollama"}
+                    target = self.model_id.lower()
+                    currently_loaded = any(
+                        target in n or n in target for n in ollama_names
+                    )
+
+                    if was_loaded and not currently_loaded:
+                        console.print(
+                            f"\n[dim]▸ {self.model_id} is no longer in memory "
+                            f"(will reload automatically on next message)[/dim]"
+                        )
+                    elif not was_loaded and currently_loaded:
+                        console.print(
+                            f"\n[dim]▸ {self.model_id} reloaded into memory[/dim]"
+                        )
+                    was_loaded = currently_loaded
+
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                pass  # watcher must never crash the chat
+
     # ------------------------------------------------------------------ #
     # Main loop                                                            #
     # ------------------------------------------------------------------ #
@@ -1011,6 +1178,9 @@ class ChatSession:
         # Start background hardware monitor + adaptive advisor
         if self.optimize:
             self._start_optimizer()
+
+        # Background task: detect unexpected model unloads mid-session
+        watcher_task = asyncio.create_task(self._watch_model_presence())
 
         # Show existing history if resuming
         conv = self.conv_mgr.get(self.conv_id)
@@ -1226,13 +1396,16 @@ class ChatSession:
                     elif cmd == "/memory":
                         await self._handle_memory_cmd(arg)
 
+                    elif cmd == "/recall":
+                        await self._handle_recall_cmd(arg)
+
                     else:
                         console.print(f"[dim]Unknown command: {cmd}. Type /help.[/dim]")
 
                     continue
 
-                # Regular chat — inject memory context on first turn only if --recall is set
-                if self.recall and not self._memory_injected:
+                # Regular chat — inject relevant memory on first turn of every session
+                if not self._memory_injected:
                     await self._inject_memories_for(user_input)
                 await self._chat(user_input)
 
@@ -1241,6 +1414,12 @@ class ChatSession:
             await self._save_memories()
             # Unload model weights so RAM is returned to the OS immediately
             await self._unload_model()
+            # Cancel background model-presence watcher
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
             # Clean up background monitor thread
             if self._monitor:
                 try:

@@ -399,6 +399,45 @@ class RecallStore:
         return cur.rowcount
 
     # ------------------------------------------------------------------ #
+    # List conversations                                                   #
+    # ------------------------------------------------------------------ #
+
+    def list_conversations(self, limit: int = 20) -> list[dict]:
+        """
+        Return one row per distinct conv_id, ordered by most-recently-active.
+
+        Each dict contains:
+            conv_id      (str)
+            model_id     (str)   — model used for most chunks
+            first_at     (float) — unix timestamp of earliest chunk
+            last_at      (float) — unix timestamp of latest chunk
+            chunk_count  (int)   — number of stored exchange chunks
+            sample_text  (str)   — text of the very first chunk (user's opening question)
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    g.conv_id,
+                    COALESCE(MAX(g.model_id), 'unknown') AS model_id,
+                    MIN(g.created_at)   AS first_at,
+                    MAX(g.created_at)   AS last_at,
+                    COUNT(*)            AS chunk_count,
+                    (
+                        SELECT m.chunk_text FROM memories m
+                        WHERE  m.conv_id = g.conv_id
+                        ORDER  BY m.id ASC LIMIT 1
+                    )                   AS sample_text
+                FROM memories g
+                GROUP BY g.conv_id
+                ORDER BY MAX(g.created_at) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
     # Stats                                                                #
     # ------------------------------------------------------------------ #
 

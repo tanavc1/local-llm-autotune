@@ -286,6 +286,13 @@ class RecallManager:
     # Convenience pass-throughs for CLI commands                          #
     # ------------------------------------------------------------------ #
 
+    def list_conversations(self, limit: int = 20) -> list[dict]:
+        """
+        Return one entry per stored conversation, ordered by most-recently-active.
+        Each dict: conv_id, model_id, first_at, last_at, chunk_count, sample_text.
+        """
+        return self._store.list_conversations(limit=limit)
+
     def get_recent(
         self,
         limit: int = 20,

@@ -62,6 +62,14 @@ CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id, created_at);
 
 
 
+_TIER_LABELS: dict[str, str] = {
+    "full":              "FULL",
+    "recent_plus_facts": "RECENT+FACTS",
+    "compressed":        "COMPRESSED",
+    "emergency":         "EMERGENCY",
+}
+
+
 def _hash_system_prompt(prompt: Optional[str]) -> Optional[str]:
     if not prompt:
         return None
@@ -247,7 +255,7 @@ class ConversationManager:
         max_tokens: int,
         new_user_message: Optional[str] = None,
         reserved_for_output: int = 512,
-    ) -> tuple[list[dict[str, str]], bool]:
+    ) -> tuple[list[dict[str, str]], bool, str]:
         """
         Build the messages list to send to the backend using the intelligent
         ContextWindow manager.
@@ -300,7 +308,8 @@ class ConversationManager:
             )
 
         context_complete = (built.turns_dropped == 0 and not built.summary_injected)
-        return built.messages, context_complete
+        tier_label = _TIER_LABELS.get(built.tier.value, built.tier.value.upper())
+        return built.messages, context_complete, tier_label
 
     # ------------------------------------------------------------------ #
     # Export                                                               #
