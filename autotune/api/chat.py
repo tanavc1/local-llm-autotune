@@ -90,10 +90,13 @@ HELP_TEXT = """
   [cyan]/metrics[/cyan]            Show session performance stats
   [cyan]/backends[/cyan]           Show available backends
   [cyan]/models[/cyan]             List locally available models
+  [cyan]/memory[/cyan]             Show recalled context + memory stats
+  [cyan]/memory search[/cyan] [yellow]<q>[/yellow]  Search your past conversations
   [cyan]/quit[/cyan]               Exit
 
 [dim]Tip: /pull with no argument lists popular models you can download.[/dim]
 [dim]Tip: Up arrow cycles through input history (readline)[/dim]
+[dim]Tip: /memory shows what was recalled from your past conversations.[/dim]
 """
 
 
@@ -112,12 +115,14 @@ class ChatSession:
         conv_id: Optional[str] = None,
         optimize: bool = True,
         no_swap: bool = False,
+        recall: bool = False,
     ) -> None:
         self.model_id = model_id
         self.profile_name = profile_name
         self.system_prompt = system_prompt
         self.optimize = optimize
         self.no_swap = no_swap
+        self.recall = recall
         self.conv_mgr = get_conv_manager()
         self.chain = get_chain()
         self.tuner = get_tuner()
@@ -151,6 +156,10 @@ class ChatSession:
         # (in addition to _ctx_ceiling and _kv_precision_override defined above)
         self._prompt_caching_override: bool = False  # advisor: improve_cache_reuse
         self._speculative_decoding_off: bool = False  # advisor: disable_speculative_decoding
+
+        # Persistent memory
+        self._memory_injected: bool = False          # True once we've injected context
+        self._injected_context: Optional[str] = None  # the block we injected (for /memory)
 
         # Conversation ID
         if conv_id:
@@ -278,7 +287,7 @@ class ChatSession:
                             console.print("[dim]Model already in memory.[/dim]\n")
                             return
                         name = mlx_id.split("/")[-1]
-                        loop = asyncio.get_event_loop()
+                        loop = asyncio.get_running_loop()
                         with console.status(
                             f"[cyan]Loading[/cyan] [bold]{name}[/bold]…",
                             spinner="dots",
@@ -604,7 +613,7 @@ class ChatSession:
         """
         from .ollama_pull import OllamaNotRunningError, PullError, pull_model
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
                 None, lambda: pull_model(model_id, console)
@@ -875,6 +884,119 @@ class ChatSession:
                 pass
 
     # ------------------------------------------------------------------ #
+    # Persistent memory (recall)                                          #
+    # ------------------------------------------------------------------ #
+
+    async def _inject_memories_for(self, user_input: str) -> None:
+        """
+        On the first turn of a conversation, query recall for relevant context
+        and prepend it to the conversation's system prompt.
+
+        No-op if memory was already injected this session, or if the recall
+        manager returns nothing above the relevance threshold.
+        """
+        if self._memory_injected:
+            return
+        self._memory_injected = True  # mark now — prevents double-injection on retry
+
+        try:
+            from autotune.recall.manager import get_recall_manager
+            mgr = get_recall_manager()
+
+            probe: list[dict] = []
+            if self.system_prompt:
+                probe.append({"role": "system", "content": self.system_prompt})
+            probe.append({"role": "user", "content": user_input})
+
+            context_block = await mgr.get_context_for(probe)
+            if not context_block:
+                return
+
+            self._injected_context = context_block
+
+            existing_sys = self.system_prompt or ""
+            new_sys = (existing_sys + "\n\n" + context_block).strip() if existing_sys else context_block
+            self.conv_mgr.update_system_prompt(self.conv_id, new_sys)
+
+            console.print("[dim]▸ Memory: recalled relevant context from past conversations[/dim]")
+        except Exception:
+            pass  # recall must never crash the chat
+
+    async def _save_memories(self) -> None:
+        """
+        Persist the current conversation to the recall store.
+
+        Called on /new (before the old conv is replaced) and in the
+        session's finally block.  Silently skipped if the conversation
+        has no meaningful exchanges.
+        """
+        try:
+            from autotune.recall.manager import get_recall_manager
+            messages = self.conv_mgr.get_messages(self.conv_id)
+            if not messages:
+                return
+            mgr = get_recall_manager()
+            saved = await mgr.save_conversation(self.conv_id, messages, self.model_id)
+            if saved > 0:
+                console.print(f"[dim]▸ Memory: saved {saved} exchange(s)[/dim]")
+        except Exception:
+            pass  # recall must never crash the chat
+
+    async def _handle_memory_cmd(self, arg: str) -> None:
+        """Handle /memory [search <query>]."""
+        try:
+            from autotune.recall.manager import get_recall_manager
+            mgr = get_recall_manager()
+
+            if not arg or arg in ("status", "info"):
+                status = await mgr.embedder_status()
+                stats = mgr.stats()
+                embed_str = (
+                    f"[green]{status['model']}[/green]"
+                    if status["available"]
+                    else "[yellow]not available — keyword search (FTS5) active[/yellow]"
+                )
+                console.print(
+                    f"\n[bold]Memory[/bold]\n"
+                    f"  Chunks stored : {stats['total_chunks']}\n"
+                    f"  With vectors  : {stats['with_embeddings']}\n"
+                    f"  DB size       : {stats['size_mb']} MB\n"
+                    f"  Embedding     : {embed_str}\n"
+                )
+                if self._injected_context:
+                    console.print("[dim]─── Recalled this session ───[/dim]")
+                    console.print(self._injected_context)
+                    console.print()
+                elif self._memory_injected:
+                    console.print("[dim]No relevant past context was found for this conversation.[/dim]\n")
+                else:
+                    console.print("[dim]Memory injection happens on the first message.[/dim]\n")
+
+            elif arg.startswith("search "):
+                query = arg[len("search "):].strip()
+                if not query:
+                    console.print("[dim]Usage: /memory search <query>[/dim]")
+                    return
+                with console.status(f"[dim]Searching memories…[/dim]", spinner="dots"):
+                    results = await mgr.search(query, top_k=5)
+                if not results:
+                    console.print(f"[dim]No memories found for: {query!r}[/dim]")
+                    return
+                console.print(f"\n[bold]Memory search:[/bold] {query!r}\n")
+                for r in results:
+                    score_str = f"score={r.score:.2f}" if r.score else "fts"
+                    model_label = (r.model_id or "unknown").split(":")[0]
+                    console.print(
+                        f"  [dim][{r.age_str} · {model_label} · {score_str}][/dim]"
+                    )
+                    console.print(f"  {r.chunk_text[:300]}")
+                    console.print()
+            else:
+                console.print("[dim]Usage: /memory | /memory search <query>[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Memory error:[/yellow] {exc}")
+
+    # ------------------------------------------------------------------ #
     # Main loop                                                            #
     # ------------------------------------------------------------------ #
 
@@ -931,11 +1053,15 @@ class ChatSession:
                         console.print(HELP_TEXT)
 
                     elif cmd == "/new":
+                        await self._save_memories()
                         self.conv_id = self.conv_mgr.create(
                             model_id=self.model_id,
                             profile=self.profile_name,
                             system_prompt=self.system_prompt,
                         )
+                        # Reset memory state for the new conversation
+                        self._memory_injected = False
+                        self._injected_context = None
                         console.print(f"[green]New conversation started: {self.conv_id}[/green]")
                         self._print_header()
 
@@ -1097,15 +1223,22 @@ class ChatSession:
                         except PullError as exc:
                             console.print(f"[red]Delete failed:[/red] {exc}")
 
+                    elif cmd == "/memory":
+                        await self._handle_memory_cmd(arg)
+
                     else:
                         console.print(f"[dim]Unknown command: {cmd}. Type /help.[/dim]")
 
                     continue
 
-                # Regular chat
+                # Regular chat — inject memory context on first turn only if --recall is set
+                if self.recall and not self._memory_injected:
+                    await self._inject_memories_for(user_input)
                 await self._chat(user_input)
 
         finally:
+            # Save conversation to persistent memory before exiting
+            await self._save_memories()
             # Unload model weights so RAM is returned to the OS immediately
             await self._unload_model()
             # Clean up background monitor thread
@@ -1127,6 +1260,7 @@ async def _run_chat(
     conv_id: Optional[str],
     optimize: bool = True,
     no_swap: bool = False,
+    recall: bool = False,
 ) -> None:
     session = ChatSession(
         model_id=model_id,
@@ -1135,6 +1269,7 @@ async def _run_chat(
         conv_id=conv_id,
         optimize=optimize,
         no_swap=no_swap,
+        recall=recall,
     )
     await session.run()
 
@@ -1146,6 +1281,7 @@ def start_chat(
     conv_id: Optional[str] = None,
     optimize: bool = True,
     no_swap: bool = False,
+    recall: bool = False,
 ) -> None:
     """Entry point called from the CLI."""
-    asyncio.run(_run_chat(model_id, profile, system_prompt, conv_id, optimize, no_swap))
+    asyncio.run(_run_chat(model_id, profile, system_prompt, conv_id, optimize, no_swap, recall))

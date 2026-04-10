@@ -382,7 +382,7 @@ class MLXBackend(Backend):
                 f"Pull one with: autotune mlx pull {model_id}"
             )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Load model in thread pool (blocks, but must not block event loop)
         loaded = await loop.run_in_executor(None, _load_model_sync, mlx_id)

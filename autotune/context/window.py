@@ -221,7 +221,7 @@ class ContextWindow:
         summary_block = _make_summary_block(older_kept, facts, compact=False)
 
         body = summary_block + recent
-        body_tokens = sum(estimate_tokens(m["content"]) for m in body)
+        body_tokens = sum(estimate_tokens(m.get("content", "")) for m in body)
         used = overhead + body_tokens
 
         return BuiltContext(
@@ -273,7 +273,7 @@ class ContextWindow:
         summary_block = _make_summary_block(older, facts, compact=False)
 
         body        = summary_block + compressed_recent
-        body_tokens = sum(estimate_tokens(m["content"]) for m in body)
+        body_tokens = sum(estimate_tokens(m.get("content", "")) for m in body)
         used        = overhead + body_tokens
 
         return BuiltContext(
@@ -325,7 +325,7 @@ class ContextWindow:
         summary_block = _make_summary_block(older, facts, compact=True)
 
         body        = summary_block + compressed_recent
-        body_tokens = sum(estimate_tokens(m["content"]) for m in body)
+        body_tokens = sum(estimate_tokens(m.get("content", "")) for m in body)
         used        = overhead + body_tokens
 
         logger.warning(

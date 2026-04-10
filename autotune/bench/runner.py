@@ -468,8 +468,10 @@ async def run_bench_ollama_only(
             ) as resp:
                 async for raw_line in resp.aiter_lines():
                     line = raw_line.strip()
-                    if not line or line == "data: [DONE]":
-                        continue
+                    if not line:
+                        continue   # SSE blank-line separator
+                    if line == "data: [DONE]":
+                        break
                     if not line.startswith("data: "):
                         continue
                     try:

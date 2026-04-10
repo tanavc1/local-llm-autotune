@@ -106,8 +106,10 @@ def _pid_alive(pid: int) -> bool:
         import os as _os
         _os.kill(pid, 0)
         return True
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True  # EPERM: process exists, we just lack permission to signal it
     except Exception:
         return True  # unknown state — assume alive
 

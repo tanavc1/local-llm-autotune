@@ -145,11 +145,12 @@ def recommend(
         "  [dim]Fitting, stability-scoring, speed-scoring, quality-scoring…[/dim]",
         spinner="dots",
     ):
-        recs = generate_recommendations(hw, modes=modes, top_n=top)
-
-    if model_filter:
-        import autotune.models.registry as _reg  # noqa: F811
-        _reg.MODEL_REGISTRY = _orig  # type: ignore[assignment]
+        try:
+            recs = generate_recommendations(hw, modes=modes, top_n=top)
+        finally:
+            if model_filter:
+                import autotune.models.registry as _reg  # noqa: F811
+                _reg.MODEL_REGISTRY = _orig  # type: ignore[assignment]
 
     if not recs:
         console.print(
@@ -158,7 +159,6 @@ def recommend(
         )
         sys.exit(1)
 
-    total_fitting = sum(len([r for r in recs.values()]) for _ in [recs])
     console.print(
         f"  [green]✓[/green]  Done — found recommendations for "
         f"{len(recs)} mode(s)\n"
@@ -1631,7 +1631,9 @@ def ls(as_json: bool) -> None:
               help="System prompt to use for the session.")
 @click.option("--force", is_flag=True, default=False,
               help="Start even if memory analysis predicts swap risk (not recommended).")
-def run(model_name: str, profile: str, system: Optional[str], force: bool) -> None:
+@click.option("--recall", is_flag=True, default=False,
+              help="Inject relevant context from past conversations. Off by default.")
+def run(model_name: str, profile: str, system: Optional[str], force: bool, recall: bool) -> None:
     """Pre-flight analysis + optimized chat for a locally downloaded Ollama model.
 
     Difference from `autotune chat`:
@@ -1789,7 +1791,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool) -> No
         + (f" --system \"{system}\"" if system else "")
         + "[/dim]\n"
     )
-    start_chat(model_id=model_name, profile=chosen, system_prompt=system)
+    start_chat(model_id=model_name, profile=chosen, system_prompt=system, recall=recall)
 
 
 # ---------------------------------------------------------------------------
@@ -2027,6 +2029,15 @@ def serve(host: str, port: int, reload: bool) -> None:
         "occurs when Metal buffers spill to NVMe."
     ),
 )
+@click.option(
+    "--recall",
+    is_flag=True, default=False,
+    help=(
+        "Inject relevant context from past conversations into the system prompt. "
+        "Requires an embedding model (run `autotune memory setup`). "
+        "Off by default — conversations are always saved regardless."
+    ),
+)
 def chat(
     model: str,
     profile: str,
@@ -2034,6 +2045,7 @@ def chat(
     conv_id: Optional[str],
     no_optimize: bool,
     no_swap: bool,
+    recall: bool,
 ) -> None:
     """Start an optimized terminal chat session with any model.
 
@@ -2045,6 +2057,9 @@ def chat(
       KV-manager      dynamically sizes and precision-tunes the KV cache
       context-optimizer  clips context to minimum needed, not profile maximum
 
+    Conversations are always saved to local memory (search with `autotune memory search`).
+    Use --recall to also inject relevant past context into the system prompt.
+
     Use --no-optimize to disable adaptive overrides (static profile settings only).
     Use `autotune run <model>` instead if you want a pre-flight memory analysis
     before loading (swap risk warnings, auto-profile selection).
@@ -2052,7 +2067,7 @@ def chat(
     \b
     Examples:
       autotune chat --model llama3.2
-      autotune chat --model Qwen/Qwen2.5-7B-Instruct --profile fast
+      autotune chat --model qwen3:8b --recall
       autotune chat --model llama3.2 --system "You are a concise assistant"
       autotune chat --model qwen3:8b --no-optimize
       autotune chat --model qwen3:8b --no-swap
@@ -2065,7 +2080,271 @@ def chat(
         conv_id=conv_id,
         optimize=not no_optimize,
         no_swap=no_swap,
+        recall=recall,
     )
+
+
+# ---------------------------------------------------------------------------
+# `autotune memory` — persistent conversation recall
+# ---------------------------------------------------------------------------
+
+@cli.group("memory")
+def memory_group() -> None:
+    """Search, browse, and manage your persistent conversation memory.
+
+    autotune stores past conversations locally (SQLite + optional vector
+    embeddings via Ollama) so future chat sessions can surface relevant
+    context automatically.
+
+    \b
+    Examples:
+      autotune memory search "postgres migration"
+      autotune memory list --days 7
+      autotune memory stats
+      autotune memory forget 42
+      autotune memory forget --all
+      autotune memory setup           Pull nomic-embed-text for semantic search
+    """
+
+
+@memory_group.command("search")
+@click.argument("query")
+@click.option("--top", "-n", default=5, show_default=True, metavar="N",
+              help="Number of results to return.")
+@click.option("--min-score", default=0.20, show_default=True, metavar="SCORE",
+              help="Minimum similarity score (0–1). Ignored for FTS5 fallback.")
+def memory_search(query: str, top: int, min_score: float) -> None:
+    """Search past conversations by semantic or keyword similarity.
+
+    Uses vector search (cosine similarity) when an embedding model is
+    available in Ollama, otherwise falls back to FTS5 keyword search.
+
+    \b
+    Examples:
+      autotune memory search "postgres migration"
+      autotune memory search "FastAPI authentication" --top 10
+    """
+    import asyncio
+    from autotune.recall.manager import get_recall_manager
+    from rich.table import Table
+    from rich import box
+
+    mgr = get_recall_manager()
+
+    with console.status(f"[cyan]Searching memories for:[/cyan] {query!r}", spinner="dots"):
+        results = asyncio.run(mgr.search(query, top_k=top, min_score=min_score))
+
+    if not results:
+        console.print(f"[dim]No memories found for: {query!r}[/dim]")
+        return
+
+    console.print(f"\n[bold]Memory search:[/bold] {query!r}  [dim]({len(results)} result(s))[/dim]\n")
+
+    for r in results:
+        score_str = f"score={r.score:.3f}" if r.score else "fts"
+        model_label = (r.model_id or "unknown").split(":")[0]
+        console.print(
+            f"  [dim][#{r.id}  {r.age_str}  ·  {model_label}  ·  {score_str}][/dim]"
+        )
+        # Show chunk with some formatting
+        text = r.chunk_text
+        if len(text) > 400:
+            text = text[:400].rsplit(" ", 1)[0] + "…"
+        console.print(f"  {text}\n")
+
+
+@memory_group.command("list")
+@click.option("--limit", "-n", default=20, show_default=True, metavar="N",
+              help="Number of memories to show.")
+@click.option("--days", default=None, type=int, metavar="DAYS",
+              help="Only show memories from the last N days.")
+@click.option("--model", "model_id", default=None, metavar="MODEL",
+              help="Filter by model (e.g. qwen3:8b).")
+def memory_list(limit: int, days: Optional[int], model_id: Optional[str]) -> None:
+    """List recently stored conversation memories.
+
+    \b
+    Examples:
+      autotune memory list
+      autotune memory list --days 7
+      autotune memory list --model qwen3:8b --limit 50
+    """
+    from autotune.recall.manager import get_recall_manager
+    from rich.table import Table
+    from rich import box
+
+    mgr = get_recall_manager()
+    results = mgr.get_recent(limit=limit, model_id=model_id, days=days)
+
+    if not results:
+        console.print("[dim]No memories found. Start chatting to build memory![/dim]")
+        return
+
+    t = Table(box=box.SIMPLE_HEAD, show_lines=False)
+    t.add_column("#",       style="dim", justify="right", width=5)
+    t.add_column("Age",     style="dim", no_wrap=True)
+    t.add_column("Model",   style="cyan", no_wrap=True)
+    t.add_column("Preview", no_wrap=False)
+
+    for r in results:
+        model_label = (r.model_id or "unknown").split(":")[0]
+        # First line of the chunk as preview
+        preview = r.chunk_text.replace("\n", " ")[:80]
+        if len(r.chunk_text) > 80:
+            preview += "…"
+        t.add_row(str(r.id), r.age_str, model_label, preview)
+
+    header = "[bold]Recent memories[/bold]"
+    if days:
+        header += f"  [dim](last {days} days)[/dim]"
+    if model_id:
+        header += f"  [dim](model: {model_id})[/dim]"
+    console.print()
+    console.print(header)
+    console.print(t)
+    console.print(f"[dim]{len(results)} chunk(s)  ·  autotune memory forget <id> to remove[/dim]\n")
+
+
+@memory_group.command("stats")
+def memory_stats() -> None:
+    """Show statistics about the local memory store."""
+    import asyncio
+    from autotune.recall.manager import get_recall_manager
+    import datetime
+
+    mgr = get_recall_manager()
+    stats = mgr.stats()
+
+    with console.status("[dim]Checking embedding availability…[/dim]", spinner="dots"):
+        embed_status = asyncio.run(mgr.embedder_status())
+
+    console.print()
+    console.print("[bold]Memory store[/bold]")
+    console.print(f"  Total chunks   : {stats['total_chunks']}")
+    console.print(f"  With vectors   : {stats['with_embeddings']}")
+    console.print(f"  DB size        : {stats['size_mb']} MB")
+
+    if stats.get("oldest_at"):
+        oldest = datetime.datetime.fromtimestamp(stats["oldest_at"]).strftime("%Y-%m-%d")
+        newest = datetime.datetime.fromtimestamp(stats["newest_at"]).strftime("%Y-%m-%d")
+        console.print(f"  Date range     : {oldest} → {newest}")
+
+    if stats.get("by_model"):
+        console.print(f"  By model:")
+        for model, cnt in stats["by_model"].items():
+            console.print(f"    [cyan]{model}[/cyan]  {cnt} chunk(s)")
+
+    embed_str = (
+        f"[green]{embed_status['model']}[/green]"
+        if embed_status["available"]
+        else "[yellow]not available — run: autotune memory setup[/yellow]"
+    )
+    console.print(f"  Embedding      : {embed_str}")
+    console.print()
+
+
+@memory_group.command("forget")
+@click.argument("memory_id", required=False, type=int, default=None)
+@click.option("--all", "forget_all", is_flag=True, default=False,
+              help="Delete ALL memories (cannot be undone).")
+@click.option("--conv-id", "conv_id", default=None, metavar="ID",
+              help="Delete all memories for a specific conversation ID.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip confirmation prompt.")
+def memory_forget(
+    memory_id: Optional[int],
+    forget_all: bool,
+    conv_id: Optional[str],
+    yes: bool,
+) -> None:
+    """Delete memories from the local store.
+
+    \b
+    Examples:
+      autotune memory forget 42               Delete memory chunk #42
+      autotune memory forget --conv-id abc123  Delete all chunks for a conversation
+      autotune memory forget --all            Wipe everything (with confirmation)
+    """
+    from autotune.recall.manager import get_recall_manager
+
+    mgr = get_recall_manager()
+
+    if forget_all:
+        if not yes:
+            try:
+                ans = input("Delete ALL memories? This cannot be undone. [y/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Cancelled.[/yellow]")
+                raise SystemExit(0)
+            if ans not in ("y", "yes"):
+                console.print("[yellow]Cancelled.[/yellow]")
+                raise SystemExit(0)
+        removed = mgr.delete_all()
+        console.print(f"[green]✓ Deleted {removed} memory chunk(s).[/green]")
+
+    elif conv_id:
+        removed = mgr.delete_conversation(conv_id)
+        if removed:
+            console.print(f"[green]✓ Deleted {removed} chunk(s) for conv {conv_id}.[/green]")
+        else:
+            console.print(f"[yellow]No memories found for conv ID: {conv_id}[/yellow]")
+
+    elif memory_id is not None:
+        ok = mgr.delete(memory_id)
+        if ok:
+            console.print(f"[green]✓ Deleted memory #{memory_id}.[/green]")
+        else:
+            console.print(f"[yellow]Memory #{memory_id} not found.[/yellow]")
+
+    else:
+        console.print(
+            "[dim]Specify a memory ID, --conv-id, or --all.\n"
+            "Use [bold]autotune memory list[/bold] to see IDs.[/dim]"
+        )
+
+
+@memory_group.command("setup")
+def memory_setup() -> None:
+    """Pull nomic-embed-text from Ollama to enable semantic (vector) search.
+
+    Without an embedding model, autotune falls back to FTS5 keyword search.
+    nomic-embed-text is fast, small (~274 MB), and works well for
+    conversation retrieval.
+
+    \b
+      autotune memory setup         Pull nomic-embed-text (recommended)
+    """
+    import subprocess
+
+    console.print(
+        "[bold]Memory setup[/bold]\n\n"
+        "This will pull [cyan]nomic-embed-text[/cyan] from Ollama (~274 MB).\n"
+        "It enables semantic (vector) search across your conversation history.\n"
+    )
+
+    try:
+        ans = input("Pull nomic-embed-text now? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        raise SystemExit(0)
+
+    if ans not in ("", "y", "yes"):
+        console.print("[yellow]Cancelled.[/yellow]")
+        raise SystemExit(0)
+
+    console.print("[dim]Running: ollama pull nomic-embed-text[/dim]\n")
+    try:
+        subprocess.run(["ollama", "pull", "nomic-embed-text"], check=True)
+        console.print(
+            "\n[green]✓ Done.[/green]  Semantic search is now active.\n"
+            "[dim]Future conversations will be embedded automatically.[/dim]"
+        )
+    except subprocess.CalledProcessError:
+        console.print("[red]Pull failed.[/red] Make sure Ollama is running: [bold]ollama serve[/bold]")
+        raise SystemExit(1)
+    except FileNotFoundError:
+        console.print("[red]ollama not found.[/red] Install it from https://ollama.ai")
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------

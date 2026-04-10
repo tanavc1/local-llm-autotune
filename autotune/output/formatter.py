@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from rich import box
@@ -233,7 +234,7 @@ def print_running_models(models: list) -> None:  # list[RunningModel]
         age_str = m.age_str if m.loaded_since else "[dim]—[/dim]"
 
         if m.expires_at:
-            remaining = m.expires_at - __import__("time").time()
+            remaining = m.expires_at - time.time()
             if remaining < 60:
                 exp_str = f"[yellow]{m.expires_str}[/yellow]"
             else:

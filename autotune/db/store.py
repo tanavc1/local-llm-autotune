@@ -369,9 +369,6 @@ class Database:
             result.append(d)
         return result
 
-    def model_count(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM models").fetchone()[0]
-
     # ------------------------------------------------------------------ #
     # Hardware profiles                                                    #
     # ------------------------------------------------------------------ #
