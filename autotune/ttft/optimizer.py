@@ -284,10 +284,24 @@ class TTFTOptimizer:
                 else:
                     break   # only leading system messages are cached
 
+        # ── Prefill batch size ────────────────────────────────────────────────
+        # Larger batch → fewer GPU passes during prompt evaluation → lower TTFT
+        # for long prompts.  At critical pressure we shrink to reduce the peak
+        # activation-tensor footprint (safe since we're already reloading for
+        # the halved num_ctx at that tier).
+        num_batch: int
+        if pressure_level == "critical":
+            num_batch = 256
+        else:
+            num_batch = 1024  # improves over Ollama's default of 512
+
         # ── Assemble options dict ─────────────────────────────────────────────
         options: dict = {
-            "num_ctx": num_ctx,
-            "f16_kv": f16_kv,
+            "num_ctx":    num_ctx,
+            "f16_kv":     f16_kv,
+            "num_batch":  num_batch,
+            "flash_attn": True,   # reduces peak KV activation memory; zero quality impact;
+                                  # silently ignored by models/builds that don't support it
         }
         if num_keep > 0:
             options["num_keep"] = num_keep
@@ -300,6 +314,8 @@ class TTFTOptimizer:
             "num_ctx_final":     num_ctx,
             "num_keep":          num_keep,
             "f16_kv":            f16_kv,
+            "num_batch":         num_batch,
+            "flash_attn":        True,
             "keep_alive":        KEEP_ALIVE_FOREVER,
             "no_swap":           no_swap,
             "no_swap_level":     no_swap_decision.level if no_swap_decision else None,

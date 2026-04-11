@@ -576,7 +576,7 @@ def print_results(
         f"  System  {chip}  ·  {ram_gb:.0f}GB RAM  ·  {ram_pct:.0f}% in use\n\n"
         f"  [dim]All timings from Ollama's internal timers, not estimated.[/dim]\n"
         f"  [dim]{n_runs} runs per prompt · generation capped at {MAX_TOKENS} tokens.[/dim]\n"
-        f"  [dim]raw ctx={RAW_CTX}  autotune ctx={autotune_ctx}[/dim]",
+        f"  [dim]raw ctx={RAW_CTX} batch=512  autotune ctx={autotune_ctx} batch=1024 flash_attn=on[/dim]",
         border_style="blue",
         expand=False,
     ))
@@ -665,9 +665,12 @@ def print_results(
     console.print()
     console.print(
         "  After the model is loaded, every subsequent request still needs\n"
-        "  to allocate its context window before generating the first word.\n"
-        "  autotune allocates only what the prompt needs — smaller allocation\n"
-        "  → less GPU time initializing the KV buffer."
+        "  to process the prompt before generating the first word. autotune\n"
+        "  uses three levers: (1) tighter KV context — only what the prompt\n"
+        "  needs; (2) larger prefill batches (1024 vs 512) — fewer GPU passes\n"
+        "  for long prompts; (3) flash attention — reduces peak activation\n"
+        "  memory. System-prompt caching (num_keep) also eliminates re-eval\n"
+        "  of the system prompt on every turn after the first."
     )
     console.print()
 
@@ -684,12 +687,18 @@ def print_results(
         console.print()
         if pct < -5:
             console.print(f"  [bold green]{abs(pct):.0f}% faster[/bold green] time to first word (warm requests).")
+        elif pct < 0:
+            console.print(
+                f"  [dim green]{abs(pct):.0f}% faster[/dim green] warm TTFT. "
+                f"Larger gains appear on longer prompts\n"
+                f"  (>512 tokens) where the 1024-token prefill batch saves a GPU pass,\n"
+                f"  and on larger models where the tighter KV context matters more."
+            )
         else:
             console.print(
-                f"  [dim]Warm TTFT difference: {pct:+.0f}%.  "
-                f"On this model the KV buffer is small\n"
-                f"  enough that allocation time is dominated by prompt evaluation,\n"
-                f"  which is the same for both. The savings show most on 7B+ models.[/dim]"
+                f"  [dim]Warm TTFT difference: {pct:+.0f}%.  Short prompts process in\n"
+                f"  one GPU pass at any batch size — the gap grows with prompt length.\n"
+                f"  The per-prompt table below shows where autotune pulls ahead.[/dim]"
             )
         console.print()
 

@@ -121,6 +121,20 @@ def build_ollama_options(
     opts = ollama_options_for_profile(messages, profile)
     notices: list[str] = []
 
+    # ── Flash attention + prefill batch size ────────────────────────────────
+    # flash_attn reduces peak activation memory during the attention computation.
+    # It is mathematically equivalent to standard attention — zero quality impact.
+    # Models/builds that don't support it silently ignore the flag.
+    opts["flash_attn"] = True
+
+    # num_batch controls how many prompt tokens Ollama processes in a single
+    # GPU pass during prefill.  Default (512) processes a 700-token prompt in
+    # two passes; 1024 processes it in one → directly halves the number of
+    # Metal kernel dispatches for long prompts.
+    # llama.cpp caps the actual batch at min(num_batch, remaining_tokens), so
+    # short prompts (<512 tokens) allocate no extra activation memory.
+    opts["num_batch"] = 1024
+
     # Apply advisor KV precision override (pre-flight / live assessment).
     # Takes priority over profile default, but can still be further overridden
     # by live RAM pressure below.
@@ -169,8 +183,11 @@ def build_ollama_options(
 
     if ram_pct >= _PRESSURE_CRITICAL_PCT:
         opts["num_ctx"] = max(512, int(original_ctx * 0.50))
+        # At critical pressure the model is reloaded for the new num_ctx, so
+        # reducing num_batch here is free — it piggybacks on the forced reload.
+        opts["num_batch"] = 256
         logger.warning(
-            "Critical RAM %.1f%% — halving num_ctx %d→%d",
+            "Critical RAM %.1f%% — halving num_ctx %d→%d, batch 1024→256",
             ram_pct, original_ctx, opts["num_ctx"],
         )
         kv_note = ""
@@ -180,7 +197,7 @@ def build_ollama_options(
             logger.warning("Critical RAM %.1f%% — KV precision F16→Q8", ram_pct)
         notices.append(
             f"RAM {ram_pct:.0f}% (critical) — "
-            f"context {original_ctx:,}→{opts['num_ctx']:,} tokens{kv_note}"
+            f"context {original_ctx:,}→{opts['num_ctx']:,} tokens{kv_note}, batch→256"
         )
 
     elif ram_pct >= _PRESSURE_HIGH_PCT:
