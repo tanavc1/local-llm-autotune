@@ -15,12 +15,15 @@ autotune sits between your application and the local LLM backend. It automatical
 | **Dynamic KV sizing** | Computes the exact `num_ctx` each request needs instead of allocating the profile max — typically 4–8× less KV cache memory |
 | **KV prefix caching** | Pins system-prompt tokens in Ollama's KV cache via `num_keep` so they're never re-evaluated each turn |
 | **Adaptive KV precision** | Downgrades KV cache from F16 → Q8 under memory pressure (80% → −10% ctx, 88% → −25% ctx + Q8, 93% → −50% ctx + Q8) |
-| **Model keep-alive** | Sets `keep_alive=-1s` so the model stays loaded in unified memory between turns — eliminates reload latency |
+| **Model keep-alive** | Sets `keep_alive=-1m` so the model stays loaded in unified memory between turns — eliminates reload latency |
+| **Flash attention** | Enables `flash_attn=true` on every request — reduces peak KV activation memory during attention computation; zero quality impact |
+| **Prefill batching** | Sets `num_batch=1024` (2× Ollama default) — reduces Metal kernel dispatches for long prompts; under critical RAM pressure drops to 256 |
 | **Multi-tier context management** | Intelligently trims conversation history at token budget thresholds with no mid-sentence cuts |
 | **Inference queue** | FIFO queue (default: 1 concurrent, 8 waiting) with HTTP 429 back-pressure — prevents parallel inference from thrashing memory |
 | **Profile-based optimization** | `fast` / `balanced` / `quality` profiles tune temperature, context length, KV precision, and OS QoS class |
 | **OpenAI-compatible API** | Drop-in replacement for `localhost:8765/v1` — works with any OpenAI SDK |
 | **MLX backend (Apple Silicon)** | On M-series Macs, routes inference to MLX-LM — native Metal GPU kernels, unified memory |
+| **Persistent conversation memory** | Saves every conversation to SQLite; automatically injects relevant past context at session start; searchable by topic |
 | **Hardware telemetry** | Samples RAM/Swap/CPU every 250 ms, persists structured metrics to SQLite |
 
 ---
@@ -137,6 +140,10 @@ Once inside a chat session, these slash commands are available:
 | `/metrics` | Show session performance stats (tok/s, TTFT, request count) |
 | `/backends` | Show which backends are running (Ollama, LM Studio, HF API) |
 | `/models` | List all locally available models |
+| `/recall` | Browse past conversations with dates and snippets; pick one to resume |
+| `/recall search <query>` | Search past conversations by topic — finds semantically related sessions |
+| `/pull <model>` | Pull a model via Ollama without leaving chat |
+| `/delete` | Delete the current conversation from history |
 | `/quit` | Exit (also Ctrl-C) |
 
 ---
@@ -342,7 +349,7 @@ Smaller KV allocation = less memory to initialise before the first token, which 
 
 Ollama's default is `keep_alive=5m` — after five minutes idle the model is **fully unloaded** from unified memory. The next request pays a full model reload (1–4 s on a 5 GB model; longer for larger models).
 
-autotune always sends `keep_alive="-1"` (keep model resident indefinitely).
+autotune always sends `keep_alive="-1m"` (any negative Go duration = keep model resident indefinitely).
 
 The cold-start test in the benchmark forces this condition explicitly: the raw-Ollama path unloads the model between calls, the autotune path does not.
 
@@ -351,7 +358,15 @@ Raw:      call 1 → reload (1 304 ms TTFT)   call 2 → reload (1 189 ms)   cal
 autotune: call 1 → load   ( 248 ms TTFT)   call 2 → warm  (  242 ms)   call 3 → warm  (  243 ms)
 ```
 
-#### 3. `num_keep` (system-prompt prefix caching)
+#### 3. `num_batch` and `flash_attn`
+
+autotune sets `num_batch=1024` (Ollama default: 512). This doubles the number of prompt tokens processed per GPU pass during prefill. For a 700-token prompt, this reduces Metal kernel dispatches from 2 to 1 — directly cutting prefill time. Short prompts (<512 tokens) are unaffected since llama.cpp caps the actual batch at `min(num_batch, remaining_tokens)`.
+
+`flash_attn=true` is always enabled. Flash attention is mathematically equivalent to standard attention but reduces peak KV activation memory by fusing the softmax and matmul operations. Models that don't support it silently ignore the flag.
+
+Under critical RAM pressure (≥93%), `num_batch` drops to 256. This piggybacks on the forced model reload that already happens at this tier — the reduced batch lowers the peak activation tensor footprint during that reload.
+
+#### 4. `num_keep` (system-prompt prefix caching)
 
 When a system prompt is present, autotune passes `num_keep = <system_prompt_tokens>` to Ollama. Ollama pins those tokens in the KV cache and never re-evaluates them on subsequent turns. Raw Ollama re-processes the full prompt from scratch on every call.
 
@@ -392,7 +407,7 @@ The simple factual prompt shows autotune slightly slower on run 1 because `TTFTO
 
 ### Limitations
 
-- **Single model.** All numbers are from `qwen3:8b` (5.2 GB, Q4_K_M) on Apple M2 16 GB. TTFT gains from `keep_alive=-1s` will be proportionally larger on bigger models — a 9 GB model has a longer reload penalty than a 5 GB one.
+- **Single model.** All numbers are from `qwen3:8b` (5.2 GB, Q4_K_M) on Apple M2 16 GB. TTFT gains from `keep_alive=-1m` will be proportionally larger on bigger models — a 9 GB model has a longer reload penalty than a 5 GB one.
 - **`num_ctx` trade-off.** Smaller context means fewer tokens of conversation history fit. For short sessions this is pure win. For very long conversations autotune may need to trim history earlier (handled by `autotune.context.ContextWindow`).
 - **Token estimation.** Throughput uses `len(response) / 4 / elapsed_sec`. The same formula is used for both configurations so the comparison is fair, but absolute tok/s may differ from Ollama's internal tokenizer count.
 
@@ -413,6 +428,27 @@ For a short conversation on the `balanced` profile (max 8,192):
 - Savings on `qwen2.5-coder:14b`: 8,192 → 1,302 tokens = **~677 MB of KV cache freed**
 
 `num_ctx` grows naturally as the conversation grows since the full history is included in every request.
+
+---
+
+## Conversation memory and recall
+
+autotune records every conversation turn to a local SQLite database (`~/.autotune/recall.db`) using both full-text search and vector similarity. Memory is always-on — no flags required.
+
+### What it does
+
+- **Automatic context injection** — at the start of each chat session, autotune searches past conversations for topics similar to your current model and system prompt. Relevant facts are injected as a silent system message (only shown when `--verbose` is set). The 0.38 cosine similarity threshold filters out irrelevant memories.
+- **Session linking** — conversations are stored with a unique ID shown in the chat header. Use `--conv-id <id>` to resume an exact past session.
+- **In-chat recall** — use `/recall` to browse recent sessions with dates, model names, and first-turn snippets. Use `/recall search <topic>` for semantic search across all past conversations. Both commands offer a numbered prompt to resume the selected session with full context restored.
+- **Model change detection** — the background watcher polls Ollama every 30 s; if a model unloads unexpectedly (crash, OOM), the chat interface notifies you immediately.
+
+### Storage
+
+| Path | Contents |
+|------|----------|
+| `~/.autotune/recall.db` | FTS5 + float32 vectors; conversation turns, extracted facts |
+| `~/Library/Application Support/autotune/autotune.db` | Hardware telemetry, run observations (macOS) |
+| `~/.local/share/autotune/autotune.db` | Same (Linux) |
 
 ---
 
@@ -440,16 +476,18 @@ autotune/
 │
 ├── ttft/                  ← TTFT optimisation layer (start here for latency work)
 │   ├── optimizer.py       #   TTFTOptimizer: dynamic num_ctx + keep_alive + num_keep
+│   │                      #   + flash_attn + num_batch + NoSwapGuard integration
 │   └── __init__.py        #   Public API: TTFTOptimizer, KEEP_ALIVE_FOREVER
 │
 ├── api/                   Inference pipeline
 │   ├── profiles.py        #   fast / balanced / quality profile definitions
 │   ├── server.py          #   FastAPI server — OpenAI-compatible /v1 + FIFO queue
 │   ├── chat.py            #   Terminal chat REPL (adaptive-RAM + KV-manager + ctx-optimizer)
+│   │                      #   /recall + /recall search, live tok/s TTFT stats, model watcher
 │   ├── running_models.py  #   Cross-backend model visibility (Ollama + MLX state file)
 │   ├── conversation.py    #   SQLite-backed persistent conversation state
 │   ├── ctx_utils.py       #   Token estimation + compute_num_ctx (used by ttft/)
-│   ├── kv_manager.py      #   KV options builder (wraps ttft/ for legacy callers)
+│   ├── kv_manager.py      #   KV options builder: flash_attn, num_batch, pressure tiers
 │   ├── hardware_tuner.py  #   OS-level tuning: nice, QoS class, GC, CPU governor
 │   ├── model_selector.py  #   Pre-flight fit analysis: weights + KV + overhead
 │   └── backends/          #   Ollama, LM Studio, MLX, HuggingFace Inference API
@@ -461,6 +499,11 @@ autotune/
 │   ├── compressor.py      #   Tool output and long-content compression
 │   └── extractor.py       #   Deterministic fact extraction for summary blocks
 │
+├── recall/                ← Conversation memory system
+│   ├── store.py           #   SQLite WAL-mode: FTS5 full-text + float32 cosine vectors
+│   ├── manager.py         #   save_conversation / get_context_for / list_conversations
+│   └── extractor.py       #   Chunk extraction + conversation value scoring
+│
 ├── bench/                 Benchmarking framework
 │   └── runner.py          #   run_raw_ollama / run_bench_ollama_only / BenchResult
 │
@@ -471,8 +514,9 @@ autotune/
 │   ├── profiler.py        #   CPU/GPU/RAM detection (psutil + py-cpuinfo)
 │   └── ram_advisor.py     #   Real-time RAM pressure advice and swap risk scoring
 │
-├── memory/                Memory estimation
-│   └── estimator.py       #   Model weights + KV cache + runtime overhead
+├── memory/                Memory estimation + no-swap guarantee
+│   ├── estimator.py       #   Model weights + KV cache + runtime overhead
+│   └── noswap.py          #   NoSwapGuard: adjusts num_ctx/KV to guarantee no swap
 │
 ├── models/                Model registry
 │   └── registry.py        #   9 OSS models with real MMLU/HumanEval/GSM8K scores

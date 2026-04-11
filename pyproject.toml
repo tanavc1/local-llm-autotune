@@ -20,9 +20,32 @@ dependencies = [
 [project.optional-dependencies]
 # Apple Silicon acceleration — install with: pip install autotune[mlx]
 mlx = ["mlx-lm>=0.21"]
+# Development / testing — install with: pip install autotune[dev]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+]
 
 [project.scripts]
 autotune = "autotune.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["autotune"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["autotune"]
+omit = ["autotune/api/backends/mlx_backend.py"]  # requires mlx hardware
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
