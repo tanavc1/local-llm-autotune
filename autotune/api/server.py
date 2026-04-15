@@ -461,6 +461,133 @@ async def list_local_models():
     ]}
 
 
+@app.get("/v1/models/{model_id:path}/status")
+async def model_status(model_id: str):
+    """
+    Return the readiness state of a specific model.
+
+    Status values
+    -------------
+    "ready"      — model is loaded in memory right now; first token will be fast
+    "available"  — model is on disk but not loaded; expect a cold-start delay
+    "not_found"  — model is not available locally
+
+    Response also includes a memory fit assessment so your application can warn
+    users before a request fails.
+
+    Example
+    -------
+        GET /v1/models/qwen3:8b/status
+        {
+            "model": "qwen3:8b",
+            "status": "ready",
+            "backend": "ollama",
+            "fit": {
+                "class": "safe",
+                "ram_util_pct": 62.3,
+                "available_gb": 8.3,
+                "warning": null
+            }
+        }
+    """
+    from autotune.api.running_models import get_running_models
+    from autotune.api.model_selector import ModelSelector
+    import psutil as _psutil
+
+    # ── 1. Is the model currently loaded in memory? ───────────────────────
+    running = get_running_models()
+    loaded = next(
+        (m for m in running if model_id.lower() in m.name.lower() or m.name.lower() in model_id.lower()),
+        None,
+    )
+    if loaded:
+        status = "ready"
+        backend = loaded.backend
+    else:
+        status = "not_found"
+        backend = None
+
+    # ── 2. Is it available on disk (Ollama tags)? ─────────────────────────
+    size_gb: Optional[float] = None
+    params_b: Optional[float] = None
+    quant: str = "Q4_K_M"
+
+    if status == "not_found":
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=2.0) as c:
+                r = await c.get("http://localhost:11434/api/tags")
+                tags = r.json().get("models", [])
+            for m in tags:
+                name = m.get("name", "")
+                if model_id.lower() in name.lower() or name.lower() in model_id.lower():
+                    status = "available"
+                    backend = "ollama"
+                    size_gb = m.get("size", 0) / 1024**3
+                    details = m.get("details", {})
+                    quant = details.get("quantization_level", "Q4_K_M")
+                    # Derive rough param count from name (e.g. "8b" → 8.0)
+                    import re
+                    m2 = re.search(r"(\d+(?:\.\d+)?)\s*b", name.lower())
+                    if m2:
+                        params_b = float(m2.group(1))
+                    break
+        except Exception:
+            pass
+
+    # ── 3. Check MLX cache ────────────────────────────────────────────────
+    if status == "not_found":
+        try:
+            from autotune.api.backends.mlx_backend import list_cached_mlx_models, resolve_mlx_model_id
+            mlx_id = resolve_mlx_model_id(model_id)
+            if mlx_id and any(m["id"] == mlx_id for m in list_cached_mlx_models()):
+                status = "available"
+                backend = "mlx"
+        except Exception:
+            pass
+
+    # ── 4. Memory fit assessment ──────────────────────────────────────────
+    fit: dict = {}
+    if _hw is not None and size_gb is not None:
+        try:
+            sel = ModelSelector(_hw.effective_memory_gb, _hw.memory.total_gb)
+            report = sel.assess(model_id, size_gb, params_b, quant)
+            fit = {
+                "class": report.fit_class.value,
+                "ram_util_pct": report.ram_util_pct,
+                "available_gb": round(_hw.effective_memory_gb, 1),
+                "total_ram_gb": round(_hw.memory.total_gb, 1),
+                "warning": report.warning,
+            }
+            if report.suggested_quant:
+                fit["suggested_quant"] = report.suggested_quant
+                fit["suggested_quant_gb"] = report.suggested_quant_gb
+        except Exception as _fit_exc:
+            logger.debug("fit assessment failed for %s: %s", model_id, _fit_exc)
+    elif _hw is not None and status != "not_found":
+        # Model is loaded but we couldn't read size — report RAM only
+        vm = _psutil.virtual_memory()
+        fit = {
+            "class": "unknown",
+            "available_gb": round(vm.available / 1024**3, 1),
+            "total_ram_gb": round(_hw.memory.total_gb, 1),
+            "warning": None,
+        }
+
+    response: dict = {
+        "model": model_id,
+        "status": status,
+        "backend": backend,
+    }
+    if fit:
+        response["fit"] = fit
+    if loaded:
+        response["loaded_since"] = loaded.loaded_since
+        response["ram_gb"] = round(loaded.ram_gb, 2)
+
+    return response
+
+
 # ---------------------------------------------------------------------------
 # /v1/completions  — legacy completion API + FIM (used by Continue.dev autocomplete)
 # ---------------------------------------------------------------------------
@@ -614,7 +741,10 @@ async def completions(req: CompletionRequest):
                 if chunk.content:
                     collected.append(chunk.content)
         except (ModelNotAvailableError, AuthError, BackendError) as e:
-            raise HTTPException(status_code=503, detail=str(e))
+            raise HTTPException(
+                status_code=503,
+                detail=_make_error_body(_error_type(e), str(e), req.model),
+            )
         finally:
             tuner._restore()
     finally:
@@ -640,6 +770,73 @@ async def completions(req: CompletionRequest):
             "total_tokens": prompt_tokens + comp_tokens,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Structured error helpers
+# ---------------------------------------------------------------------------
+
+def _error_type(exc: Exception) -> str:
+    if isinstance(exc, ModelNotAvailableError):
+        return "model_not_found"
+    if isinstance(exc, AuthError):
+        return "auth_error"
+    return "backend_error"
+
+
+def _make_error_body(error_type: str, message: str, model_id: str) -> dict:
+    """
+    Build a structured error body that applications can handle programmatically.
+
+    Fields
+    ------
+    type        : machine-readable error category
+    message     : human-readable explanation
+    model       : the model that was requested
+    suggestion  : plain-English recovery step
+    docs_url    : link to the relevant docs section
+
+    Compared to a bare 503 string, this lets application code do:
+
+        if error["type"] == "model_not_found":
+            # pull the model or show the user a friendly install prompt
+        elif error["type"] == "memory_pressure":
+            # degrade gracefully — use a smaller context or model
+    """
+    suggestion = ""
+    if error_type == "model_not_found":
+        base = model_id.split(":")[0].split("/")[-1].lower()
+        suggestion = (
+            f"Pull the model first: ollama pull {model_id}  "
+            f"or check available models at GET /v1/models"
+        )
+    elif error_type == "backend_error":
+        low = message.lower()
+        if any(k in low for k in ("out of memory", "oom", "memory", "killed")):
+            error_type = "memory_pressure"
+            suggestion = (
+                f"The model exceeded available RAM. "
+                f"Try a smaller model or check GET /v1/models/{model_id}/status "
+                f"for a fit assessment before sending requests."
+            )
+        else:
+            suggestion = (
+                "Check that Ollama is running: ollama serve  "
+                "or inspect server logs for details."
+            )
+    elif error_type == "auth_error":
+        suggestion = "Set HF_TOKEN if using HuggingFace models, or use a local model."
+
+    body: dict = {
+        "type": error_type,
+        "message": message,
+        "model": model_id,
+    }
+    if suggestion:
+        body["suggestion"] = suggestion
+    # Add a fit check hint so developers know where to look
+    body["status_url"] = f"/v1/models/{model_id}/status"
+    return body
 
 
 # ---------------------------------------------------------------------------
@@ -826,13 +1023,13 @@ async def _chat_completions_inner(
                     break
 
         except ModelNotAvailableError as e:
-            err = json.dumps({"error": {"message": str(e), "type": "model_not_found"}})
+            err = json.dumps({"error": _make_error_body("model_not_found", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
         except AuthError as e:
-            err = json.dumps({"error": {"message": str(e), "type": "auth_error"}})
+            err = json.dumps({"error": _make_error_body("auth_error", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
         except BackendError as e:
-            err = json.dumps({"error": {"message": str(e), "type": "backend_error"}})
+            err = json.dumps({"error": _make_error_body("backend_error", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
         finally:
             tuner._restore()
@@ -902,7 +1099,10 @@ async def _chat_completions_inner(
                 collected.append(chunk.content)
             backend_used = chunk.backend
     except (ModelNotAvailableError, AuthError, BackendError) as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail=_make_error_body(_error_type(e), str(e), req.model),
+        )
     finally:
         tuner._restore()
 
