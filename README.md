@@ -17,9 +17,9 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of 
 
 ---
 
-## Proven Results
+## Benchmark Results
 
-> These numbers are **real**. Timings come from Ollama's own internal Go nanosecond timers — not Python estimates, not wall-clock guesses. Measured on Apple M2, 16 GB, macOS — hardware typical of anyone running local LLMs.
+> Timings come from Ollama's own internal Go nanosecond timers — not Python estimates, not wall-clock guesses. Measured on Apple M2, 16 GB, macOS — hardware typical of anyone running local LLMs. These are observed means from 3 runs per condition; treat them as directional, not statistically proven.
 
 ### What autotune actually improves
 
@@ -31,8 +31,8 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of 
 | **Peak RAM (LLM process)** | −11% | −0% | −7% | **−6%** |
 | **Generation speed (tok/s)** | −2% | +0.2% | +2.4% | **+0.3%** |
 | **End-to-end response time** | +0.5% | −0.9% | **−3.3%** | **−1.2%** |
-| **Overall win rate** | 80% | 92% | **100%** | **91%** |
-| **KV tokens freed (all runs)** | 40,215 | 42,348 | 40,215 | **122,778** |
+
+> **KV buffer slots freed:** 40,215 (llama3.2:3b) · 42,348 (gemma4:e2b) · 40,215 (qwen3:8b) · **122,778 total** across all benchmark runs. This is the count of KV matrix slots Ollama never had to allocate or zero-initialise — computed as `(raw_num_ctx − tuned_num_ctx) × n_runs`. No prompt tokens were dropped; `prompt_eval_count` is identical in both conditions.
 
 ### What the numbers mean in plain English
 
@@ -52,7 +52,6 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of 
 **Models:** `llama3.2:3b` (2.0 GB) · `gemma4:e2b` (7.2 GB) · `qwen3:8b` (5.2 GB)  
 **Profile:** `autotune/balanced`  
 **Design:** 3 runs per condition per prompt · 5 prompt types · controlled warmup per condition  
-**Statistics:** Wilcoxon signed-rank test + Cohen's d effect size on all paired comparisons  
 **Timing source:** Ollama's internal `prompt_eval_duration` / `total_duration` / `load_duration` fields — nanosecond Go runtime timers, not Python clocks  
 **KV cache estimates:** `2 × n_layers × n_kv_heads × head_dim × num_ctx × dtype_bytes` from model architecture via Ollama `/api/show`
 
@@ -94,7 +93,7 @@ On llama3.2:3b, raw Ollama's RSS grows with each turn because the fixed 4096-tok
 | Swap pressure | `psutil.swap_memory()` delta before/after each run |
 | Model reload count | `load_duration > 400ms` — distinguishes cold loads from Metal KV init (~100ms baseline) |
 | Context size per request | `num_ctx` per run: raw always 4096, autotune dynamically 1174–1562 |
-| Tokens saved | `(raw_num_ctx − tuned_num_ctx) × n_runs` — 122,778 across all benchmark runs |
+| KV buffer slots freed | `(raw_num_ctx − tuned_num_ctx) × n_runs` — counts KV matrix slots Ollama never allocated or zeroed. No prompt tokens are dropped; `prompt_eval_count` is identical in both conditions. |
 
 ### What autotune does NOT improve (honest)
 
@@ -341,6 +340,91 @@ AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a waiting request gets 429 (defaul
 
 ---
 
+## Using autotune with agentic frameworks
+
+autotune's OpenAI-compatible server works as a drop-in local LLM provider for any agentic framework that accepts a custom base URL. Start the server first, then point your framework at it — autotune handles KV optimisation, memory management, and model routing transparently in the background.
+
+```bash
+autotune serve
+# Server running at http://localhost:8765/v1
+```
+
+### OpenClaw
+
+[OpenClaw](https://openclaw.ai) is an open-source self-hosted agent framework with human-in-the-loop gates and sandboxed tool execution. It uses LiteLLM internally, so any OpenAI-compatible endpoint works.
+
+**Step 1 — Pull a model that supports tool calling:**
+
+```bash
+ollama pull hermes3          # NousResearch Hermes 3 — strong tool-use model
+ollama pull qwen3:8b         # Qwen 3 8B — good all-rounder with tool support
+```
+
+**Step 2 — Add autotune as a provider in OpenClaw's config:**
+
+```yaml
+# openclaw/config.yaml (or your OpenClaw provider settings)
+providers:
+  - name: autotune-local
+    api: openai-responses
+    baseUrl: http://localhost:8765/v1
+    apiKey: sk-local          # any non-empty string — autotune doesn't validate keys
+    model: hermes3            # use the Ollama model name exactly
+    supportsTools: true       # set to true for hermes3, qwen3:8b; false for llama3.2:3b
+```
+
+**Step 3 — Start chatting.** OpenClaw will route all LLM calls through autotune. Dynamic KV sizing, memory pressure management, and model keep-alive apply automatically.
+
+> **Note on `supportsTools`:** Only models with native tool/function-calling support should have `supportsTools: true`. On Ollama: `hermes3`, `qwen3:8b`, `qwen3:14b`, `llama3.1:8b`, `qwen2.5-coder:14b` all support it. `llama3.2:3b`, `gemma4:e2b` do not.
+
+---
+
+### Hermes Agent
+
+[Hermes Agent](https://github.com/nousresearch/hermes-agent) (by Nous Research) is an autonomous agent framework with persistent memory, a built-in learning loop, and 40+ built-in tools. It uses the OpenAI Chat Completions standard exclusively.
+
+**Step 1 — Pull a capable model:**
+
+```bash
+ollama pull hermes3          # recommended — designed specifically for the Hermes Agent ecosystem
+ollama pull qwen3:8b         # good alternative
+```
+
+**Step 2 — Configure Hermes Agent to use autotune:**
+
+```yaml
+# ~/.hermes/config.yaml  (or wherever Hermes looks for config on your system)
+model:
+  provider: custom
+  base_url: http://localhost:8765/v1
+  api_key: sk-local
+  name: hermes3              # Ollama model name
+```
+
+Or via the Hermes CLI:
+
+```bash
+hermes config set model.base_url http://localhost:8765/v1
+hermes config set model.api_key sk-local
+hermes config set model.name hermes3
+hermes config set model.provider custom
+```
+
+**Step 3 — Run Hermes normally.** All inference goes through autotune. Because Hermes Agent accumulates memory and context across sessions, the dynamic KV sizing autotune applies on each request is especially useful — context windows stay right-sized rather than always allocating the profile max.
+
+---
+
+### Tool calling and Apple Silicon note
+
+If you are on **Apple Silicon with MLX models installed** (via `autotune mlx pull`), autotune routes requests to the MLX backend by default because it is faster. The MLX backend does not currently relay OpenAI-style tool call responses back to the client. If your agent framework depends on structured tool calls:
+
+- Use Ollama models that do **not** have an MLX equivalent cached, or
+- Uninstall the MLX version of the model you want to use for agents (`autotune mlx list` to see what's cached), so autotune falls back to Ollama for that model.
+
+**Models confirmed working for tool calling via Ollama:** `hermes3`, `qwen3:8b`, `qwen3:14b`, `llama3.1:8b`, `qwen2.5-coder:14b`
+
+---
+
 ## Profiles
 
 | Profile | Context | Temperature | KV precision | System QoS | Use when |
@@ -396,7 +480,7 @@ python scripts/proof_suite.py --output my_results.json
 python scripts/proof_report.py proof_results_*.json
 ```
 
-Measures all 11 KPIs — TTFT, prefill time, total response time, peak RAM, KV cache size, context size per request, memory growth over turns, swap pressure, model reload count, tokens freed — across 5 prompt types (factual, code, long-context analysis, multi-turn, sustained generation) with proper statistical tests.
+Measures all 11 KPIs — TTFT, prefill time, total response time, peak RAM, KV cache size, context size per request, memory growth over turns, swap pressure, model reload count, KV buffer slots freed — across 5 prompt types (factual, code, long-context analysis, multi-turn, sustained generation).
 
 ### Where data is stored
 
