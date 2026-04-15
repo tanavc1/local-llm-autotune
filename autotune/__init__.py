@@ -85,6 +85,7 @@ def start(
     timeout: float = 30.0,
     *,
     profile: Optional[str] = None,
+    use_mlx: bool = True,
     log_level: str = "warning",
 ) -> str:
     """Start the autotune server if it is not already running.
@@ -103,6 +104,18 @@ def start(
     profile : str | None
         Default optimization profile (``"fast"``, ``"balanced"``, ``"quality"``).
         Sets the ``AUTOTUNE_DEFAULT_PROFILE`` env var for the spawned process.
+    use_mlx : bool
+        Whether to allow the MLX backend on Apple Silicon. Default ``True``.
+
+        Set to ``False`` for the lightest possible memory footprint (~150 MB
+        vs ~470 MB).  When disabled, all requests are routed through Ollama.
+        The trade-off is ~10-40% lower token throughput vs native MLX, but
+        autotune's KV-cache and TTFT optimisations still apply in full.
+
+        Why ``use_mlx=False`` saves RAM: ``mlx_lm`` loads the HuggingFace
+        ``transformers`` tokenizer on first use, which transitively imports
+        PyTorch (~250-300 MB RSS).  Disabling MLX routing prevents that import
+        entirely.
     log_level : str
         uvicorn log level for the spawned process. Default ``"warning"``
         (quiet — won't pollute your application's stdout).
@@ -121,7 +134,9 @@ def start(
     --------
     >>> import autotune
     >>> from openai import OpenAI
-    >>> autotune.start()
+    >>> autotune.start()                       # MLX on Apple Silicon (fastest)
+    'http://localhost:8765/v1'
+    >>> autotune.start(use_mlx=False)          # Ollama only (~150 MB RAM)
     'http://localhost:8765/v1'
     >>> client = OpenAI(**autotune.client_kwargs())
     """
@@ -152,6 +167,8 @@ def start(
     env = os.environ.copy()
     if profile:
         env["AUTOTUNE_DEFAULT_PROFILE"] = profile
+    if not use_mlx:
+        env["AUTOTUNE_DISABLE_MLX"] = "1"
 
     # Launch server as a background subprocess.  stdout/stderr are suppressed
     # by default (log_level=warning) so the caller's output isn't polluted.

@@ -49,7 +49,16 @@ _mlx_available: Optional[bool] = None
 
 
 def mlx_available() -> bool:
-    """Return True if mlx-lm is installed and we are on Apple Silicon."""
+    """Return True if mlx-lm is installed, we are on Apple Silicon, and MLX
+    routing has not been disabled via AUTOTUNE_DISABLE_MLX=1.
+
+    Setting AUTOTUNE_DISABLE_MLX=1 forces all requests through Ollama.  This
+    prevents mlx_lm from loading the HuggingFace transformers tokenizer, which
+    transitively imports torch (~250-300 MB RSS) on first use.  Use this when
+    you want the smallest possible server memory footprint.
+    """
+    if os.environ.get("AUTOTUNE_DISABLE_MLX", "").strip() in ("1", "true", "yes"):
+        return False
     global _mlx_available
     if _mlx_available is None:
         if not IS_APPLE_SILICON:

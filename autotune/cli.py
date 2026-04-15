@@ -1969,11 +1969,24 @@ def telemetry(model_id: Optional[str], limit: int, events: bool) -> None:
     "--reload", is_flag=True, default=False,
     help="Auto-reload on code changes (dev mode).",
 )
-def serve(host: str, port: int, reload: bool) -> None:
+@click.option(
+    "--no-mlx", "disable_mlx", is_flag=True, default=False,
+    help=(
+        "Disable MLX backend — route all requests through Ollama. "
+        "Reduces server RAM from ~470 MB to ~150 MB by preventing the "
+        "mlx_lm→transformers→torch import chain. "
+        "Recommended when memory footprint matters more than raw throughput."
+    ),
+)
+def serve(host: str, port: int, reload: bool, disable_mlx: bool) -> None:
     """Start the autotune OpenAI-compatible API server.
 
     Any OpenAI client can use it via base_url=http://HOST:PORT/v1
     """
+    import os as _os
+    if disable_mlx:
+        _os.environ["AUTOTUNE_DISABLE_MLX"] = "1"
+
     try:
         import uvicorn
     except ImportError:
@@ -3183,6 +3196,72 @@ def proof(
         list_models=list_models,
     )
     _asyncio.run(_proof_main(ns))
+
+
+# ---------------------------------------------------------------------------
+# `autotune proof-suite`
+# ---------------------------------------------------------------------------
+
+@cli.command("proof-suite")
+@click.option(
+    "--models", "-m", multiple=True, metavar="MODEL",
+    help=(
+        "Ollama model IDs to benchmark.  Repeat for multiple: "
+        "-m llama3.2:3b -m qwen3:8b.  "
+        "Defaults to llama3.2:3b gemma4:e2b qwen3:8b."
+    ),
+)
+@click.option("--runs", "-n", type=int, default=3, show_default=True,
+              help="Inference runs per condition per prompt.  Min 3 for statistics.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to compare against raw Ollama defaults.",
+)
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save full results to a JSON file.")
+@click.option("--list-models", is_flag=True,
+              help="List locally installed Ollama models and exit.")
+def proof_suite(
+    models: tuple,
+    runs: int,
+    profile: str,
+    output: Optional[str],
+    list_models: bool,
+) -> None:
+    """Multi-model scientific benchmark: raw Ollama vs autotune.
+
+    Runs a curated 5-prompt suite (factual, code, analysis, conversation,
+    long output) through both conditions and reports Ollama-internal timing,
+    Ollama-process-isolated RAM, and statistical significance (Wilcoxon
+    signed-rank + Cohen's d effect size + 95% CI).
+
+    \b
+    Examples:
+      autotune proof-suite
+      autotune proof-suite -m llama3.2:3b -m gemma4:e2b -m qwen3:8b
+      autotune proof-suite -m qwen3:8b --runs 5 --output results.json
+    """
+    import argparse as _argparse
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
+    from proof_suite import main as _suite_main  # type: ignore
+
+    # Patch sys.argv so proof_suite's argparse picks up our values
+    _argv = ["proof_suite"]
+    if models:
+        _argv += ["--models"] + list(models)
+    _argv += ["--runs", str(runs), "--profile", profile]
+    if output:
+        _argv += ["--output", output]
+    if list_models:
+        _argv += ["--list-models"]
+
+    _sys.argv = _argv
+    _suite_main()
 
 
 # ---------------------------------------------------------------------------
