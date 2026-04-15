@@ -85,7 +85,7 @@ def start(
     timeout: float = 30.0,
     *,
     profile: Optional[str] = None,
-    use_mlx: bool = True,
+    use_mlx: bool = False,
     log_level: str = "warning",
 ) -> str:
     """Start the autotune server if it is not already running.
@@ -134,9 +134,9 @@ def start(
     --------
     >>> import autotune
     >>> from openai import OpenAI
-    >>> autotune.start()                       # MLX on Apple Silicon (fastest)
+    >>> autotune.start()                       # default: Ollama only (~94 MB RAM)
     'http://localhost:8765/v1'
-    >>> autotune.start(use_mlx=False)          # Ollama only (~150 MB RAM)
+    >>> autotune.start(use_mlx=True)           # opt in to MLX on Apple Silicon
     'http://localhost:8765/v1'
     >>> client = OpenAI(**autotune.client_kwargs())
     """
