@@ -1,8 +1,19 @@
 # autotune — Local LLM Inference Optimizer
 
-A middleware layer that makes locally-running LLMs faster, lighter, and smarter on your own hardware — with zero changes to your existing setup.
+[![PyPI](https://img.shields.io/pypi/v/llm-autotune)](https://pypi.org/project/llm-autotune/)
+[![Python](https://img.shields.io/pypi/pyversions/llm-autotune)](https://pypi.org/project/llm-autotune/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/tanavc1/local-llm-autotune/blob/main/LICENSE)
 
-Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) backends out of the box.
+**39% faster time-to-first-word. 67% less KV cache. Zero config changes.**
+
+A drop-in middleware layer that makes your local LLMs faster and lighter on your own hardware — without touching your existing code or workflows.
+
+```bash
+pip install llm-autotune
+autotune chat --model qwen3:8b   # that's it
+```
+
+Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of the box.
 
 ---
 
@@ -55,7 +66,7 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) backend
 | Multi-turn conversation | Accumulated context — tests prefix caching via num_keep |
 | Sustained long output | Long generation — tests KV quant under memory pressure |
 
-**Full data:** Raw JSON with every run, load_ms, prefill_ms, swap_delta, reload_detected, and KV estimates for all 3 models: [`proof_results_v2.json`](proof_results_v2.json) · [`proof_results_gemma4.json`](proof_results_gemma4.json) · [`proof_results_qwen3.json`](proof_results_qwen3.json)
+**Full data:** Raw JSON with every run, load_ms, prefill_ms, swap_delta, reload_detected, and KV estimates for all 3 models: [`llama3.2:3b`](https://github.com/tanavc1/local-llm-autotune/blob/main/proof_results_v2.json) · [`gemma4:e2b`](https://github.com/tanavc1/local-llm-autotune/blob/main/proof_results_gemma4.json) · [`qwen3:8b`](https://github.com/tanavc1/local-llm-autotune/blob/main/proof_results_qwen3.json)
 
 ### Memory growth over turns
 

@@ -5,19 +5,24 @@ build-backend = "hatchling.build"
 [project]
 name = "llm-autotune"
 version = "0.1.0"
-description = "Automatic local-LLM inference configuration recommender for Ollama, LM Studio, and MLX"
-readme = "README.md"
+description = "39% faster TTFT, 67% less KV cache, zero config — autotune optimises local LLMs on Ollama, LM Studio, and MLX"
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Tanav Chinthapatla", email = "tanavc1@users.noreply.github.com" },
 ]
-keywords = ["llm", "ollama", "mlx", "inference", "optimization", "apple-silicon", "local-ai"]
+keywords = [
+    "llm", "ollama", "mlx", "inference", "optimization", "apple-silicon",
+    "local-ai", "local-llm", "ttft", "kv-cache", "qwen", "gemma", "llama",
+    "openai-compatible", "inference-server", "latency", "memory-optimization",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
@@ -28,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: System :: Hardware",
+    "Topic :: System :: Systems Administration",
     "Topic :: Utilities",
 ]
 dependencies = [
@@ -42,10 +48,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tanavc1/llm-autotune"
-Repository = "https://github.com/tanavc1/llm-autotune"
-"Bug Tracker" = "https://github.com/tanavc1/llm-autotune/issues"
-Changelog = "https://github.com/tanavc1/llm-autotune/releases"
+Homepage = "https://github.com/tanavc1/local-llm-autotune"
+Repository = "https://github.com/tanavc1/local-llm-autotune"
+"Bug Tracker" = "https://github.com/tanavc1/local-llm-autotune/issues"
+Changelog = "https://github.com/tanavc1/local-llm-autotune/releases"
 
 [project.optional-dependencies]
 # Apple Silicon acceleration — install with: pip install llm-autotune[mlx]
