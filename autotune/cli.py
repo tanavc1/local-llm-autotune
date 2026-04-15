@@ -1970,21 +1970,21 @@ def telemetry(model_id: Optional[str], limit: int, events: bool) -> None:
     help="Auto-reload on code changes (dev mode).",
 )
 @click.option(
-    "--no-mlx", "disable_mlx", is_flag=True, default=False,
+    "--mlx", "enable_mlx", is_flag=True, default=False,
     help=(
-        "Disable MLX backend — route all requests through Ollama. "
-        "Reduces server RAM from ~470 MB to ~150 MB by preventing the "
-        "mlx_lm→transformers→torch import chain. "
-        "Recommended when memory footprint matters more than raw throughput."
+        "Enable MLX backend on Apple Silicon (opt-in). "
+        "Routes requests to mlx_lm for ~10–40%% higher throughput. "
+        "Costs ~370 MB extra RAM and disables tool/function calling. "
+        "Default is Ollama-only (~94 MB, full tool support)."
     ),
 )
-def serve(host: str, port: int, reload: bool, disable_mlx: bool) -> None:
+def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
     """Start the autotune OpenAI-compatible API server.
 
     Any OpenAI client can use it via base_url=http://HOST:PORT/v1
     """
     import os as _os
-    if disable_mlx:
+    if not enable_mlx:
         _os.environ["AUTOTUNE_DISABLE_MLX"] = "1"
 
     try:

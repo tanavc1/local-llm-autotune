@@ -340,6 +340,121 @@ AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a waiting request gets 429 (defaul
 
 ---
 
+## Embedding autotune in your application
+
+autotune is designed to be embedded directly in Python applications. Your code points at the autotune server; autotune handles everything that makes local LLMs unreliable — OOM crashes, slow TTFT, model eviction between requests, memory pressure under load. You ship a reliable local AI app without becoming an LLM infrastructure expert.
+
+### Minimal integration
+
+```python
+import autotune
+from openai import OpenAI
+
+autotune.start()                          # starts server if not running; blocks until ready
+client = OpenAI(**autotune.client_kwargs())  # {"base_url": "http://localhost:8765/v1", "api_key": "local"}
+
+response = client.chat.completions.create(
+    model="qwen3:8b",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+That's the entire integration. autotune manages the server lifecycle, model keep-alive, KV optimisation, and memory pressure automatically.
+
+### `autotune.start()`
+
+```python
+autotune.start(
+    host="localhost",   # interface to bind — default local-only
+    port=8765,          # port — default 8765
+    timeout=30.0,       # seconds to wait for server ready — raises TimeoutError if exceeded
+    profile="balanced", # default profile: "fast" | "balanced" | "quality"
+    use_mlx=False,      # False = Ollama only (~94 MB RAM, full tool calling)
+                        # True  = MLX on Apple Silicon (~470 MB, higher throughput, no tool calls)
+    log_level="warning" # "warning" keeps server output out of your app's stdout
+)
+```
+
+**`start()` is safe to call on every app launch.** It checks `/health` first — if the server is already running (started externally or by a previous call) it returns immediately. If it starts the server, it owns the process and `stop()` will terminate it.
+
+### Checking model readiness before the first request
+
+Use the `/v1/models/{model_id}/status` endpoint to know whether a model is warm before you show your UI:
+
+```python
+import httpx
+
+status = httpx.get("http://localhost:8765/v1/models/qwen3:8b/status").json()
+
+# status["status"] is one of:
+#   "ready"      — model is loaded in memory; first token will be fast
+#   "available"  — model is on disk but not loaded; expect a cold-start delay (~3-10s)
+#   "not_found"  — model is not installed locally
+
+if status["status"] == "not_found":
+    print("Pull the model first: ollama pull qwen3:8b")
+elif status["status"] == "available":
+    show_loading_spinner()   # model will load on first request
+elif status["status"] == "ready":
+    show_chat_ui()           # model is warm, no delay
+
+# Also includes a memory fit assessment:
+# status["fit"]["class"]        → "safe" | "marginal" | "swap_risk" | "oom"
+# status["fit"]["ram_util_pct"] → estimated RAM usage at inference time
+# status["fit"]["warning"]      → plain-English warning if tight, else null
+```
+
+### Handling errors
+
+All errors from autotune return structured JSON — no bare string parsing required:
+
+```python
+import httpx
+
+try:
+    response = client.chat.completions.create(
+        model="qwen3:8b",
+        messages=[{"role": "user", "content": "Hello"}],
+    )
+except Exception as e:
+    error = e.response.json().get("detail", {})
+
+    match error.get("type"):
+        case "model_not_found":
+            # model isn't installed — prompt the user to pull it
+            print(f"Run: ollama pull {error['model']}")
+
+        case "memory_pressure":
+            # model hit an OOM — suggest a smaller model or profile
+            print("Not enough RAM. Try a smaller model or --profile fast.")
+
+        case "backend_error":
+            # Ollama isn't running or crashed
+            print(f"Backend error: {error['message']}")
+            print(f"Suggestion: {error['suggestion']}")
+```
+
+Every error body has `type`, `message`, `model`, `suggestion`, and `status_url` (points at the model status endpoint for a live fit assessment).
+
+### Other API methods
+
+```python
+autotune.is_running()           # True/False — is the server accepting requests?
+autotune.stop()                 # terminate the server autotune.start() launched
+autotune.client_kwargs()        # returns {"base_url": "...", "api_key": "local"}
+```
+
+### Memory footprint
+
+| Mode | Server RAM | Tool calling | Throughput |
+|------|-----------|--------------|------------|
+| `autotune.start()` (default) | **~94 MB** | ✓ Full support | Ollama |
+| `autotune.start(use_mlx=True)` | ~470 MB | ✗ Broken | MLX (10–40% faster on Apple Silicon) |
+
+The default is Ollama-only. On Linux/Windows, `use_mlx` has no effect — MLX is Apple Silicon only.
+
+---
+
 ## Using autotune with agentic frameworks
 
 autotune's OpenAI-compatible server works as a drop-in local LLM provider for any agentic framework that accepts a custom base URL. Start the server first, then point your framework at it — autotune handles KV optimisation, memory management, and model routing transparently in the background.
