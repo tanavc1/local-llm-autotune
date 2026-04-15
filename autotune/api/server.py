@@ -510,6 +510,11 @@ async def completions(req: CompletionRequest):
     chain = get_chain()
     profile = get_profile("fast")   # autocomplete always uses the fast profile
     ollama_opts, _ = build_ollama_options(messages, profile)
+    if _is_thinking_model(req.model):
+        ollama_opts["num_ctx"] = min(
+            ollama_opts["num_ctx"] + _THINKING_OVERHEAD,
+            profile.max_context_tokens,
+        )
     tuner = get_tuner()
 
     chunk_id = f"cmpl-{uuid.uuid4().hex[:12]}"
@@ -773,6 +778,15 @@ async def _chat_completions_inner(
     # always allocating profile.max_context_tokens.  Reduces both unified
     # memory pressure and KV-cache init latency (direct TTFT improvement).
     ollama_opts, _ = build_ollama_options(messages, profile)
+    # For reasoning models: num_ctx must also include the thinking overhead or
+    # Ollama will truncate the model mid-thought (num_ctx is the hard limit,
+    # not max_new_tokens).  Cap at profile.max_context_tokens so the safety
+    # ceiling is still respected.
+    if _is_thinking_model(req.model):
+        ollama_opts["num_ctx"] = min(
+            ollama_opts["num_ctx"] + _THINKING_OVERHEAD,
+            profile.max_context_tokens,
+        )
 
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     start_time = time.time()
