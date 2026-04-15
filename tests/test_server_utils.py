@@ -16,10 +16,13 @@ from autotune.api.server import (
     ChatRequest,
     CompletionRequest,
     Message,
-    _filter_thinking_stream,
     _is_chat_model,
-    _is_thinking_model,
-    _strip_thinking,
+)
+from autotune.api.thinking import (
+    ThinkingStreamFilter,
+    filter_thinking_sse as _filter_thinking_stream,
+    is_thinking_model as _is_thinking_model,
+    strip_thinking as _strip_thinking,
 )
 
 
@@ -135,6 +138,51 @@ class TestFilterThinkingStream:
         # Only the DONE sentinel should remain
         data_chunks = [c for c in out if c != b"data: [DONE]\n\n"]
         assert data_chunks == []
+
+
+# ---------------------------------------------------------------------------
+# ThinkingStreamFilter (text-level, used by CLI chat and /v1/completions)
+# ---------------------------------------------------------------------------
+
+class TestThinkingStreamFilter:
+    def test_passthrough_no_think(self):
+        filt = ThinkingStreamFilter()
+        assert filt.feed("hello world") == "hello world"
+        assert filt.collected_text() == "hello world"
+
+    def test_complete_block_stripped(self):
+        filt = ThinkingStreamFilter()
+        visible = filt.feed("<think>internal</think>Answer")
+        assert "think" not in visible
+        assert "Answer" in visible
+        assert filt.collected_text() == visible
+
+    def test_cross_chunk_block(self):
+        filt = ThinkingStreamFilter()
+        v1 = filt.feed("<think>step one")   # enters think state
+        v2 = filt.feed(" step two</think>Real answer")  # exits think state
+        assert v1 == ""
+        assert v2 == "Real answer"
+        assert filt.collected_text() == "Real answer"
+
+    def test_collected_text_excludes_thinking(self):
+        filt = ThinkingStreamFilter()
+        filt.feed("<think>secret reasoning</think>")
+        filt.feed("The answer is 42")
+        assert "secret" not in filt.collected_text()
+        assert filt.collected_text() == "The answer is 42"
+
+    def test_empty_string(self):
+        filt = ThinkingStreamFilter()
+        assert filt.feed("") == ""
+        assert filt.collected_text() == ""
+
+    def test_multiple_think_blocks(self):
+        filt = ThinkingStreamFilter()
+        filt.feed("<think>step 1</think>")
+        v = filt.feed("part A<think>step 2</think>part B")
+        assert v == "part Apart B"
+        assert filt.collected_text() == "part Apart B"
 
 
 # ---------------------------------------------------------------------------

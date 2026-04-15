@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -47,124 +46,13 @@ from .ctx_utils import estimate_tokens
 from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
-
-# ---------------------------------------------------------------------------
-# Thinking-tag filter
-# ---------------------------------------------------------------------------
-
-_THINK_OPEN  = "<think>"
-_THINK_CLOSE = "</think>"
-
-# Matches a complete block OR an incomplete one (model cut off mid-think).
-# Single compiled pass — the `|` alternation tries the greedy non-dotall branch
-# first so it doesn't accidentally eat the real answer that follows </think>.
-_RE_THINK = re.compile(r"<think>.*?</think>|<think>.*$", re.DOTALL)
-
-
-def _strip_thinking(text: str) -> str:
-    """Remove all <think>…</think> blocks, including incomplete ones."""
-    return _RE_THINK.sub("", text).lstrip()
-
-
-async def _filter_thinking_stream(
-    source: AsyncGenerator[bytes, None],
-) -> AsyncGenerator[bytes, None]:
-    """
-    Pass-through async generator that strips <think>...</think> blocks.
-
-    Works on raw SSE byte chunks (``data: {...}\\n\\n``).  Each chunk is
-    parsed, the content field filtered, and re-serialised.  Non-content
-    chunks (finish_reason, [DONE]) are passed through unchanged.
-    """
-    in_think = False
-
-    async for raw_chunk in source:
-        # [DONE] sentinel — always pass through
-        if raw_chunk == b"data: [DONE]\n\n":
-            yield raw_chunk
-            continue
-
-        # Decode and parse
-        decoded = raw_chunk.decode("utf-8", errors="replace")
-        if not decoded.startswith("data: "):
-            yield raw_chunk
-            continue
-
-        try:
-            payload = json.loads(decoded[6:])
-        except json.JSONDecodeError:
-            yield raw_chunk
-            continue
-
-        choices = payload.get("choices", [])
-        if not choices:
-            yield raw_chunk
-            continue
-
-        delta = choices[0].get("delta", {})
-        content = delta.get("content")
-        finish = choices[0].get("finish_reason")
-
-        # Pass through finish-only chunks
-        if not content:
-            yield raw_chunk
-            continue
-
-        # Process content through the think-tag state machine
-        buf = content
-        out_parts: list[str] = []
-
-        while buf:
-            if in_think:
-                pos = buf.find(_THINK_CLOSE)
-                if pos == -1:
-                    buf = ""   # still inside think — discard
-                else:
-                    # Exit think block; skip closing tag and any trailing newline
-                    buf = buf[pos + len(_THINK_CLOSE):].lstrip("\n")
-                    in_think = False
-            else:
-                pos = buf.find(_THINK_OPEN)
-                if pos == -1:
-                    out_parts.append(buf)
-                    buf = ""
-                else:
-                    if pos > 0:
-                        out_parts.append(buf[:pos])
-                    buf = buf[pos + len(_THINK_OPEN):]
-                    in_think = True
-
-        filtered = "".join(out_parts)
-
-        if not filtered and not finish:
-            # Entire chunk was thinking — drop it
-            continue
-
-        # Re-encode with filtered content
-        if filtered:
-            delta["content"] = filtered
-        else:
-            delta.pop("content", None)
-
-        choices[0]["delta"] = delta
-        payload["choices"] = choices
-        yield (f"data: {json.dumps(payload)}\n\n").encode()
-
-
-# ---------------------------------------------------------------------------
-# Reasoning-model detection
-# ---------------------------------------------------------------------------
-
-# Models that use a <think>...</think> block before their answer.
-# These need extra token headroom so the think block doesn't eat the entire
-# max_tokens budget and leave nothing for the actual response.
-_THINKING_MODELS = ("qwen3", "deepseek-r1", "qwq", "deepthink", "marco-o1")
-_THINKING_OVERHEAD = 1024   # extra tokens granted for the think block
-
-
-def _is_thinking_model(model_id: str) -> bool:
-    lower = model_id.lower()
-    return any(name in lower for name in _THINKING_MODELS)
+from .thinking import (
+    THINKING_OVERHEAD as _THINKING_OVERHEAD,
+    ThinkingStreamFilter,
+    filter_thinking_sse as _filter_thinking_stream,
+    is_thinking_model as _is_thinking_model,
+    strip_thinking as _strip_thinking,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -889,8 +777,10 @@ async def _chat_completions_inner(
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     start_time = time.time()
     first_token_time: Optional[float] = None
-    full_content: list[str] = []
     backend_name = "unknown"
+    # ThinkingStreamFilter tracks visible content for both client display AND
+    # conversation storage — so the DB never sees raw <think> blocks.
+    _think_filt = ThinkingStreamFilter()
 
     async def _raw_stream() -> AsyncGenerator[bytes, None]:
         """Inner generator: produces raw SSE bytes from the backend."""
@@ -914,7 +804,7 @@ async def _chat_completions_inner(
                     first_token_time = time.time()
 
                 if chunk.content:
-                    full_content.append(chunk.content)
+                    _think_filt.feed(chunk.content)   # track visible text
                     yield _make_chunk_json(chunk.content, req.model, chunk_id).encode()
 
                 if chunk.finish_reason:
@@ -932,9 +822,9 @@ async def _chat_completions_inner(
             yield f"data: {err}\n\n".encode()
         finally:
             tuner._restore()
-            # Log metrics to DB + conversation
+            # Use the filter's collected_text() — think blocks already excluded.
             elapsed = time.time() - start_time
-            content = "".join(full_content)
+            content = _think_filt.collected_text()
             comp_tokens = estimate_tokens(content)
             ttft_ms = (first_token_time - start_time) * 1000 if first_token_time else 0
             tps = comp_tokens / max(elapsed, 0.01)

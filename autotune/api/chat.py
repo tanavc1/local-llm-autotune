@@ -41,6 +41,7 @@ from .ctx_utils import estimate_tokens, estimate_messages_tokens
 from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
+from .thinking import ThinkingStreamFilter, is_thinking_model
 
 # Enable readline history and line-editing in input() calls.
 # On macOS the stdlib "readline" is backed by libedit, which uses
@@ -661,6 +662,7 @@ class ChatSession:
 
         t_start = time.time()
         first_token_t: Optional[float] = None
+        think_filt = ThinkingStreamFilter() if is_thinking_model(self.model_id) else None
         collected: list[str] = []
         backend_used = "?"
         header_shown = False
@@ -708,15 +710,18 @@ class ChatSession:
                 backend_used = chunk.backend
                 self._active_backend = backend_used
                 if chunk.content:
-                    if not header_shown:
-                        # First token: clear the loading hint then print header
-                        _clear_line()
-                        console.print("[bold green]Assistant:[/bold green] ", end="")
-                        header_shown = True
-                    if first_token_t is None:
-                        first_token_t = time.time()
-                    print(chunk.content, end="", flush=True)
-                    collected.append(chunk.content)
+                    # For reasoning models, filter <think> blocks from both
+                    # display and the collected list used for DB storage.
+                    visible = think_filt.feed(chunk.content) if think_filt else chunk.content
+                    if visible:
+                        if not header_shown:
+                            _clear_line()
+                            console.print("[bold green]Assistant:[/bold green] ", end="")
+                            header_shown = True
+                        if first_token_t is None:
+                            first_token_t = time.time()
+                        print(visible, end="", flush=True)
+                        collected.append(visible)
 
             # If the stream completed without any content (model returned empty
             # response, no error), the loading hint is still on the terminal line.
