@@ -1,8 +1,12 @@
 {
   "tool": "autotune proof",
-  "version": "2.0",
-  "timestamp": "2026-04-09T20:04:35Z",
-  "model": "phi4-mini:latest",
+  "version": "3.0",
+  "timestamp": "2026-04-11T04:06:27Z",
+  "model": "qwen2.5-coder:14b",
+  "config": {
+    "raw_ctx": 4096,
+    "max_tokens": 120
+  },
   "phases": {
     "warm": {
       "raw": [
@@ -11,9 +15,10 @@
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 479.994625,
-          "eval_tps": 33.31270025185426,
-          "load_ms": 924.950083,
+          "prefill_ms": 1422.66425,
+          "eval_tps": 9.96966684000428,
+          "load_ms": 17991.189167,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
@@ -21,9 +26,10 @@
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 36.111583,
-          "eval_tps": 33.268650141129896,
-          "load_ms": 95.863042,
+          "prefill_ms": 105.341333,
+          "eval_tps": 10.260424315055932,
+          "load_ms": 105.417,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
@@ -31,39 +37,10 @@
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 30.322208,
-          "eval_tps": 33.049065405107605,
-          "load_ms": 77.880916,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "raw",
-          "run_idx": 0,
-          "num_ctx": 4096,
-          "prefill_ms": 209.633792,
-          "eval_tps": 32.88910616041476,
-          "load_ms": 931.068125,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "raw",
-          "run_idx": 1,
-          "num_ctx": 4096,
-          "prefill_ms": 40.778041,
-          "eval_tps": 31.243062605823745,
-          "load_ms": 97.668084,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "raw",
-          "run_idx": 2,
-          "num_ctx": 4096,
-          "prefill_ms": 33.287667,
-          "eval_tps": 31.827115811352893,
-          "load_ms": 72.409959,
+          "prefill_ms": 102.1025,
+          "eval_tps": 10.216422233242191,
+          "load_ms": 78.923125,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
@@ -71,9 +48,10 @@
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 313.043292,
-          "eval_tps": 32.57037903516682,
-          "load_ms": 950.889667,
+          "prefill_ms": 713.022625,
+          "eval_tps": 9.326452779272218,
+          "load_ms": 97.601584,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
@@ -81,9 +59,10 @@
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 31.775416,
-          "eval_tps": 32.82341772776894,
-          "load_ms": 75.626083,
+          "prefill_ms": 108.043417,
+          "eval_tps": 9.594981025853459,
+          "load_ms": 142.403125,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
@@ -91,39 +70,43 @@
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 40.530834,
-          "eval_tps": 31.40437794368986,
-          "load_ms": 74.454208,
+          "prefill_ms": 104.676917,
+          "eval_tps": 9.635450392185847,
+          "load_ms": 84.305708,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 309.983,
-          "eval_tps": 32.591181195680846,
-          "load_ms": 941.732458,
+          "prefill_ms": 6625.341168,
+          "eval_tps": 9.883059248307019,
+          "load_ms": 245.07575,
+          "prompt_eval_count": 611,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 30.912416,
-          "eval_tps": 32.80012632851512,
-          "load_ms": 79.303375,
+          "prefill_ms": 105.800959,
+          "eval_tps": 9.919970568002842,
+          "load_ms": 91.017541,
+          "prompt_eval_count": 611,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 40.223875,
-          "eval_tps": 32.86870868113663,
-          "load_ms": 84.043833,
+          "prefill_ms": 100.351125,
+          "eval_tps": 9.714781831493676,
+          "load_ms": 95.051458,
+          "prompt_eval_count": 611,
           "error": null
         }
       ],
@@ -132,184 +115,109 @@
           "prompt_id": "quick",
           "mode": "autotune",
           "run_idx": 0,
-          "num_ctx": 1536,
-          "prefill_ms": 213.483166,
-          "eval_tps": 33.04258156182646,
-          "load_ms": 938.231083,
+          "num_ctx": 512,
+          "prefill_ms": 745.40225,
+          "eval_tps": 9.964268897322196,
+          "load_ms": 1811.883042,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
           "prompt_id": "quick",
           "mode": "autotune",
           "run_idx": 1,
-          "num_ctx": 1536,
-          "prefill_ms": 39.868167,
-          "eval_tps": 32.67833607314741,
-          "load_ms": 80.644416,
+          "num_ctx": 512,
+          "prefill_ms": 101.646541,
+          "eval_tps": 9.919958677314321,
+          "load_ms": 92.764375,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
           "prompt_id": "quick",
           "mode": "autotune",
           "run_idx": 2,
-          "num_ctx": 1536,
-          "prefill_ms": 39.2255,
-          "eval_tps": 32.851124497892634,
-          "load_ms": 83.007375,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "autotune",
-          "run_idx": 0,
-          "num_ctx": 1536,
-          "prefill_ms": 202.635417,
-          "eval_tps": 32.57847602601627,
-          "load_ms": 941.470167,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "autotune",
-          "run_idx": 1,
-          "num_ctx": 1536,
-          "prefill_ms": 33.539209,
-          "eval_tps": 32.45625194415485,
-          "load_ms": 86.2995,
-          "error": null
-        },
-        {
-          "prompt_id": "code",
-          "mode": "autotune",
-          "run_idx": 2,
-          "num_ctx": 1536,
-          "prefill_ms": 36.589916,
-          "eval_tps": 32.76464084781732,
-          "load_ms": 85.282125,
+          "num_ctx": 512,
+          "prefill_ms": 102.361791,
+          "eval_tps": 9.838106678505461,
+          "load_ms": 84.338584,
+          "prompt_eval_count": 38,
           "error": null
         },
         {
           "prompt_id": "sys_prompt",
           "mode": "autotune",
           "run_idx": 0,
-          "num_ctx": 1536,
-          "prefill_ms": 296.983,
-          "eval_tps": 32.746209765118195,
-          "load_ms": 960.306542,
+          "num_ctx": 512,
+          "prefill_ms": 714.201,
+          "eval_tps": 9.092857250729823,
+          "load_ms": 93.927333,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
           "prompt_id": "sys_prompt",
           "mode": "autotune",
           "run_idx": 1,
-          "num_ctx": 1536,
-          "prefill_ms": 35.576375,
-          "eval_tps": 32.96961814739922,
-          "load_ms": 94.512375,
+          "num_ctx": 512,
+          "prefill_ms": 104.139292,
+          "eval_tps": 9.59090791597201,
+          "load_ms": 85.556625,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
           "prompt_id": "sys_prompt",
           "mode": "autotune",
           "run_idx": 2,
-          "num_ctx": 1536,
-          "prefill_ms": 38.786875,
-          "eval_tps": 32.88540067865552,
-          "load_ms": 94.359958,
+          "num_ctx": 512,
+          "prefill_ms": 105.196625,
+          "eval_tps": 8.94038442769729,
+          "load_ms": 93.892708,
+          "prompt_eval_count": 49,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 0,
-          "num_ctx": 1536,
-          "prefill_ms": 285.977875,
-          "eval_tps": 32.30313910941641,
-          "load_ms": 951.239459,
+          "num_ctx": 512,
+          "prefill_ms": 5625.655958,
+          "eval_tps": 9.050461981861353,
+          "load_ms": 132.267125,
+          "prompt_eval_count": 512,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 1,
-          "num_ctx": 1536,
-          "prefill_ms": 32.127,
-          "eval_tps": 32.38513850657393,
-          "load_ms": 86.437583,
+          "num_ctx": 512,
+          "prefill_ms": 5621.545833,
+          "eval_tps": 9.617278272118085,
+          "load_ms": 139.956542,
+          "prompt_eval_count": 512,
           "error": null
         },
         {
-          "prompt_id": "chat",
+          "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 2,
-          "num_ctx": 1536,
-          "prefill_ms": 32.047958,
-          "eval_tps": 32.253689962032034,
-          "load_ms": 84.070209,
+          "num_ctx": 512,
+          "prefill_ms": 5551.2845,
+          "eval_tps": 9.226915900346183,
+          "load_ms": 113.560458,
+          "prompt_eval_count": 512,
           "error": null
         }
       ]
     },
     "vram": {
       "raw_ctx": 4096,
-      "raw_gb": 3.063,
-      "tune_ctx": 1536,
-      "tune_gb": 2.594,
-      "saved_gb": 0.469
-    },
-    "noswap_demo": {
-      "arch": {
-        "n_layers": 32,
-        "n_kv_heads": 8,
-        "head_dim": 128
-      },
-      "scenarios": [
-        {
-          "label": "Current system",
-          "avail_gb": 6.6798248291015625,
-          "ctx": 1536,
-          "kv_gb": 0.188,
-          "level": "ok",
-          "f16": true,
-          "kv_raw_gb": 0.5
-        },
-        {
-          "label": "Light pressure (4 GB free)",
-          "avail_gb": 4.0,
-          "ctx": 1536,
-          "kv_gb": 0.188,
-          "level": "ok",
-          "f16": true,
-          "kv_raw_gb": 0.5
-        },
-        {
-          "label": "Moderate pressure (2 GB free)",
-          "avail_gb": 2.0,
-          "ctx": 1536,
-          "kv_gb": 0.188,
-          "level": "ok",
-          "f16": true,
-          "kv_raw_gb": 0.5
-        },
-        {
-          "label": "High pressure (1 GB free)",
-          "avail_gb": 1.0,
-          "ctx": 512,
-          "kv_gb": 0.031,
-          "level": "l5_min",
-          "f16": false,
-          "kv_raw_gb": 0.5
-        },
-        {
-          "label": "Critical (0.5 GB free)",
-          "avail_gb": 0.5,
-          "ctx": 512,
-          "kv_gb": 0.031,
-          "level": "l5_min",
-          "f16": false,
-          "kv_raw_gb": 0.5
-        }
-      ]
+      "raw_gb": 9.047,
+      "tune_ctx": 512,
+      "tune_gb": 8.351,
+      "saved_gb": 0.696
     }
   }
 }

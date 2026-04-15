@@ -18,10 +18,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,13 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
+
+from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNFE
+
+try:
+    _VERSION = _pkg_version("llm-autotune")
+except _PkgNFE:
+    _VERSION = "0.1.0"
 
 from autotune.hardware.profiler import profile_hardware
 from .backends.chain import BackendChain, ModelNotAvailableError, get_chain
@@ -41,15 +49,138 @@ from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
 
 # ---------------------------------------------------------------------------
+# Thinking-tag filter
+# ---------------------------------------------------------------------------
+
+_THINK_OPEN  = "<think>"
+_THINK_CLOSE = "</think>"
+
+# Matches a complete block OR an incomplete one (model cut off mid-think).
+# Single compiled pass — the `|` alternation tries the greedy non-dotall branch
+# first so it doesn't accidentally eat the real answer that follows </think>.
+_RE_THINK = re.compile(r"<think>.*?</think>|<think>.*$", re.DOTALL)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove all <think>…</think> blocks, including incomplete ones."""
+    return _RE_THINK.sub("", text).lstrip()
+
+
+async def _filter_thinking_stream(
+    source: AsyncGenerator[bytes, None],
+) -> AsyncGenerator[bytes, None]:
+    """
+    Pass-through async generator that strips <think>...</think> blocks.
+
+    Works on raw SSE byte chunks (``data: {...}\\n\\n``).  Each chunk is
+    parsed, the content field filtered, and re-serialised.  Non-content
+    chunks (finish_reason, [DONE]) are passed through unchanged.
+    """
+    in_think = False
+
+    async for raw_chunk in source:
+        # [DONE] sentinel — always pass through
+        if raw_chunk == b"data: [DONE]\n\n":
+            yield raw_chunk
+            continue
+
+        # Decode and parse
+        decoded = raw_chunk.decode("utf-8", errors="replace")
+        if not decoded.startswith("data: "):
+            yield raw_chunk
+            continue
+
+        try:
+            payload = json.loads(decoded[6:])
+        except json.JSONDecodeError:
+            yield raw_chunk
+            continue
+
+        choices = payload.get("choices", [])
+        if not choices:
+            yield raw_chunk
+            continue
+
+        delta = choices[0].get("delta", {})
+        content = delta.get("content")
+        finish = choices[0].get("finish_reason")
+
+        # Pass through finish-only chunks
+        if not content:
+            yield raw_chunk
+            continue
+
+        # Process content through the think-tag state machine
+        buf = content
+        out_parts: list[str] = []
+
+        while buf:
+            if in_think:
+                pos = buf.find(_THINK_CLOSE)
+                if pos == -1:
+                    buf = ""   # still inside think — discard
+                else:
+                    # Exit think block; skip closing tag and any trailing newline
+                    buf = buf[pos + len(_THINK_CLOSE):].lstrip("\n")
+                    in_think = False
+            else:
+                pos = buf.find(_THINK_OPEN)
+                if pos == -1:
+                    out_parts.append(buf)
+                    buf = ""
+                else:
+                    if pos > 0:
+                        out_parts.append(buf[:pos])
+                    buf = buf[pos + len(_THINK_OPEN):]
+                    in_think = True
+
+        filtered = "".join(out_parts)
+
+        if not filtered and not finish:
+            # Entire chunk was thinking — drop it
+            continue
+
+        # Re-encode with filtered content
+        if filtered:
+            delta["content"] = filtered
+        else:
+            delta.pop("content", None)
+
+        choices[0]["delta"] = delta
+        payload["choices"] = choices
+        yield (f"data: {json.dumps(payload)}\n\n").encode()
+
+
+# ---------------------------------------------------------------------------
+# Reasoning-model detection
+# ---------------------------------------------------------------------------
+
+# Models that use a <think>...</think> block before their answer.
+# These need extra token headroom so the think block doesn't eat the entire
+# max_tokens budget and leave nothing for the actual response.
+_THINKING_MODELS = ("qwen3", "deepseek-r1", "qwq", "deepthink", "marco-o1")
+_THINKING_OVERHEAD = 1024   # extra tokens granted for the think block
+
+
+def _is_thinking_model(model_id: str) -> bool:
+    lower = model_id.lower()
+    return any(name in lower for name in _THINKING_MODELS)
+
+
+# ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
-_VALID_ROLES = frozenset({"system", "user", "assistant", "tool"})
+_VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "function"})
 
 
 class Message(BaseModel):
     role: str
-    content: str
+    content: Union[str, list, None] = None
+    # tool/function call fields — accepted and ignored for local routing
+    name: Optional[str] = None
+    tool_calls: Optional[list] = None
+    tool_call_id: Optional[str] = None
 
     @field_validator("role")
     @classmethod
@@ -57,6 +188,23 @@ class Message(BaseModel):
         if v not in _VALID_ROLES:
             raise ValueError(f"role must be one of {sorted(_VALID_ROLES)}, got {v!r}")
         return v
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def normalize_content(cls, v: Any) -> str:
+        """Accept str, list of content-parts, or None.  Always return str."""
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            # OpenAI multi-modal content: [{"type": "text", "text": "..."}, ...]
+            parts = []
+            for part in v:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                # image_url and other types are silently dropped — local models
+                # don't support vision inputs via this proxy path
+            return " ".join(parts)
+        return str(v)
 
 
 class ChatRequest(BaseModel):
@@ -66,11 +214,25 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     repetition_penalty: Optional[float] = None
-    stream: bool = True
-    # autotune extensions
+    stream: bool = False   # OpenAI spec default is false; clients set true explicitly
+    # ── Standard OpenAI fields accepted and passed through / ignored ─────────
+    # These are sent by virtually every OpenAI-compatible client.  Not
+    # accepting them causes 422 errors that are completely opaque to users.
+    stop: Optional[Union[str, list[str]]] = None
+    n: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    user: Optional[str] = None
+    seed: Optional[int] = None
+    response_format: Optional[dict] = None
+    tools: Optional[list] = None
+    tool_choice: Optional[Union[str, dict]] = None
+    # ── autotune extensions ──────────────────────────────────────────────────
     profile: str = "balanced"
     conversation_id: Optional[str] = None
-    system: Optional[str] = None             # shorthand system prompt
+    system: Optional[str] = None
 
     @field_validator("profile")
     @classmethod
@@ -92,6 +254,22 @@ class ChatRequest(BaseModel):
         if v is not None and v < 1:
             raise ValueError("max_tokens must be >= 1")
         return v
+
+
+class CompletionRequest(BaseModel):
+    """OpenAI /v1/completions (legacy + FIM autocomplete used by Continue.dev)."""
+    model: str
+    prompt: Union[str, list[str]]
+    max_tokens: Optional[int] = 256
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    stream: bool = False
+    stop: Optional[Union[str, list[str]]] = None
+    suffix: Optional[str] = None      # FIM suffix
+    n: Optional[int] = None
+    echo: Optional[bool] = None
+    user: Optional[str] = None
+    seed: Optional[int] = None
 
 
 class ConversationCreateRequest(BaseModel):
@@ -125,7 +303,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="autotune LLM API",
     description="OpenAI-compatible local LLM API with hardware optimization",
-    version="0.1.0",
+    version=_VERSION,
     lifespan=lifespan,
 )
 
@@ -323,6 +501,28 @@ def _make_completion_json(
 # /v1/models
 # ---------------------------------------------------------------------------
 
+# Sources that represent directly-servable chat models.
+# HF cache and GGUF entries need manual setup before they can be routed to,
+# so we hide them from /v1/models to avoid polluting client model pickers.
+_SERVABLE_SOURCES = frozenset({"ollama", "mlx", "lmstudio"})
+
+# Sub-strings in model IDs that identify non-chat (embedding / encoder) models.
+# These should never appear in a chat completion endpoint's model list.
+_EMBEDDING_PATTERNS = (
+    "embed", "cross-encoder", "sentence-transformer",
+    "reranker", "clip", "whisper", "tts", "ocr", "layout",
+    "minilm",   # all-minilm-l6-v2 and similar sentence-transformer models
+)
+
+
+def _is_chat_model(model_id: str, source: str) -> bool:
+    """Return True if this model entry is a usable chat/completion model."""
+    if source not in _SERVABLE_SOURCES:
+        return False
+    lower = model_id.lower()
+    return not any(pat in lower for pat in _EMBEDDING_PATTERNS)
+
+
 @app.get("/v1/models")
 async def list_models():
     chain = get_chain()
@@ -330,6 +530,8 @@ async def list_models():
 
     data = []
     for m in all_models:
+        if not _is_chat_model(m.id, m.source):
+            continue
         data.append({
             "id": m.id,
             "object": "model",
@@ -369,6 +571,182 @@ async def list_local_models():
         {"id": m.id, "source": m.source, "size_gb": m.size_gb, "backend": m.backend_hint}
         for m in local
     ]}
+
+
+# ---------------------------------------------------------------------------
+# /v1/completions  — legacy completion API + FIM (used by Continue.dev autocomplete)
+# ---------------------------------------------------------------------------
+
+@app.post("/v1/completions")
+async def completions(req: CompletionRequest):
+    """
+    OpenAI-compatible text completion endpoint.
+
+    Continue.dev uses this for tab-autocomplete (FIM).  We convert the
+    prompt (and optional suffix) into a chat message so it can be routed
+    through the same Ollama/MLX backend chain that chat uses.
+
+    FIM (fill-in-the-middle) is handled by embedding the suffix hint in the
+    system prompt — this is the most portable approach across local models.
+    """
+    queue = _get_queue()
+    try:
+        await queue.acquire(timeout=_WAIT_TIMEOUT)
+    except _QueueFullError as exc:
+        raise HTTPException(status_code=429, detail={
+            "error": "queue_full", "queue_depth": exc.depth,
+        })
+    except _asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail={"error": "queue_timeout"})
+
+    prompt_text = req.prompt if isinstance(req.prompt, str) else "\n".join(req.prompt)
+    requested_max = req.max_tokens or 256
+    max_tokens = (requested_max + _THINKING_OVERHEAD) if _is_thinking_model(req.model) else requested_max
+    temperature = req.temperature if req.temperature is not None else 0.2
+    top_p = req.top_p if req.top_p is not None else 0.95
+
+    # Build messages: if a suffix was provided (FIM), hint the model via system prompt
+    if req.suffix:
+        system_content = (
+            "Complete the code. Output ONLY the code that fills in the middle — "
+            "no explanation, no markdown fences.\n"
+            f"The code continues with:\n{req.suffix}"
+        )
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": prompt_text},
+        ]
+    else:
+        messages = [{"role": "user", "content": prompt_text}]
+
+    chain = get_chain()
+    profile = get_profile("fast")   # autocomplete always uses the fast profile
+    ollama_opts, _ = build_ollama_options(messages, profile)
+    tuner = get_tuner()
+
+    chunk_id = f"cmpl-{uuid.uuid4().hex[:12]}"
+    created_ts = int(time.time())
+    thinking_model = _is_thinking_model(req.model)
+
+    if req.stream:
+        # True streaming — hold the queue slot until the last byte is sent,
+        # mirroring how /v1/chat/completions handles its stream lifecycle.
+        async def _completions_stream() -> AsyncGenerator[bytes, None]:
+            in_think = False
+            tuner._apply("fast")
+            try:
+                async for chunk in chain.stream(
+                    req.model, messages,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    timeout=30.0,
+                    num_ctx=ollama_opts["num_ctx"],
+                    ollama_options=ollama_opts,
+                ):
+                    if not chunk.content:
+                        continue
+
+                    # Strip thinking tags inline for reasoning models
+                    text_out = chunk.content
+                    if thinking_model:
+                        buf = chunk.content
+                        parts: list[str] = []
+                        while buf:
+                            if in_think:
+                                pos = buf.find(_THINK_CLOSE)
+                                if pos == -1:
+                                    buf = ""
+                                else:
+                                    buf = buf[pos + len(_THINK_CLOSE):].lstrip("\n")
+                                    in_think = False
+                            else:
+                                pos = buf.find(_THINK_OPEN)
+                                if pos == -1:
+                                    parts.append(buf)
+                                    buf = ""
+                                else:
+                                    if pos > 0:
+                                        parts.append(buf[:pos])
+                                    buf = buf[pos + len(_THINK_OPEN):]
+                                    in_think = True
+                        text_out = "".join(parts)
+
+                    if text_out:
+                        payload = {
+                            "id": chunk_id,
+                            "object": "text_completion",
+                            "created": created_ts,
+                            "model": req.model,
+                            "choices": [{"text": text_out, "index": 0, "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n".encode()
+
+                    if chunk.finish_reason:
+                        done = {
+                            "id": chunk_id,
+                            "object": "text_completion",
+                            "created": created_ts,
+                            "model": req.model,
+                            "choices": [{"text": "", "index": 0, "finish_reason": chunk.finish_reason}],
+                        }
+                        yield f"data: {json.dumps(done)}\n\n".encode()
+                        break
+
+            except (ModelNotAvailableError, AuthError, BackendError) as exc:
+                err = json.dumps({"error": {"message": str(exc), "type": "backend_error"}})
+                yield f"data: {err}\n\n".encode()
+            finally:
+                tuner._restore()
+                await queue.release()
+
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(_completions_stream(), media_type="text/event-stream")
+
+    # ── Non-streaming (most common for FIM autocomplete) ──────────────────
+    collected: list[str] = []
+    try:
+        tuner._apply("fast")
+        try:
+            async for chunk in chain.stream(
+                req.model, messages,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                timeout=30.0,
+                num_ctx=ollama_opts["num_ctx"],
+                ollama_options=ollama_opts,
+            ):
+                if chunk.content:
+                    collected.append(chunk.content)
+        except (ModelNotAvailableError, AuthError, BackendError) as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        finally:
+            tuner._restore()
+    finally:
+        await queue.release()
+
+    text = _strip_thinking("".join(collected))
+    prompt_tokens = estimate_tokens(prompt_text)
+    comp_tokens = estimate_tokens(text)
+    return {
+        "id": chunk_id,
+        "object": "text_completion",
+        "created": created_ts,
+        "model": req.model,
+        "choices": [{
+            "text": text,
+            "index": 0,
+            "logprobs": None,
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": comp_tokens,
+            "total_tokens": prompt_tokens + comp_tokens,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +865,16 @@ async def _chat_completions_inner(
                 messages.insert(0, {"role": "system", "content": req.system})
 
     # ── Generation params (profile defaults, request overrides) ─────────
-    max_tokens = req.max_tokens or profile.max_new_tokens
+    requested_max_tokens = req.max_tokens or profile.max_new_tokens
+    # Reasoning models (qwen3, deepseek-r1, etc.) spend tokens on a <think>
+    # block before writing their answer.  We add a thinking overhead so the
+    # model always has room to finish its thought AND produce the requested
+    # number of answer tokens.  The overhead is invisible to the caller —
+    # thinking tags are stripped before the response is returned.
+    if _is_thinking_model(req.model):
+        max_tokens = requested_max_tokens + _THINKING_OVERHEAD
+    else:
+        max_tokens = requested_max_tokens
     temperature = req.temperature if req.temperature is not None else profile.temperature
     top_p = req.top_p if req.top_p is not None else profile.top_p
     rep_penalty = req.repetition_penalty if req.repetition_penalty is not None else profile.repetition_penalty
@@ -505,11 +892,10 @@ async def _chat_completions_inner(
     full_content: list[str] = []
     backend_name = "unknown"
 
-    async def generate_stream() -> AsyncGenerator[bytes, None]:
+    async def _raw_stream() -> AsyncGenerator[bytes, None]:
+        """Inner generator: produces raw SSE bytes from the backend."""
         nonlocal first_token_time, backend_name
 
-        # Apply hardware optimizations inside the generator so they are
-        # released in the finally block when streaming completes.
         tuner._apply(profile_name)
         try:
             async for chunk in chain.stream(
@@ -587,7 +973,10 @@ async def _chat_completions_inner(
         yield b"data: [DONE]\n\n"
 
     if req.stream:
-        return StreamingResponse(generate_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            _filter_thinking_stream(_raw_stream()),
+            media_type="text/event-stream",
+        )
 
     # ── Non-streaming: collect full response ─────────────────────────────
     collected: list[str] = []
@@ -613,7 +1002,7 @@ async def _chat_completions_inner(
     finally:
         tuner._restore()
 
-    content_out = "".join(collected)
+    content_out = _strip_thinking("".join(collected))
     elapsed2 = time.time() - t0
     comp_tokens = estimate_tokens(content_out)
     tps2 = comp_tokens / max(elapsed2, 0.01)
@@ -644,7 +1033,7 @@ async def health():
     mem = memory_pressure_snapshot()
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": _VERSION,
         "backends": {
             "ollama": ollama,
             "lmstudio": lms,

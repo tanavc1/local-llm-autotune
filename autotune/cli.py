@@ -34,7 +34,7 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 @click.group()
-@click.version_option(package_name="autotune")
+@click.version_option(package_name="llm-autotune")
 def cli() -> None:
     """Local-LLM autotune – recommends the best inference config for your hardware."""
 
@@ -1980,13 +1980,26 @@ def serve(host: str, port: int, reload: bool) -> None:
         console.print("[red]uvicorn not installed. Run: pip install 'uvicorn[standard]'[/red]")
         raise SystemExit(1)
 
+    base = f"http://localhost:{port}"
     console.print(
-        f"[bold green]autotune API server[/bold green]  "
-        f"[dim]http://{host}:{port}/v1[/dim]\n"
-        f"  [cyan]/v1/chat/completions[/cyan]  [dim]streaming · OpenAI-compatible[/dim]\n"
-        f"  [cyan]/v1/models[/cyan]             [dim]discover available models[/dim]\n"
-        f"  [cyan]/health[/cyan]                [dim]backend status + hardware[/dim]\n"
-        f"  [cyan]/api/conversations[/cyan]      [dim]persistent conversation CRUD[/dim]\n"
+        f"\n[bold green]autotune[/bold green] server running at [bold cyan]{base}/v1[/bold cyan]\n"
+        f"\n[bold]Endpoints[/bold]\n"
+        f"  [cyan]POST /v1/chat/completions[/cyan]   streaming · OpenAI-compatible\n"
+        f"  [cyan]POST /v1/completions[/cyan]         FIM autocomplete (Continue.dev)\n"
+        f"  [cyan]GET  /v1/models[/cyan]              available local models\n"
+        f"  [cyan]GET  /health[/cyan]                 backend + memory status\n"
+        f"\n[bold]Connect your tools[/bold]\n"
+        f"  [bold]Continue.dev[/bold]  config.json → models → add:\n"
+        f'    [dim]{{"provider":"openai","model":"qwen3:8b","apiBase":"{base}","apiKey":"autotune"}}[/dim]\n'
+        f"\n"
+        f"  [bold]Open WebUI[/bold]   Settings → Connections → OpenAI API:\n"
+        f"    [dim]URL: {base}/v1    Key: autotune[/dim]\n"
+        f"\n"
+        f"  [bold]Python SDK[/bold]\n"
+        f'    [dim]client = OpenAI(base_url="{base}/v1", api_key="autotune")[/dim]\n'
+        f"\n"
+        f"  [bold]curl[/bold]\n"
+        f'    [dim]curl {base}/v1/models[/dim]\n'
     )
 
     uvicorn.run(

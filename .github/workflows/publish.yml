@@ -1,0 +1,124 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"  # triggers on v0.1.0, v1.2.3, etc.
+
+permissions:
+  contents: read
+  id-token: write  # required for trusted publishing (OIDC)
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/llm-autotune/
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Uses OIDC trusted publishing — no API token needed.
+        # Set up trusted publisher at: https://pypi.org/manage/account/publishing/
+        # Publisher settings:
+        #   PyPI project name : llm-autotune
+        #   GitHub owner      : tanavc1
+        #   Repository name   : llm-autotune
+        #   Workflow filename  : publish.yml
+        #   Environment name  : pypi
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install homebrew-pypi-poet
+        run: pip install homebrew-pypi-poet
+
+      - name: Wait for PyPI to propagate and generate formula
+        run: |
+          # Retry until the new version is visible on PyPI (up to ~5 min)
+          VERSION="${{ github.ref_name }}"
+          PKG_VERSION="${VERSION#v}"   # strip leading 'v'
+          for i in $(seq 1 10); do
+            if pip index versions llm-autotune 2>/dev/null | grep -q "$PKG_VERSION"; then
+              echo "Version $PKG_VERSION found on PyPI"
+              break
+            fi
+            echo "Attempt $i: version not yet visible, waiting 30s..."
+            sleep 30
+          done
+          poet -f llm-autotune > llm-autotune.rb
+          echo "--- Generated formula ---"
+          cat llm-autotune.rb
+
+      - name: Push formula to tap repo
+        uses: actions/github-script@v7
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        with:
+          script: |
+            const fs = require('fs');
+            const formula = fs.readFileSync('llm-autotune.rb', 'utf8');
+            const { Octokit } = require('@octokit/rest');
+            const octokit = new Octokit({ auth: process.env.TAP_TOKEN });
+
+            const owner = 'tanavc1';
+            const repo = 'homebrew-autotune';
+            const path = 'Formula/llm-autotune.rb';
+
+            // Get current file SHA if it exists
+            let sha;
+            try {
+              const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
+              sha = data.sha;
+            } catch (e) {
+              // File doesn't exist yet — first publish
+            }
+
+            await octokit.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path,
+              message: `chore: update formula for ${process.env.VERSION}`,
+              content: Buffer.from(formula).toString('base64'),
+              sha,
+            });
+            console.log('Tap updated successfully.');
