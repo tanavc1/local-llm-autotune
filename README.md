@@ -21,6 +21,30 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of 
 
 > Timings come from Ollama's own internal Go nanosecond timers — not Python estimates, not wall-clock guesses. Measured on Apple M2, 16 GB, macOS — hardware typical of anyone running local LLMs. These are observed means from 3 runs per condition; treat them as directional, not statistically proven.
 
+### It works for agents too
+
+Running LLMs inside an agent loop — where tool calls, observations, and reasoning steps accumulate across turns — is where raw Ollama's fixed `num_ctx=4096` setting causes the most pain. When context grows past the KV window, Ollama reloads the model. Latency spikes. Swap starts. The task stalls.
+
+autotune solves this differently: before the agent loop starts, it computes a single `session_num_ctx` sized for the full task's context ceiling, then holds it constant for every turn. Ollama never sees a `num_ctx` change, so it never reloads. Combined with `num_keep` prefix caching — which pins the system prompt in KV so it's never re-evaluated after turn 1 — autotune keeps agent sessions stable as context accumulates.
+
+**Measured on `llama3.2:3b`, `code_debugger` agentic task (multi-turn, tool-calling):**
+
+| Metric | Raw Ollama | autotune | Notes |
+|--------|:----------:|:--------:|-------|
+| Model reloads per session | 0–1 | **~0** | Fixed from 7–10 in broken v1 |
+| Swap events | 1 of 3 trials | **0** | KV memory management prevents pressure |
+| TTFT growth per turn | −101 ms/turn | **−435 ms/turn** | TTFT falls faster — prefix cache working |
+| Tool call errors | 1 avg | **0** | Lower temperature (0.3) reduces format errors |
+| Context tokens at session end | 3,043 | **1,946 (−36%)** | Context trimming keeps sessions lean |
+| Initial TTFT (turn 1) | 529 ms | 953 ms | **Autotune is slower on turn 1** — see below |
+| Peak RAM | 2.39 GB | 2.85 GB | **Higher** — larger upfront KV allocation |
+
+**The honest trade-off:** autotune pre-allocates a larger KV window at session start (sized to the task ceiling, not just the current message). Turn 1 is slower and uses more RAM. From turn 2 onward, prefix caching pays that cost back — TTFT per turn falls as the session grows, where raw Ollama's TTFT grows. For sessions of 3+ turns, the prefix cache savings accumulate. For 1–2 turn sessions, raw Ollama may be faster.
+
+> Full methodology, raw data, and honest analysis of where autotune doesn't help: [AGENT_BENCHMARK.md](AGENT_BENCHMARK.md)
+
+---
+
 ### What autotune actually improves
 
 | KPI | llama3.2:3b | gemma4:e2b | qwen3:8b | Average |
