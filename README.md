@@ -601,7 +601,25 @@ For a short conversation on the `balanced` profile (max 8,192):
 ```bash
 autotune telemetry               # last 20 inference runs
 autotune telemetry --events      # notable events: swap spikes, OOMs, slow tokens
+autotune telemetry --model qwen3:8b   # filter to a specific model
 ```
+
+### Anonymous telemetry (opt-in)
+
+autotune asks once whether you'd like to share anonymous performance data. You can change your answer at any time:
+
+```bash
+autotune telemetry --status    # check current opt-in status
+autotune telemetry --enable    # opt in to anonymous telemetry
+autotune telemetry --disable   # opt out — no further data is sent
+```
+
+**What is collected (only if opted in):**
+- Hardware class: CPU architecture, RAM size, GPU backend — no hostnames, usernames, serial numbers, or IP addresses
+- Model performance: tokens/sec, TTFT, context size, quantization label
+- Session events: server start/stop, OOM events
+
+Data goes to a private Supabase database. It is never sold or shared. The source for all collection logic is in `autotune/telemetry/`.
 
 ### Run the proof suite
 

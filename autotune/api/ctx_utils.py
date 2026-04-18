@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count using the char/4 heuristic. Returns at least 1."""
-    return max(1, len(text) // 4)
+    """Estimate token count using the char/4 heuristic. Returns 0 for empty strings."""
+    return max(0, len(text) // 4)
 
 
 def estimate_messages_tokens(messages: list[dict]) -> int:

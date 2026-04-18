@@ -5,8 +5,16 @@ on:
     tags:
       - "v*"  # triggers on v0.1.1, v1.2.3, etc.
 
+# OIDC trusted publishing — no long-lived API tokens needed.
+# Set up once in PyPI: https://pypi.org/manage/project/llm-autotune/settings/publishing/
+#   Publisher: GitHub Actions
+#   Repository owner: tanavc1
+#   Repository name: local-llm-autotune (or your repo name)
+#   Workflow name: publish.yml
+#   Environment name: pypi
 permissions:
   contents: read
+  id-token: write   # required for OIDC token exchange with PyPI
 
 jobs:
   build:
@@ -39,6 +47,8 @@ jobs:
     environment:
       name: pypi
       url: https://pypi.org/project/llm-autotune/
+    permissions:
+      id-token: write   # OIDC: let the action exchange for a short-lived PyPI token
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -46,10 +56,9 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI (OIDC — no password required)
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.TWINE_PASSWORD }}
+        # No `password:` field — OIDC trusted publishing handles auth automatically.
 
   update-homebrew-tap:
     name: Update Homebrew tap

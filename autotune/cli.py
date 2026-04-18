@@ -79,6 +79,8 @@ def recommend(
     top: int,
 ) -> None:
     """Profile this machine and recommend the best LLM inference configuration."""
+    from autotune.telemetry import maybe_prompt_consent
+    maybe_prompt_consent()
     from autotune.hardware.profiler import profile_hardware
     from autotune.config.generator import generate_recommendations, MODE_WEIGHTS
     from autotune.output.formatter import print_hardware_profile, print_recommendations
@@ -1805,18 +1807,82 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
               help="Number of recent runs to show.")
 @click.option("--events", is_flag=True, default=False,
               help="Show individual telemetry events instead of run history.")
-def telemetry(model_id: Optional[str], limit: int, events: bool) -> None:
+@click.option("--enable", is_flag=True, default=False,
+              help="Opt in to anonymous telemetry collection.")
+@click.option("--disable", is_flag=True, default=False,
+              help="Opt out of all telemetry. No data will be sent.")
+@click.option("--status", is_flag=True, default=False,
+              help="Show current telemetry consent status.")
+def telemetry(model_id: Optional[str], limit: int, events: bool,
+              enable: bool, disable: bool, status: bool) -> None:
     """Show persisted performance telemetry for local LLM runs.
 
     Displays run history with structured metrics — TTFT, throughput, RAM/swap
     pressure, CPU load — all queryable for trend analysis.
+
+    Consent management:
+      autotune telemetry --enable    Opt in to anonymous telemetry
+      autotune telemetry --disable   Opt out (stop all data collection)
+      autotune telemetry --status    Show current consent status
 
     \b
     Examples:
       autotune telemetry
       autotune telemetry --model qwen3:8b
       autotune telemetry --events --model qwen3:8b
+      autotune telemetry --disable
     """
+    # ── Consent management ───────────────────────────────────────────────
+    if enable and disable:
+        console.print("[red]Cannot use --enable and --disable together.[/red]")
+        raise SystemExit(1)
+
+    if enable:
+        from autotune.telemetry.consent import set_consent, is_opted_in
+        from autotune.telemetry.events import EventType
+        from autotune.telemetry import emit, register_install
+        already = is_opted_in()
+        set_consent(True)
+        if not already:
+            console.print("[green]✓ Telemetry enabled — thank you for helping improve autotune![/green]")
+            console.print("[dim]Hardware fingerprint and anonymous performance data will be collected.[/dim]")
+            import threading
+            threading.Thread(target=register_install, daemon=True).start()
+            emit(EventType.OPT_IN)
+        else:
+            console.print("[green]✓ Telemetry is already enabled.[/green]")
+        return
+
+    if disable:
+        from autotune.telemetry.consent import set_consent, is_opted_in
+        from autotune.telemetry.events import EventType
+        from autotune.telemetry import emit
+        was_opted_in = is_opted_in()
+        if was_opted_in:
+            emit(EventType.OPT_OUT)   # send one last event before disabling
+        set_consent(False)
+        console.print("[yellow]✓ Telemetry disabled — no further data will be sent.[/yellow]")
+        console.print("[dim]Run `autotune telemetry --enable` to re-enable at any time.[/dim]")
+        return
+
+    if status:
+        from autotune.telemetry.consent import is_opted_in, consent_answered, get_install_key
+        answered = consent_answered()
+        opted_in = is_opted_in()
+        install_key = get_install_key() if answered else None
+        console.print()
+        if not answered:
+            console.print("[yellow]Telemetry: not yet configured[/yellow]")
+            console.print("[dim]Run `autotune serve` to see the opt-in prompt.[/dim]")
+        elif opted_in:
+            console.print("[green]Telemetry: enabled[/green]")
+            console.print(f"[dim]Install key: {install_key}[/dim]")
+            console.print("[dim]Run `autotune telemetry --disable` to opt out.[/dim]")
+        else:
+            console.print("[yellow]Telemetry: disabled[/yellow]")
+            console.print("[dim]Run `autotune telemetry --enable` to opt in.[/dim]")
+        console.print()
+        return
     from autotune.db.store import get_db
     from rich.table import Table
     from rich import box
@@ -1987,6 +2053,25 @@ def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
     if not enable_mlx:
         _os.environ["AUTOTUNE_DISABLE_MLX"] = "1"
 
+    # Warn when binding to a non-loopback address: the server has no built-in
+    # auth and CORS allow_origins=["*"], so any machine on the network (or any
+    # website, via CORS) can drive local LLM inference.
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        console.print(
+            f"\n[bold yellow]⚠  Security warning[/bold yellow]\n"
+            f"  Binding to [bold]{host}[/bold] exposes the autotune API to all "
+            f"network interfaces.\n"
+            f"  The server has no authentication — any client on your network "
+            f"can send inference requests.\n"
+            f"  Use [bold]--host 127.0.0.1[/bold] (default) for local-only access.\n"
+            f"  If LAN access is intentional, consider a firewall rule or a reverse\n"
+            f"  proxy (nginx/caddy) with TLS and an API key.\n"
+        )
+
+    # Opt-in telemetry prompt — shown exactly once on first run
+    from autotune.telemetry import maybe_prompt_consent
+    maybe_prompt_consent()
+
     try:
         import uvicorn
     except ImportError:
@@ -2001,12 +2086,16 @@ def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
         f"  [cyan]POST /v1/completions[/cyan]         FIM autocomplete (Continue.dev)\n"
         f"  [cyan]GET  /v1/models[/cyan]              available local models\n"
         f"  [cyan]GET  /health[/cyan]                 backend + memory status\n"
-        f"\n[bold]Connect your tools[/bold]\n"
+        f"\n[bold]Connect Open WebUI[/bold]  (easiest — use the launch command):\n"
+        f"  [cyan]autotune webui launch[/cyan]   ← starts Open WebUI pre-wired to THIS server\n"
+        f"\n  Or, if Open WebUI is already running:\n"
+        f"  [cyan]autotune webui login[/cyan]    ← authenticate with Open WebUI\n"
+        f"  [cyan]autotune webui connect[/cyan]  ← configure Open WebUI to route through autotune\n"
+        f"\n  Manual (Admin Panel → Settings → Connections → OpenAI API):\n"
+        f"    [dim]URL: {base}/v1    Key: autotune[/dim]\n"
+        f"\n[bold]Other tools[/bold]\n"
         f"  [bold]Continue.dev[/bold]  config.json → models → add:\n"
         f'    [dim]{{"provider":"openai","model":"qwen3:8b","apiBase":"{base}","apiKey":"autotune"}}[/dim]\n'
-        f"\n"
-        f"  [bold]Open WebUI[/bold]   Settings → Connections → OpenAI API:\n"
-        f"    [dim]URL: {base}/v1    Key: autotune[/dim]\n"
         f"\n"
         f"  [bold]Python SDK[/bold]\n"
         f'    [dim]client = OpenAI(base_url="{base}/v1", api_key="autotune")[/dim]\n'
@@ -2098,6 +2187,8 @@ def chat(
       autotune chat --model qwen3:8b --no-optimize
       autotune chat --model qwen3:8b --no-swap
     """
+    from autotune.telemetry import maybe_prompt_consent
+    maybe_prompt_consent()
     from autotune.api.chat import start_chat
     start_chat(
         model_id=model,
@@ -3262,6 +3353,1570 @@ def proof_suite(
 
     _sys.argv = _argv
     _suite_main()
+
+
+# ---------------------------------------------------------------------------
+# `autotune agent-bench`  — Agentic multi-turn benchmark
+# ---------------------------------------------------------------------------
+
+@cli.command("agent-bench")
+@click.option(
+    "--models", "-m", multiple=True, metavar="MODEL",
+    help=(
+        "Ollama model IDs to benchmark.  Repeat for multiple: "
+        "-m llama3.2:3b -m qwen3:8b.  "
+        "Defaults to llama3.2:3b gemma4:e2b qwen3:8b."
+    ),
+)
+@click.option("--trials", "-n", type=int, default=5, show_default=True,
+              help="Trials per condition per task.  Min 3 recommended for statistics.")
+@click.option(
+    "--tasks", "-t", default="", metavar="TASK_IDS",
+    help=(
+        "Comma-separated task IDs to run.  Default: all five tasks.  "
+        "Options: code_debugger,research_synth,step_planner,"
+        "adversarial_context,extended_session"
+    ),
+)
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to benchmark against raw Ollama defaults.",
+)
+@click.option("--quick", "-q", is_flag=True,
+              help="Quick mode: 3 tasks, 2 trials (~20-30 min).")
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save full results JSON to this path.")
+def agent_bench(
+    models: tuple,
+    trials: int,
+    tasks: str,
+    profile: str,
+    quick: bool,
+    output: Optional[str],
+) -> None:
+    """Agentic multi-turn benchmark: raw Ollama vs autotune.
+
+    Runs 5 realistic agentic tasks (code debugging, research synthesis,
+    step planning, adversarial context, extended session) through both
+    raw Ollama defaults and autotune.  Measures per-turn TTFT, RAM,
+    KV cache size, tool-call reliability, and task success rate.
+
+    The TTFT growth curves reveal the core story: in raw Ollama, TTFT grows
+    linearly with context because the full 4096-token KV cache is filled on
+    every prefill step.  autotune's dynamic num_ctx keeps TTFT flat by
+    sizing the context window to actual usage.
+
+    \b
+    Examples:
+      autotune agent-bench
+      autotune agent-bench -m llama3.2:3b -m qwen3:8b -n 3
+      autotune agent-bench --tasks code_debugger,extended_session --quick
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
+    import agent_bench as _ab  # type: ignore
+
+    import argparse as _argparse
+
+    # Build a Namespace that matches agent_bench's argparse schema
+    ns = _argparse.Namespace(
+        models=list(models) or None,
+        trials=trials,
+        tasks=tasks,
+        profile=profile,
+        quick=quick,
+        output=output,
+    )
+
+    import asyncio as _asyncio
+    rc = _asyncio.run(_ab._async_main(ns))
+    raise SystemExit(rc)
+
+
+# ---------------------------------------------------------------------------
+# `autotune webui`  — Open WebUI chat management
+# ---------------------------------------------------------------------------
+
+@cli.group("webui")
+def webui_group() -> None:
+    """Install, launch, and browse Open WebUI — wired to autotune.
+
+    \b
+    HOW AUTOTUNE INTEGRATES WITH OPEN WEBUI
+    ─────────────────────────────────────────
+    autotune runs its own OpenAI-compatible API server on port 8765.
+    Every chat request from Open WebUI flows through autotune first,
+    where context sizing, KV-cache tuning, and hardware optimization
+    happen automatically — then autotune forwards to Ollama/MLX.
+
+    Without this wiring, Open WebUI talks directly to Ollama and all
+    autotune optimizations are bypassed.
+
+    \b
+    FIRST-TIME SETUP  (recommended — starts everything together):
+      autotune webui launch    ← starts autotune server + Open WebUI
+                                 (Open WebUI is pre-configured to route
+                                  through autotune automatically)
+      autotune webui login     ← sign in and save your API key
+      autotune webui open      ← open in browser
+
+    \b
+    CONNECT AN ALREADY-RUNNING OPEN WEBUI:
+      autotune serve           ← start autotune server (separate terminal)
+      autotune webui login     ← sign in to Open WebUI
+      autotune webui connect   ← configure Open WebUI to use autotune
+
+    \b
+    AFTER SETUP:
+      autotune webui status    ← shows whether autotune is connected
+      autotune webui models    ← list models (tagged autotune vs direct)
+      autotune webui chats     ← list your chat history
+    """
+
+
+def _webui_headers(key: str) -> dict:
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _webui_get(url: str, path: str, key: str, params: dict | None = None) -> dict | list:
+    """GET from Open WebUI. Raises SystemExit on auth/connection errors."""
+    import httpx
+    try:
+        r = httpx.get(
+            url.rstrip("/") + path,
+            headers=_webui_headers(key),
+            params=params or {},
+            timeout=8.0,
+            follow_redirects=True,
+        )
+    except httpx.ConnectError:
+        console.print(
+            f"[red]Cannot connect to Open WebUI at {url}[/red]\n"
+            "[dim]Is it running?  Default: http://localhost:3000[/dim]"
+        )
+        raise SystemExit(1)
+    except httpx.TimeoutException:
+        console.print(f"[red]Request timed out connecting to {url}[/red]")
+        raise SystemExit(1)
+
+    if r.status_code == 401:
+        console.print(
+            "[red]Authentication failed.[/red]  "
+            "Get a key from Open WebUI → Settings → Account → API Keys\n"
+            "[dim]Pass it with --key or set OPEN_WEBUI_API_KEY[/dim]"
+        )
+        raise SystemExit(1)
+    if r.status_code != 200:
+        console.print(f"[red]Open WebUI returned HTTP {r.status_code}:[/red] {r.text[:200]}")
+        raise SystemExit(1)
+    return r.json()
+
+
+def _resolve_key(key: Optional[str]) -> str:
+    import os
+    resolved = key or os.environ.get("OPEN_WEBUI_API_KEY", "")
+    if not resolved:
+        console.print(
+            "[red]No API key.[/red]  "
+            "Set [cyan]OPEN_WEBUI_API_KEY=sk-...[/cyan] or pass [cyan]--key sk-...[/cyan]\n"
+            "[dim]Get your key: Open WebUI → Settings → Account → API Keys[/dim]"
+        )
+        raise SystemExit(1)
+    return resolved
+
+
+def _fmt_time(ts: int | float | None) -> str:
+    """Format a Unix timestamp to a human-readable relative string."""
+    import datetime
+    if not ts:
+        return "—"
+    dt = datetime.datetime.fromtimestamp(float(ts))
+    now = datetime.datetime.now()
+    delta = now - dt
+    if delta.days == 0:
+        h = delta.seconds // 3600
+        m = (delta.seconds % 3600) // 60
+        if h == 0:
+            return f"{m}m ago" if m > 0 else "just now"
+        return f"{h}h ago"
+    if delta.days == 1:
+        return "yesterday"
+    if delta.days < 7:
+        return f"{delta.days}d ago"
+    if delta.days < 30:
+        return f"{delta.days // 7}w ago"
+    return dt.strftime("%b %d")
+
+
+@webui_group.command("chats")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--key", default=None, envvar="OPEN_WEBUI_API_KEY",
+              metavar="SK", help="API key (or set OPEN_WEBUI_API_KEY).")
+@click.option("--limit", "-n", default=30, show_default=True,
+              help="Max chats to show.")
+@click.option("--model", default=None, metavar="NAME",
+              help="Filter to chats that used a specific model.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit raw JSON instead of a table.")
+@click.option("--open", "open_id", default=None, metavar="ID",
+              help="Open a specific chat in your browser by ID.")
+def webui_chats(
+    url: str,
+    key: Optional[str],
+    limit: int,
+    model: Optional[str],
+    as_json: bool,
+    open_id: Optional[str],
+) -> None:
+    """List your Open WebUI chat history.
+
+    Shows chat title, model used, last-updated time, and chat ID.
+    Paginates automatically to respect --limit.
+
+    \b
+    Examples:
+      autotune webui chats
+      autotune webui chats --limit 50
+      autotune webui chats --model qwen3:8b
+      autotune webui chats --open <chat-id>
+      autotune webui chats --json | jq '.[].title'
+    """
+    import json as _json
+    import webbrowser
+    import httpx as _httpx
+    from rich.table import Table
+    from rich import box
+
+    resolved_key = _resolve_key(key)
+
+    # ── Auto-detect URL ──────────────────────────────────────────────────
+    if not url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            try:
+                r = _httpx.get(candidate, timeout=2.0, follow_redirects=True)
+                if r.status_code < 500:
+                    url = candidate
+                    break
+            except Exception:
+                continue
+    if not url:
+        console.print(
+            "[red]Open WebUI is not running.[/red]\n"
+            "[dim]Start it:  autotune webui install[/dim]"
+        )
+        raise SystemExit(1)
+
+    # ── If --open, launch browser and exit ──────────────────────────────
+    if open_id:
+        chat_url = f"{url.rstrip('/')}/c/{open_id}"
+        console.print(f"[cyan]Opening[/cyan] {chat_url}")
+        webbrowser.open(chat_url)
+        return
+
+    # ── Paginate chat list until we have `limit` items ──────────────────
+    chats: list[dict] = []
+    page = 1
+    with console.status("[cyan]Fetching chats from Open WebUI…[/cyan]", spinner="dots"):
+        while len(chats) < limit:
+            batch = _webui_get(url, "/api/v1/chats/", resolved_key, {"page": page})
+            if not isinstance(batch, list) or not batch:
+                break
+            chats.extend(batch)
+            if len(batch) < 60:   # Open WebUI returns 60/page; fewer = last page
+                break
+            page += 1
+
+    chats = chats[:limit]
+
+    if not chats:
+        console.print("[yellow]No chats found.[/yellow]  Start a conversation in Open WebUI first.")
+        return
+
+    # ── For each chat, fetch the model used (from the chat detail) ──────
+    # The list endpoint returns: id, title, updated_at, created_at
+    # The model is in the full chat object under chat.models[] or chat.model
+    # We fetch details for up to 40 chats; beyond that skip model column.
+    FETCH_MODEL_LIMIT = 40
+    fetch_models = len(chats) <= FETCH_MODEL_LIMIT
+
+    def _get_model_for_chat(chat_id: str) -> str:
+        try:
+            detail = _webui_get(url, f"/api/v1/chats/{chat_id}", resolved_key)
+            if isinstance(detail, dict):
+                chat_body = detail.get("chat") or {}
+                # Open WebUI stores model in `models` list or `model` string
+                models_list = chat_body.get("models") or []
+                if models_list:
+                    return ", ".join(str(m) for m in models_list)
+                single = chat_body.get("model") or ""
+                if single:
+                    return str(single)
+                # Fallback: look at first message that has a model field
+                for msg in chat_body.get("messages") or []:
+                    if isinstance(msg, dict) and msg.get("model"):
+                        return str(msg["model"])
+        except Exception:
+            pass
+        return "—"
+
+    if fetch_models:
+        with console.status("[cyan]Fetching model info for each chat…[/cyan]", spinner="dots"):
+            for chat in chats:
+                chat["_model"] = _get_model_for_chat(chat.get("id", ""))
+    else:
+        for chat in chats:
+            chat["_model"] = "—"
+
+    # ── Filter by model if requested ────────────────────────────────────
+    if model:
+        chats = [c for c in chats if model.lower() in c.get("_model", "").lower()]
+        if not chats:
+            console.print(f"[yellow]No chats found using model '{model}'.[/yellow]")
+            return
+
+    # ── JSON output ──────────────────────────────────────────────────────
+    if as_json:
+        output = [
+            {
+                "id":         c.get("id"),
+                "title":      c.get("title"),
+                "model":      c.get("_model"),
+                "updated_at": c.get("updated_at"),
+                "created_at": c.get("created_at"),
+            }
+            for c in chats
+        ]
+        console.print(_json.dumps(output, indent=2))
+        return
+
+    # ── Rich table ───────────────────────────────────────────────────────
+    console.print()
+    model_filter_note = f"  [dim]model: {model}[/dim]" if model else ""
+    console.print(
+        f"[bold]Open WebUI chats[/bold]  "
+        f"[dim]{url}[/dim]  "
+        f"[dim]{len(chats)} shown[/dim]"
+        f"{model_filter_note}"
+    )
+    console.print()
+
+    t = Table(box=box.SIMPLE_HEAD, show_lines=False, expand=False)
+    t.add_column("#",        width=4,  justify="right",  style="dim")
+    t.add_column("Title",    min_width=28, max_width=52, no_wrap=True)
+    t.add_column("Model",    min_width=12, max_width=22, style="cyan", no_wrap=True)
+    t.add_column("Updated",  width=11, justify="right",  style="dim")
+    t.add_column("ID",       width=10, style="dim",      no_wrap=True)
+
+    for i, chat in enumerate(chats, 1):
+        chat_id    = chat.get("id", "")
+        title      = chat.get("title") or "[dim](untitled)[/dim]"
+        chat_model = chat.get("_model") or "—"
+        updated    = _fmt_time(chat.get("updated_at"))
+        short_id   = chat_id[:8] + "…" if len(chat_id) > 8 else chat_id
+
+        t.add_row(str(i), title, chat_model, updated, short_id)
+
+    console.print(t)
+    console.print(
+        "[dim]Open a chat in browser:  "
+        "[cyan]autotune webui chats --open <ID>[/cyan]  "
+        "(copy the full ID from above)[/dim]\n"
+    )
+
+
+@webui_group.command("models")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--key", default=None, envvar="OPEN_WEBUI_API_KEY",
+              metavar="SK", help="API key (or set OPEN_WEBUI_API_KEY).")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit raw JSON.")
+def webui_models(url: str, key: Optional[str], as_json: bool) -> None:
+    """List models in Open WebUI, tagged by whether they route through autotune.
+
+    Models labelled [autotune] are routed through autotune's hardware-
+    optimization middleware (context sizing, KV-cache tuning, profiling).
+    Models labelled [ollama-direct] bypass autotune entirely.
+
+    \b
+    Examples:
+      autotune webui models
+      autotune webui models --json
+    """
+    import json as _json
+    import httpx as _httpx
+    from rich.table import Table
+    from rich import box
+
+    resolved_key = _resolve_key(key)
+
+    if not url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            try:
+                r = _httpx.get(candidate, timeout=2.0, follow_redirects=True)
+                if r.status_code < 500:
+                    url = candidate
+                    break
+            except Exception:
+                continue
+    if not url:
+        console.print("[red]Open WebUI is not running.[/red]")
+        raise SystemExit(1)
+
+    with console.status("[cyan]Fetching models from Open WebUI…[/cyan]", spinner="dots"):
+        data = _webui_get(url, "/api/models", resolved_key)
+
+    # /api/models returns {"data": [...]} or a list directly
+    model_list: list[dict] = []
+    if isinstance(data, dict):
+        model_list = data.get("data") or []
+    elif isinstance(data, list):
+        model_list = data
+
+    if not model_list:
+        console.print(
+            "[yellow]No models found in Open WebUI.[/yellow]\n"
+            "[dim]If autotune is not connected yet, run:  "
+            "[cyan]autotune webui connect[/cyan][/dim]"
+        )
+        return
+
+    if as_json:
+        console.print(_json.dumps(model_list, indent=2))
+        return
+
+    # Open WebUI labels all models from OpenAI-compatible connections as
+    # owned_by="openai", regardless of what the upstream server reports.
+    # Models pulled directly from Ollama keep owned_by="ollama".
+    # So: openai = routed through autotune, ollama = bypasses autotune.
+    n_autotune = sum(1 for m in model_list if m.get("owned_by") == "openai")
+    n_direct   = sum(1 for m in model_list if m.get("owned_by") == "ollama")
+    n_other    = len(model_list) - n_autotune - n_direct
+
+    console.print()
+    console.print(
+        f"[bold]Open WebUI models[/bold]  [dim]{url}[/dim]  "
+        f"[dim]{len(model_list)} total[/dim]  "
+        + (f"[green]{n_autotune} via autotune[/green]  " if n_autotune else "[yellow]0 via autotune[/yellow]  ")
+        + (f"[dim]{n_direct} direct-Ollama[/dim]" if n_direct else "")
+    )
+    console.print()
+
+    t = Table(box=box.SIMPLE_HEAD, show_lines=False)
+    t.add_column("Route",     width=18)
+    t.add_column("Model ID",  style="cyan", min_width=22)
+    t.add_column("Name",      min_width=16)
+    t.add_column("Context",   width=10, justify="right")
+
+    for m in model_list:
+        model_id  = m.get("id") or m.get("name") or "—"
+        name      = m.get("name") or model_id
+        owned_by  = m.get("owned_by") or m.get("provider") or ""
+        ctx       = m.get("context_length") or ""
+        ctx_str   = f"{ctx:,}" if isinstance(ctx, int) and ctx else "—"
+
+        # De-dup name == id
+        if name == model_id:
+            name = "—"
+
+        # "openai" = came through autotune's OpenAI-compat endpoint
+        # "ollama" = came through Open WebUI's direct Ollama integration
+        if owned_by == "openai":
+            route_str = "[green]● autotune[/green]"
+        elif owned_by in ("ollama",):
+            route_str = "[yellow]○ ollama-direct[/yellow]"
+        else:
+            route_str = f"[dim]{owned_by or '—'}[/dim]"
+
+        t.add_row(route_str, model_id, name, ctx_str)
+
+    console.print(t)
+
+    if n_autotune == 0:
+        console.print(
+            "[yellow]No autotune models visible.[/yellow]  "
+            "Is the autotune server running?  "
+            "Run [cyan]autotune webui connect[/cyan] to wire it in.\n"
+        )
+    elif n_direct > 0:
+        console.print(
+            "[dim]● autotune      = routed via autotune (context sizing, KV-cache tuning, profiling)\n"
+            "○ ollama-direct = bypasses autotune, goes straight to Ollama\n\n"
+            "Tip: disable direct-Ollama in Open WebUI to remove the duplicates:\n"
+            "  Admin Panel → Settings → Connections → Ollama → disable[/dim]\n"
+        )
+    else:
+        console.print(
+            "[dim]All models are routed through autotune — no duplicates.[/dim]\n"
+        )
+
+
+@webui_group.command("open")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--chat", default=None, metavar="ID",
+              help="Open a specific chat by ID instead of the home page.")
+def webui_open(url: Optional[str], chat: Optional[str]) -> None:
+    """Open Open WebUI in your browser.
+
+    Auto-detects whether Open WebUI is running on port 8080 (pip install)
+    or port 3000 (Docker).
+
+    \b
+    Examples:
+      autotune webui open
+      autotune webui open --chat <chat-id>
+      autotune webui open --url http://myserver:3000
+    """
+    import httpx
+    import webbrowser
+
+    # ── Auto-detect port if URL not given ────────────────────────────────
+    if not url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            try:
+                r = httpx.get(candidate, timeout=2.0, follow_redirects=True)
+                if r.status_code < 500:
+                    url = candidate
+                    break
+            except Exception:
+                continue
+
+    if not url:
+        console.print(
+            "[red]Open WebUI is not running.[/red]\n\n"
+            "Start it:  [cyan]autotune webui install[/cyan]\n"
+            "or:        [cyan]open-webui serve[/cyan]"
+        )
+        raise SystemExit(1)
+
+    target = f"{url.rstrip('/')}/c/{chat}" if chat else url
+    console.print(f"[cyan]Opening[/cyan] {target}")
+    webbrowser.open(target)
+
+
+@webui_group.command("login")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--email", default=None, prompt="Email", help="Your Open WebUI account email.")
+@click.option("--password", default=None,
+              help="Password (prompted securely if omitted).")
+@click.option("--save/--no-save", default=True,
+              help="Save the API key to ~/.config/autotune/webui.env (default: save).")
+@click.option("--new-key", is_flag=True, default=False,
+              help="Generate a fresh API key even if one already exists.")
+def webui_login(
+    url: Optional[str],
+    email: str,
+    password: Optional[str],
+    save: bool,
+    new_key: bool,
+) -> None:
+    """Sign in to Open WebUI and retrieve your API key.
+
+    Authenticates with your email + password, then fetches (or generates) your
+    API key. Optionally saves it to ~/.config/autotune/webui.env so you never
+    need to pass --key again.
+
+    \b
+    Examples:
+      autotune webui login
+      autotune webui login --email me@example.com
+      autotune webui login --no-save          # print key only
+      autotune webui login --new-key          # rotate to a fresh API key
+    """
+    import httpx
+    from pathlib import Path as _Path
+    from rich.panel import Panel
+
+    # ── Prompt for password securely ─────────────────────────────────────
+    if not password:
+        import click as _click
+        password = _click.prompt("Password", hide_input=True)
+
+    # ── Auto-detect URL ──────────────────────────────────────────────────
+    if not url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            try:
+                r = httpx.get(candidate, timeout=2.0, follow_redirects=True)
+                if r.status_code < 500:
+                    url = candidate
+                    break
+            except Exception:
+                continue
+    if not url:
+        console.print(
+            "[red]Open WebUI is not running.[/red]\n"
+            "Start it with: [cyan]autotune webui install[/cyan]"
+        )
+        raise SystemExit(1)
+
+    base = url.rstrip("/")
+
+    # ── Step 1: sign in → JWT ────────────────────────────────────────────
+    with console.status("[cyan]Signing in…[/cyan]", spinner="dots"):
+        try:
+            resp = httpx.post(
+                f"{base}/api/v1/auths/signin",
+                json={"email": email, "password": password},
+                timeout=8.0,
+            )
+        except httpx.ConnectError:
+            console.print(f"[red]Cannot connect to {base}[/red]")
+            raise SystemExit(1)
+
+    if resp.status_code == 401 or resp.status_code == 400:
+        console.print("[red]Login failed.[/red]  Check your email and password.")
+        raise SystemExit(1)
+    if resp.status_code != 200:
+        console.print(f"[red]Unexpected response {resp.status_code}:[/red] {resp.text[:200]}")
+        raise SystemExit(1)
+
+    data     = resp.json()
+    jwt      = data.get("token", "")
+    username = data.get("name") or data.get("email") or email
+    role     = data.get("role", "user")
+    if not jwt:
+        console.print("[red]No token in response. Open WebUI may have changed its API.[/red]")
+        raise SystemExit(1)
+
+    console.print(f"[green]✓[/green]  Signed in as [bold]{username}[/bold]  [dim]({role})[/dim]")
+
+    auth_headers = {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
+
+    # ── Step 2: ensure API key auth is enabled (admin only, silent) ──────
+    if role == "admin":
+        try:
+            cfg_r = httpx.get(f"{base}/api/v1/auths/admin/config",
+                               headers=auth_headers, timeout=8.0)
+            if cfg_r.status_code == 200:
+                cfg = cfg_r.json()
+                if not cfg.get("ENABLE_API_KEYS", True):
+                    cfg["ENABLE_API_KEYS"] = True
+                    httpx.post(f"{base}/api/v1/auths/admin/config",
+                               json=cfg, headers=auth_headers, timeout=8.0)
+                    console.print("[green]✓[/green]  API key authentication enabled")
+        except Exception:
+            pass   # non-fatal — try fetching the key anyway
+
+    # ── Step 3: fetch or generate API key ────────────────────────────────
+    with console.status("[cyan]Fetching API key…[/cyan]", spinner="dots"):
+        try:
+            if new_key:
+                kr = httpx.post(f"{base}/api/v1/auths/api_key",
+                                headers=auth_headers, timeout=8.0)
+            else:
+                kr = httpx.get(f"{base}/api/v1/auths/api_key",
+                               headers=auth_headers, timeout=8.0)
+
+            # If not found or empty, generate a fresh one
+            if kr.status_code == 404 or (kr.status_code == 200 and not kr.json().get("api_key")):
+                kr = httpx.post(f"{base}/api/v1/auths/api_key",
+                                headers=auth_headers, timeout=8.0)
+        except Exception as exc:
+            console.print(f"[red]Failed to fetch API key:[/red] {exc}")
+            raise SystemExit(1)
+
+    if kr.status_code != 200:
+        console.print(
+            f"[red]Could not retrieve API key (HTTP {kr.status_code}).[/red]\n"
+            "[dim]If this is a new install, make sure you created an account first.[/dim]"
+        )
+        raise SystemExit(1)
+
+    api_key = kr.json().get("api_key", "")
+    if not api_key:
+        console.print("[yellow]No API key returned.[/yellow]  Try --new-key to generate one.")
+        raise SystemExit(1)
+
+    console.print(f"[green]✓[/green]  API key retrieved")
+
+    # ── Step 3: save to file ─────────────────────────────────────────────
+    env_path = _Path.home() / ".config" / "autotune" / "webui.env"
+    if save:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text(
+            f"# Open WebUI — written by autotune webui login\n"
+            f"export OPEN_WEBUI_URL={base}\n"
+            f"export OPEN_WEBUI_API_KEY={api_key}\n"
+        )
+        console.print(f"[green]✓[/green]  Saved to [dim]{env_path}[/dim]")
+
+    # ── Print summary panel ──────────────────────────────────────────────
+    lines = [
+        f"[bold green]✓  Authenticated as {username}[/bold green]",
+        "",
+        f"  [dim]URL:[/dim]  {base}",
+        f"  [dim]Key:[/dim]  {api_key}",
+        "",
+    ]
+    if save:
+        lines += [
+            "  [bold]Activate in your shell (add to ~/.zshrc or ~/.bash_profile):[/bold]",
+            f"    [cyan]source {env_path}[/cyan]",
+            "",
+            "  Or for this terminal session only:",
+            f"    [cyan]source {env_path}[/cyan]",
+        ]
+    else:
+        lines += [
+            "  [bold]Activate for this session:[/bold]",
+            f"    [cyan]export OPEN_WEBUI_API_KEY={api_key}[/cyan]",
+            f"    [cyan]export OPEN_WEBUI_URL={base}[/cyan]",
+        ]
+    lines += [
+        "",
+        "  [bold]Next — wire autotune as the chat backend:[/bold]",
+        "    [cyan]autotune webui connect[/cyan]",
+        "",
+        "  [dim]Then:[/dim]",
+        "  [dim]  autotune webui open     ← open in browser[/dim]",
+        "  [dim]  autotune webui models   ← see which models route through autotune[/dim]",
+        "  [dim]  autotune webui status   ← full integration status[/dim]",
+    ]
+    console.print(Panel("\n".join(lines), title="[bold]Open WebUI authenticated[/bold]",
+                        border_style="green"))
+
+
+@webui_group.command("install")
+@click.option("--start/--no-start", default=True,
+              help="Start Open WebUI after installing (default: yes).")
+@click.option("--port", default=8080, show_default=True, type=int,
+              help="Port to bind Open WebUI on.")
+@click.option("--autotune-port", default=8765, show_default=True, type=int,
+              help="Port where autotune server is (or will be) running.")
+@click.option("--with-ollama", is_flag=True, default=False,
+              help="Also enable direct Ollama access in Open WebUI (shows duplicate models).")
+def webui_install(start: bool, port: int, autotune_port: int, with_ollama: bool) -> None:
+    """Install Open WebUI and start it wired to the autotune server.
+
+    Open WebUI is launched with autotune's OpenAI-compatible API
+    (http://localhost:AUTOTUNE_PORT/v1) as its backend, so every chat
+    request is routed through autotune's hardware optimizations before
+    reaching Ollama.  Direct Ollama access is disabled by default to
+    prevent duplicate model entries.
+
+    \b
+    IMPORTANT — autotune server must be running first:
+      autotune serve           ← start in a separate terminal
+
+    Or use the one-command shortcut that starts both together:
+      autotune webui launch
+
+    \b
+    What this does:
+      1. Checks if Open WebUI is already running
+      2. Checks if open-webui pip package is installed
+      3. Installs it (pip install open-webui) if missing
+      4. Starts Open WebUI with autotune pre-configured as the API backend
+         (OPENAI_API_BASE_URL=http://localhost:AUTOTUNE_PORT/v1)
+      5. Direct Ollama API disabled (pass --with-ollama to keep it)
+
+    \b
+    After Open WebUI starts, run:
+      autotune webui login     ← sign in + save API key
+      autotune webui connect   ← verify autotune connection is active
+      autotune webui open      ← open in browser
+    """
+    import os as _os
+    import httpx
+    import shutil
+    import subprocess as _sp
+    from rich.panel import Panel
+
+    autotune_url = f"http://localhost:{autotune_port}/v1"
+    webui_url    = f"http://localhost:{port}"
+    url_3000     = "http://localhost:3000"
+
+    # ── Check if already running ─────────────────────────────────────────
+    def _is_running(u: str) -> bool:
+        try:
+            r = httpx.get(u, timeout=2.0, follow_redirects=True)
+            return r.status_code < 500
+        except Exception:
+            return False
+
+    for check_url in (webui_url, url_3000):
+        if _is_running(check_url):
+            console.print(
+                f"[green]✓[/green]  Open WebUI is already running at "
+                f"[cyan]{check_url}[/cyan]"
+            )
+            console.print(
+                "[dim]Run  [cyan]autotune webui login[/cyan]   to authenticate\n"
+                "     [cyan]autotune webui connect[/cyan] to wire autotune as the backend\n"
+                "     [cyan]autotune webui open[/cyan]    to open in browser[/dim]"
+            )
+            return
+
+    # ── Check if autotune server is running ──────────────────────────────
+    autotune_running = _is_running(f"http://localhost:{autotune_port}/health")
+    if not autotune_running:
+        console.print(
+            f"[yellow]⚠[/yellow]  autotune server is not running on port {autotune_port}.\n"
+            f"[dim]  Open WebUI will start but cannot serve models until autotune is up.\n"
+            f"  Start it now:  [cyan]autotune serve[/cyan]  (in a separate terminal)\n"
+            f"  Or use:        [cyan]autotune webui launch[/cyan]  (starts both together)[/dim]\n"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green]  autotune server running at "
+            f"[cyan]http://localhost:{autotune_port}[/cyan]"
+        )
+
+    # ── Check if pip package is installed ────────────────────────────────
+    installed = shutil.which("open-webui") is not None
+    if not installed:
+        try:
+            import importlib.util
+            installed = importlib.util.find_spec("open_webui") is not None
+        except Exception:
+            installed = False
+
+    if not installed:
+        console.print("[yellow]open-webui not found.[/yellow]  Installing via pip…\n")
+        console.print("[dim]pip install open-webui[/dim]\n")
+        try:
+            _sp.run(
+                [sys.executable, "-m", "pip", "install", "open-webui"],
+                check=True,
+            )
+            console.print("\n[green]✓  open-webui installed.[/green]")
+        except _sp.CalledProcessError:
+            console.print(
+                "\n[red]Installation failed.[/red]  "
+                "Try manually:  [cyan]pip install open-webui[/cyan]"
+            )
+            raise SystemExit(1)
+    else:
+        console.print("[green]✓[/green]  open-webui is already installed")
+
+    # ── Start ────────────────────────────────────────────────────────────
+    if not start:
+        console.print(
+            f"\n[dim]Start with autotune wired in:\n"
+            f"  OPENAI_API_BASE_URL={autotune_url} \\\n"
+            f"  OPENAI_API_KEY=autotune \\\n"
+            f"  ENABLE_OLLAMA_API={'true' if with_ollama else 'false'} \\\n"
+            f"  open-webui serve --port {port}[/dim]"
+        )
+        return
+
+    bin_path = shutil.which("open-webui")
+    cmd = (
+        [bin_path, "serve", "--port", str(port)]
+        if bin_path else
+        [sys.executable, "-m", "open_webui", "serve", "--port", str(port)]
+    )
+
+    # Inject autotune as the OpenAI-compatible backend.
+    # ENABLE_OLLAMA_API=false prevents direct Ollama models appearing alongside
+    # autotune models (which are already backed by Ollama under the hood).
+    env = dict(_os.environ)
+    env["OPENAI_API_BASE_URL"]  = autotune_url
+    env["OPENAI_API_BASE_URLS"] = autotune_url   # Open WebUI ≥0.5 plural form
+    env["OPENAI_API_KEY"]       = "autotune"
+    env["OPENAI_API_KEYS"]      = "autotune"
+    if not with_ollama:
+        env["ENABLE_OLLAMA_API"] = "false"
+
+    ollama_note = (
+        "[dim]  Direct Ollama also enabled (--with-ollama)[/dim]\n"
+        if with_ollama else
+        "[dim]  Direct Ollama disabled — all models route through autotune[/dim]\n"
+    )
+
+    console.print(
+        f"\n[bold green]Starting Open WebUI[/bold green] on port [cyan]{port}[/cyan]"
+        f"  [dim](Ctrl+C to stop)[/dim]\n\n"
+        f"[bold]autotune integration[/bold]\n"
+        f"  API backend:  [cyan]{autotune_url}[/cyan]\n"
+        f"  API key:      [dim]autotune[/dim]\n"
+        f"{ollama_note}\n"
+        f"[dim]Once ready, run in a new terminal:[/dim]\n"
+        f"  [cyan]autotune webui login[/cyan]    ← authenticate\n"
+        f"  [cyan]autotune webui connect[/cyan]  ← verify autotune is wired\n"
+        f"  [cyan]autotune webui open[/cyan]     ← open in browser\n"
+    )
+    try:
+        _sp.run(cmd, check=False, env=env)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# `autotune webui launch`  — start autotune server + Open WebUI together
+# ---------------------------------------------------------------------------
+
+@webui_group.command("launch")
+@click.option("--port", default=8080, show_default=True, type=int,
+              help="Port for Open WebUI.")
+@click.option("--autotune-port", default=8765, show_default=True, type=int,
+              help="Port for the autotune API server.")
+@click.option("--with-ollama", is_flag=True, default=False,
+              help="Also enable direct Ollama in Open WebUI (shows duplicate model names).")
+@click.option("--mlx", "enable_mlx", is_flag=True, default=False,
+              help="Enable MLX backend in autotune (Apple Silicon, opt-in).")
+def webui_launch(port: int, autotune_port: int, with_ollama: bool, enable_mlx: bool) -> None:
+    """Start the autotune server AND Open WebUI together, fully wired.
+
+    This is the recommended first-time setup command.  It:
+
+    \b
+      1. Starts autotune serve in the background (port AUTOTUNE_PORT)
+      2. Waits until autotune's /health endpoint responds
+      3. Starts Open WebUI in the foreground (port PORT), pre-configured
+         to route ALL chat requests through autotune's API middleware
+      4. Open WebUI models labelled "autotune" in the model picker are
+         the ones with hardware optimization active
+
+    \b
+    After Open WebUI is ready:
+      autotune webui login     ← sign in + save API key (new terminal)
+      autotune webui open      ← open in browser (new terminal)
+
+    Press Ctrl+C to stop both servers.
+    """
+    import os as _os
+    import shutil
+    import subprocess as _sp
+    import time as _time
+    import httpx
+    from rich.panel import Panel
+
+    autotune_url   = f"http://localhost:{autotune_port}/v1"
+    autotune_health = f"http://localhost:{autotune_port}/health"
+    webui_url       = f"http://localhost:{port}"
+
+    # ── Check if autotune server already running ─────────────────────────
+    def _http_ok(u: str, timeout: float = 2.0) -> bool:
+        try:
+            return httpx.get(u, timeout=timeout, follow_redirects=True).status_code < 500
+        except Exception:
+            return False
+
+    autotune_proc = None
+    if _http_ok(autotune_health):
+        console.print(
+            f"[green]✓[/green]  autotune server already running at "
+            f"[cyan]http://localhost:{autotune_port}[/cyan]"
+        )
+    else:
+        # ── Start autotune serve in background ───────────────────────────
+        autotune_cmd = [sys.executable, "-m", "autotune", "serve",
+                        "--port", str(autotune_port)]
+        if not enable_mlx:
+            env_at = dict(_os.environ)
+            env_at["AUTOTUNE_DISABLE_MLX"] = "1"
+        else:
+            env_at = _os.environ.copy()
+
+        console.print(
+            f"[cyan]Starting autotune server[/cyan] on port "
+            f"[cyan]{autotune_port}[/cyan]  [dim](background)[/dim]"
+        )
+        autotune_proc = _sp.Popen(
+            autotune_cmd,
+            env=env_at,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+        )
+
+        # Wait up to 15s for autotune /health to respond
+        deadline = _time.time() + 15
+        with console.status(
+            "[cyan]Waiting for autotune server to start…[/cyan]",
+            spinner="dots",
+        ):
+            while _time.time() < deadline:
+                if _http_ok(autotune_health, timeout=1.0):
+                    break
+                _time.sleep(0.5)
+            else:
+                console.print(
+                    "[red]autotune server did not start in 15 s.[/red]\n"
+                    "[dim]Check for errors with:  autotune serve[/dim]"
+                )
+                autotune_proc.terminate()
+                raise SystemExit(1)
+
+        console.print(
+            f"[green]✓[/green]  autotune server ready at "
+            f"[cyan]http://localhost:{autotune_port}[/cyan]"
+        )
+
+    # ── Check if Open WebUI already running ──────────────────────────────
+    if _http_ok(webui_url):
+        console.print(
+            f"[green]✓[/green]  Open WebUI already running at [cyan]{webui_url}[/cyan]\n"
+            f"[yellow]⚠[/yellow]  It may not be wired to autotune.\n"
+            f"[dim]  Run  [cyan]autotune webui connect[/cyan]  to configure the autotune connection.[/dim]"
+        )
+        if autotune_proc:
+            autotune_proc.terminate()
+        return
+
+    # ── Build Open WebUI command with autotune env vars ───────────────────
+    bin_path = shutil.which("open-webui")
+    if not bin_path:
+        # Check if pip package exists at all
+        try:
+            import importlib.util
+            has_pkg = importlib.util.find_spec("open_webui") is not None
+        except Exception:
+            has_pkg = False
+        if not has_pkg:
+            console.print(
+                "[red]open-webui is not installed.[/red]\n"
+                "[dim]  Install it first:  [cyan]autotune webui install --no-start[/cyan][/dim]"
+            )
+            if autotune_proc:
+                autotune_proc.terminate()
+            raise SystemExit(1)
+        webui_cmd = [sys.executable, "-m", "open_webui", "serve", "--port", str(port)]
+    else:
+        webui_cmd = [bin_path, "serve", "--port", str(port)]
+
+    webui_env = dict(_os.environ)
+    webui_env["OPENAI_API_BASE_URL"]  = autotune_url
+    webui_env["OPENAI_API_BASE_URLS"] = autotune_url   # Open WebUI ≥0.5 plural form
+    webui_env["OPENAI_API_KEY"]       = "autotune"
+    webui_env["OPENAI_API_KEYS"]      = "autotune"
+    if not with_ollama:
+        webui_env["ENABLE_OLLAMA_API"] = "false"
+
+    ollama_note = (
+        "  Direct Ollama:  enabled (--with-ollama)\n"
+        if with_ollama else
+        "  Direct Ollama:  disabled  ← all models route through autotune\n"
+    )
+
+    console.print(Panel(
+        f"[bold green]autotune + Open WebUI ready[/bold green]\n\n"
+        f"  autotune API:   [cyan]http://localhost:{autotune_port}/v1[/cyan]\n"
+        f"  Open WebUI:     [cyan]{webui_url}[/cyan]  (starting…)\n"
+        f"{ollama_note}\n"
+        f"[dim]In a new terminal once Open WebUI finishes loading:[/dim]\n"
+        f"  [cyan]autotune webui login[/cyan]   ← sign in and save API key\n"
+        f"  [cyan]autotune webui open[/cyan]    ← open browser\n\n"
+        f"[dim]Models shown as \"owned by autotune\" in Open WebUI's model\n"
+        f"picker are routed through autotune's hardware optimization.[/dim]\n\n"
+        f"[dim]Press Ctrl+C to stop both servers.[/dim]",
+        title="[bold]autotune webui launch[/bold]",
+        border_style="green",
+    ))
+
+    webui_proc = None
+    try:
+        webui_proc = _sp.Popen(webui_cmd, env=webui_env)
+        webui_proc.wait()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping…[/yellow]")
+    finally:
+        if webui_proc and webui_proc.poll() is None:
+            webui_proc.terminate()
+            try:
+                webui_proc.wait(timeout=5)
+            except Exception:
+                webui_proc.kill()
+        if autotune_proc and autotune_proc.poll() is None:
+            autotune_proc.terminate()
+            try:
+                autotune_proc.wait(timeout=5)
+            except Exception:
+                autotune_proc.kill()
+        console.print("[yellow]Both servers stopped.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# `autotune webui connect`  — wire autotune into an already-running Open WebUI
+# ---------------------------------------------------------------------------
+
+@webui_group.command("connect")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--key", default=None, envvar="OPEN_WEBUI_API_KEY",
+              metavar="SK",
+              help="Open WebUI API key (from 'autotune webui login').")
+@click.option("--autotune-url", default="http://localhost:8765/v1",
+              show_default=True, metavar="URL",
+              help="autotune server URL to register in Open WebUI.")
+@click.option("--autotune-key", default="autotune", show_default=True,
+              metavar="KEY",
+              help="API key sent to autotune (any non-empty value works).")
+def webui_connect(
+    url: Optional[str],
+    key: Optional[str],
+    autotune_url: str,
+    autotune_key: str,
+) -> None:
+    """Wire autotune into an already-running Open WebUI instance.
+
+    Reads Open WebUI's current OpenAI-connection list via its admin API,
+    adds (or updates) the autotune server entry, and writes it back.
+    Existing connections (e.g. real OpenAI) are preserved untouched.
+
+    After this runs, every model in Open WebUI whose owner shows as
+    "openai" is routed through autotune's hardware-optimization layer.
+    Models shown as "ollama" still bypass autotune (direct Ollama).
+
+    \b
+    Requirements:
+      • autotune webui login   must have been run first (or pass --key)
+      • autotune serve         must be running on port 8765
+
+    \b
+    Examples:
+      autotune webui connect
+      autotune webui connect --autotune-url http://localhost:8765/v1
+      autotune webui connect --key sk-... --url http://myserver:8080
+    """
+    import httpx
+    from rich.panel import Panel
+
+    resolved_key = _resolve_key(key)
+
+    # ── Auto-detect Open WebUI URL ────────────────────────────────────────
+    if not url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            try:
+                r = httpx.get(candidate, timeout=2.0, follow_redirects=True)
+                if r.status_code < 500:
+                    url = candidate
+                    break
+            except Exception:
+                continue
+    if not url:
+        console.print(
+            "[red]Open WebUI is not running.[/red]\n"
+            "[dim]Start it:  autotune webui launch[/dim]"
+        )
+        raise SystemExit(1)
+
+    base = url.rstrip("/")
+    auth_headers = {"Authorization": f"Bearer {resolved_key}",
+                    "Content-Type": "application/json"}
+
+    # ── Check autotune server is reachable ───────────────────────────────
+    # Derive health URL: strip trailing "/v1" then add "/health"
+    at_base_url = autotune_url.rstrip("/")
+    if at_base_url.endswith("/v1"):
+        at_base_url = at_base_url[:-3]
+    autotune_health = at_base_url + "/health"
+    try:
+        hr = httpx.get(autotune_health, timeout=3.0)
+        if hr.status_code == 200:
+            hdata = hr.json()
+            ollama_ok = hdata.get("backends", {}).get("ollama", False)
+            console.print(
+                f"[green]✓[/green]  autotune server running at [cyan]{autotune_url}[/cyan]"
+                + ("  [dim](Ollama: up)[/dim]" if ollama_ok else "  [yellow](Ollama: down)[/yellow]")
+            )
+        else:
+            console.print(
+                f"[yellow]⚠[/yellow]  autotune returned HTTP {hr.status_code} — continuing."
+            )
+    except Exception:
+        console.print(
+            f"[yellow]⚠[/yellow]  Cannot reach autotune at {autotune_url}.\n"
+            f"[dim]  Start it:  [cyan]autotune serve[/cyan]  "
+            f"(connection will activate once it starts)[/dim]"
+        )
+
+    # ── Read current OpenAI connection config from Open WebUI ─────────────
+    # API: GET  /openai/config          → OpenAIConfigForm
+    #      POST /openai/config/update   → updated OpenAIConfigForm
+    #
+    # OpenAIConfigForm schema (confirmed from Open WebUI's /openapi.json):
+    #   {
+    #     "ENABLE_OPENAI_API":   bool | null,
+    #     "OPENAI_API_BASE_URLS": ["https://api.openai.com/v1", ...],
+    #     "OPENAI_API_KEYS":     ["sk-real-key", "autotune", ...],
+    #     "OPENAI_API_CONFIGS":  {"0": {...}, "1": {...}}  ← keyed by string index
+    #   }
+    #   Each OPENAI_API_CONFIGS entry:
+    #   {
+    #     "enable": true,
+    #     "prefix_id": "",     ← optional model ID prefix shown in picker
+    #     "model_ids": [],     ← empty = all models from this connection
+    #     "tags": [],
+    #     "connection_type": "external",
+    #     "auth_type": "bearer"
+    #   }
+
+    configured = False
+
+    with console.status("[cyan]Reading Open WebUI connection config…[/cyan]", spinner="dots"):
+        try:
+            cfg_r = httpx.get(f"{base}/openai/config",
+                               headers=auth_headers, timeout=8.0)
+        except httpx.ConnectError:
+            console.print(f"[red]Cannot connect to Open WebUI at {base}[/red]")
+            raise SystemExit(1)
+
+    if cfg_r.status_code == 401:
+        console.print(
+            "[red]Authentication failed.[/red]  "
+            "Run [cyan]autotune webui login[/cyan] to refresh your API key."
+        )
+        raise SystemExit(1)
+    if cfg_r.status_code != 200:
+        console.print(
+            f"[red]GET /openai/config returned HTTP {cfg_r.status_code}[/red]\n"
+            f"[dim]{cfg_r.text[:200]}[/dim]"
+        )
+        raise SystemExit(1)
+
+    cfg = cfg_r.json()
+    existing_urls    = list(cfg.get("OPENAI_API_BASE_URLS") or [])
+    existing_keys    = list(cfg.get("OPENAI_API_KEYS")      or [])
+    existing_configs = dict(cfg.get("OPENAI_API_CONFIGS")   or {})
+
+    # ── Locate existing autotune entry (match by port or keyword) ────────
+    at_url_norm = autotune_url.rstrip("/")
+    at_indices  = [
+        i for i, u in enumerate(existing_urls)
+        if u.rstrip("/") == at_url_norm
+        or "8765" in u
+        or "autotune" in u.lower()
+    ]
+
+    if at_indices:
+        idx = at_indices[0]
+        existing_urls[idx]  = at_url_norm
+        while len(existing_keys) <= idx:
+            existing_keys.append("")
+        existing_keys[idx] = autotune_key
+        action = "updated"
+    else:
+        idx = len(existing_urls)
+        existing_urls.append(at_url_norm)
+        while len(existing_keys) < len(existing_urls):
+            existing_keys.append("")
+        existing_keys[idx] = autotune_key
+        action = "added"
+
+    # ── Build / update OPENAI_API_CONFIGS entry for this index ───────────
+    # prefix_id="autotune" makes every model from this connection appear in
+    # Open WebUI's picker as "autotune.<model_name>" (e.g. autotune.qwen3:8b).
+    # This:
+    #   1. Makes it unmistakably clear which models are autotune-routed
+    #   2. Eliminates ID conflicts with direct-Ollama entries (same model,
+    #      different picker entries = user can choose either path)
+    # The autotune server strips the "autotune." prefix before routing to Ollama.
+    prev = existing_configs.get(str(idx), {})
+    existing_configs[str(idx)] = {
+        "enable":          True,
+        "prefix_id":       "autotune",      # ← this is the key labeling change
+        "tags":            prev.get("tags",            []),
+        "model_ids":       prev.get("model_ids",       []),
+        "connection_type": prev.get("connection_type", "external"),
+        "auth_type":       prev.get("auth_type",       "bearer"),
+    }
+
+    payload = {
+        "ENABLE_OPENAI_API":    True,
+        "OPENAI_API_BASE_URLS": existing_urls,
+        "OPENAI_API_KEYS":      existing_keys,
+        "OPENAI_API_CONFIGS":   existing_configs,
+    }
+
+    with console.status("[cyan]Writing autotune connection to Open WebUI…[/cyan]", spinner="dots"):
+        try:
+            post_r = httpx.post(f"{base}/openai/config/update",
+                                 json=payload, headers=auth_headers, timeout=8.0)
+        except Exception as exc:
+            console.print(f"[red]POST /openai/config/update failed: {exc}[/red]")
+            raise SystemExit(1)
+
+    if post_r.status_code == 200:
+        console.print(f"[green]✓[/green]  autotune connection {action} (index {idx})")
+        configured = True
+    else:
+        console.print(
+            f"[red]POST /openai/config/update returned HTTP {post_r.status_code}[/red]\n"
+            f"[dim]{post_r.text[:300]}[/dim]"
+        )
+
+    # ── Verify: count openai-owned models (= autotune-routed) in Open WebUI
+    if configured:
+        try:
+            models_r = httpx.get(f"{base}/api/models",
+                                  headers=auth_headers, timeout=8.0)
+            if models_r.status_code == 200:
+                mdata  = models_r.json()
+                mlist  = mdata.get("data", mdata) if isinstance(mdata, dict) else mdata
+                # Open WebUI labels all models from OpenAI-compatible connections
+                # as owned_by="openai", regardless of what the upstream server returns.
+                n_at   = sum(1 for m in mlist
+                             if isinstance(m, dict) and m.get("owned_by") == "openai")
+                n_dir  = sum(1 for m in mlist
+                             if isinstance(m, dict) and m.get("owned_by") == "ollama")
+                if n_at > 0:
+                    console.print(
+                        f"[green]✓[/green]  [bold]{n_at}[/bold] model(s) visible via autotune  "
+                        f"[dim]({n_dir} still direct-Ollama)[/dim]"
+                    )
+                else:
+                    console.print(
+                        "[yellow]⚠[/yellow]  No autotune models visible yet — "
+                        "try refreshing your browser."
+                    )
+        except Exception:
+            pass
+
+    # ── Summary panel ─────────────────────────────────────────────────────
+    if configured:
+        n_total = len(existing_urls)
+        console.print(Panel(
+            f"[bold green]✓  autotune wired into Open WebUI[/bold green]\n\n"
+            f"  Open WebUI:    [cyan]{base}[/cyan]\n"
+            f"  autotune API:  [cyan]{autotune_url}[/cyan]  [dim](connection {idx + 1} of {n_total})[/dim]\n\n"
+            f"[bold]How models appear in Open WebUI's picker:[/bold]\n"
+            f"  [green]autotune.qwen3:8b[/green]   ← prefixed = routed through autotune\n"
+            f"  [dim]qwen3:8b[/dim]              ← no prefix = direct Ollama (bypasses autotune)\n\n"
+            f"  Refresh your browser — autotune-labelled models will appear.\n\n"
+            f"  [dim]autotune webui models[/dim]   ← see routing labels in the terminal\n"
+            f"  [dim]autotune webui status[/dim]   ← full integration check\n"
+            f"  [dim]autotune webui open[/dim]     ← open browser",
+            title="[bold]autotune connected[/bold]",
+            border_style="green",
+        ))
+    else:
+        console.print(Panel(
+            "[yellow]Automatic configuration failed.[/yellow]\n\n"
+            "Add the connection manually in Open WebUI:\n\n"
+            f"  1. Open [cyan]{base}[/cyan] in your browser\n"
+            f"  2. Admin Panel → Settings → Connections\n"
+            f"  3. Add a new OpenAI-compatible connection:\n"
+            f"       URL:  [cyan]{autotune_url}[/cyan]\n"
+            f"       Key:  [cyan]{autotune_key}[/cyan]\n"
+            f"  4. Save and refresh the page",
+            title="[bold]Manual setup[/bold]",
+            border_style="yellow",
+        ))
+
+
+@webui_group.command("status")
+@click.option("--url", default=None, envvar="OPEN_WEBUI_URL",
+              metavar="URL", help="Open WebUI base URL (auto-detected if omitted).")
+@click.option("--key", default=None, envvar="OPEN_WEBUI_API_KEY",
+              metavar="SK", help="API key (or set OPEN_WEBUI_API_KEY).")
+@click.option("--autotune-port", default=8765, show_default=True, type=int,
+              help="Port to check for the autotune API server.")
+def webui_status(url: Optional[str], key: Optional[str], autotune_port: int) -> None:
+    """Show autotune + Open WebUI connectivity — the full integration picture.
+
+    Checks three things:
+      1. Is the autotune API server running? (required for routing)
+      2. Is Open WebUI running?
+      3. Is Open WebUI actually wired to autotune, or talking to raw Ollama?
+
+    \b
+    Example:
+      autotune webui status
+    """
+    import os as _os
+    import shutil
+    import httpx
+    from rich.panel import Panel
+
+    lines: list[str] = []
+    border_style = "green"
+
+    def _http_ok(u: str, timeout: float = 2.0) -> bool:
+        try:
+            return httpx.get(u, timeout=timeout, follow_redirects=True).status_code < 500
+        except Exception:
+            return False
+
+    # ── 1. autotune server ───────────────────────────────────────────────
+    lines.append("[bold]autotune server[/bold]")
+    autotune_health = f"http://localhost:{autotune_port}/health"
+    if _http_ok(autotune_health):
+        try:
+            hdata = httpx.get(autotune_health, timeout=3.0).json()
+            ollama_up  = hdata.get("backends", {}).get("ollama", False)
+            version    = hdata.get("version", "")
+            mem_pct    = hdata.get("memory", {}).get("ram_pct", 0)
+            active_q   = hdata.get("queue", {}).get("active", 0)
+            lines.append(
+                f"  [green]✓[/green]  Running at [cyan]http://localhost:{autotune_port}/v1[/cyan]"
+                + (f"  [dim]v{version}[/dim]" if version else "")
+            )
+            ollama_str = "[green]up[/green]" if ollama_up else "[yellow]down[/yellow]"
+            lines.append(
+                f"  [dim]Ollama backend: {ollama_str}  │  "
+                f"RAM: {mem_pct:.0f}%  │  "
+                f"Active requests: {active_q}[/dim]"
+            )
+        except Exception:
+            lines.append(
+                f"  [green]✓[/green]  Running at [cyan]http://localhost:{autotune_port}/v1[/cyan]"
+            )
+    else:
+        border_style = "yellow"
+        lines.append(f"  [red]✗[/red]  Not running on port {autotune_port}")
+        lines.append(
+            "  [dim]Start it:  [cyan]autotune serve[/cyan]"
+            "  or  [cyan]autotune webui launch[/cyan][/dim]"
+        )
+
+    lines.append("")
+
+    # ── 2. Open WebUI ────────────────────────────────────────────────────
+    lines.append("[bold]Open WebUI[/bold]")
+    detected_url: Optional[str] = url
+    if not detected_url:
+        for candidate in ("http://localhost:8080", "http://localhost:3000"):
+            if _http_ok(candidate):
+                detected_url = candidate
+                break
+
+    if not detected_url:
+        border_style = "red"
+        installed = shutil.which("open-webui") is not None
+        lines.append("  [red]✗[/red]  Not running")
+        if installed:
+            lines.append("  [dim]Start:   [cyan]autotune webui launch[/cyan]  (starts both)[/dim]")
+        else:
+            lines.append("  [dim]Install: [cyan]autotune webui install --no-start[/cyan]  then  [cyan]autotune webui launch[/cyan][/dim]")
+        console.print(Panel("\n".join(lines), title="[bold]autotune + Open WebUI status[/bold]",
+                            border_style=border_style))
+        return
+
+    lines.append(f"  [green]✓[/green]  Running at [cyan]{detected_url}[/cyan]")
+
+    # ── 3. autotune wired into Open WebUI? ───────────────────────────────
+    # Detection strategy:
+    #   a) GET /openai/config  — check OPENAI_API_BASE_URLS for the autotune URL
+    #      This is the ground-truth check. Works regardless of model count.
+    #   b) GET /api/models     — count owned_by="openai" (autotune-routed) vs "ollama" (direct)
+    #      Note: Open WebUI overrides owned_by to "openai" for all OpenAI-compat connections,
+    #      so we use that as the proxy for "going through autotune".
+    lines.append("")
+    lines.append("[bold]autotune integration[/bold]")
+
+    resolved_key = key or _os.environ.get("OPEN_WEBUI_API_KEY", "")
+    if not resolved_key:
+        lines.append("  [yellow]⚠[/yellow]  No API key — cannot check connection status")
+        lines.append(
+            "  [dim]Run  [cyan]autotune webui login[/cyan]  to authenticate[/dim]"
+        )
+    else:
+        try:
+            auth_hdrs = {"Authorization": f"Bearer {resolved_key}",
+                         "Content-Type": "application/json"}
+
+            # ── a) Check OpenAI connection config ────────────────────────
+            at_port     = str(autotune_port)
+            at_url_frag = f"localhost:{autotune_port}"
+            connection_found = False
+            connection_idx   = -1
+            n_connections    = 0
+
+            cfg_r = httpx.get(f"{detected_url}/openai/config",
+                               headers=auth_hdrs, timeout=8.0)
+            if cfg_r.status_code == 200:
+                cfg  = cfg_r.json()
+                urls = cfg.get("OPENAI_API_BASE_URLS") or []
+                n_connections = len(urls)
+                for i, u in enumerate(urls):
+                    if at_url_frag in u or "autotune" in u.lower():
+                        connection_found = True
+                        connection_idx   = i
+                        break
+
+                if connection_found:
+                    lines.append(
+                        f"  [green]✓[/green]  autotune connection present "
+                        f"[dim](entry {connection_idx + 1} of {n_connections} OpenAI connections)[/dim]"
+                    )
+                    # Show the actual URL stored
+                    lines.append(
+                        f"  [dim]  → {urls[connection_idx]}[/dim]"
+                    )
+                else:
+                    border_style = "yellow"
+                    lines.append("  [yellow]✗[/yellow]  autotune NOT in Open WebUI's connection list")
+                    lines.append(
+                        "  [dim]  Fix:  [cyan]autotune webui connect[/cyan][/dim]"
+                    )
+            elif cfg_r.status_code == 401:
+                border_style = "yellow"
+                lines.append("  [red]✗[/red]  API key rejected")
+                lines.append("  [dim]Re-authenticate:  [cyan]autotune webui login[/cyan][/dim]")
+            else:
+                lines.append(f"  [yellow]⚠[/yellow]  /openai/config returned HTTP {cfg_r.status_code}")
+
+            # ── b) Model routing breakdown ───────────────────────────────
+            models_r = httpx.get(f"{detected_url}/api/models",
+                                   headers=auth_hdrs, timeout=8.0)
+            if models_r.status_code == 200:
+                mdata  = models_r.json()
+                mlist  = mdata.get("data", mdata) if isinstance(mdata, dict) else mdata
+                # "openai" owned_by = came from an OpenAI-compat connection (i.e. autotune)
+                # "ollama" owned_by = came from direct Ollama API (bypasses autotune)
+                n_at  = sum(1 for m in mlist if isinstance(m, dict)
+                            and m.get("owned_by") == "openai")
+                n_dir = sum(1 for m in mlist if isinstance(m, dict)
+                            and m.get("owned_by") == "ollama")
+                n_tot = len([m for m in mlist if isinstance(m, dict)])
+
+                if n_at > 0:
+                    lines.append(
+                        f"  [green]✓[/green]  [bold]{n_at}[/bold] model(s) routed via autotune  "
+                        f"[dim]({n_dir} direct-Ollama, {n_tot} total)[/dim]"
+                    )
+                elif connection_found:
+                    lines.append(
+                        "  [yellow]⚠[/yellow]  Connection configured but 0 models visible — "
+                        "try refreshing your browser or check autotune serve is up."
+                    )
+                else:
+                    lines.append(
+                        f"  [dim]{n_dir} Ollama-direct models, 0 via autotune[/dim]"
+                    )
+
+                if n_dir > 0 and connection_found:
+                    lines.append(
+                        f"  [dim]  {n_dir} model(s) are direct-Ollama (bypass autotune).[/dim]\n"
+                        f"  [dim]  These are the same models via a different path — both are available.[/dim]"
+                    )
+
+            # Chat count
+            chats_r = httpx.get(f"{detected_url}/api/v1/chats/",
+                                  headers=auth_hdrs, params={"page": 1}, timeout=8.0)
+            if chats_r.status_code == 200:
+                cdata = chats_r.json()
+                n_chats = len(cdata) if isinstance(cdata, list) else 0
+                suffix = "+" if n_chats == 60 else ""
+                lines.append(f"  [dim]{n_chats}{suffix} chats in history[/dim]")
+
+        except Exception as _exc:
+            lines.append(f"  [yellow]⚠[/yellow]  Could not check integration: {_exc}")
+
+    lines += [
+        "",
+        "[dim]"
+        "  autotune webui launch   ← start both servers together\n"
+        "  autotune webui connect  ← wire autotune into running Open WebUI\n"
+        "  autotune webui login    ← authenticate\n"
+        "  autotune webui open     ← open in browser\n"
+        "  autotune webui models   ← list models with routing labels"
+        "[/dim]",
+    ]
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold]autotune + Open WebUI status[/bold]",
+        border_style=border_style,
+    ))
 
 
 # ---------------------------------------------------------------------------

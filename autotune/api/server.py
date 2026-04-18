@@ -175,6 +175,9 @@ _hw = None
 _chain: Optional[BackendChain] = None
 _conv: Optional[ConversationManager] = None
 
+# Stable ID that groups all telemetry events from one server process lifetime.
+_SESSION_ID: str = str(uuid.uuid4())
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -185,7 +188,40 @@ async def lifespan(app: FastAPI):
     # Pre-probe backends
     await _chain.ollama_running()
     await _chain.lmstudio_running()
+
+    # Telemetry: register install then emit session_start — both in the same
+    # background thread so SESSION_START never fires before the installations
+    # FK row exists (which would cause a silent 409 constraint violation).
+    try:
+        import threading as _threading
+        from autotune.telemetry import register_install, emit
+        from autotune.telemetry.events import EventType
+
+        def _startup_telemetry() -> None:
+            register_install()          # ensures FK row exists first
+            emit(
+                EventType.SESSION_START,
+                session_id=_SESSION_ID,
+                autotune_version=_VERSION,
+            )
+
+        _threading.Thread(target=_startup_telemetry, daemon=True).start()
+    except Exception:
+        pass
+
     yield
+
+    # Telemetry: session_end
+    try:
+        from autotune.telemetry import emit
+        from autotune.telemetry.events import EventType
+        emit(
+            EventType.SESSION_END,
+            session_id=_SESSION_ID,
+            autotune_version=_VERSION,
+        )
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -331,6 +367,154 @@ def _get_queue() -> _InferenceQueue:
     return _inference_queue
 
 # ---------------------------------------------------------------------------
+# Model ID normalisation
+# ---------------------------------------------------------------------------
+
+# Open WebUI prepends the connection's prefix_id when routing requests.
+# e.g. if prefix_id="autotune", a request for "qwen3:8b" arrives as
+# "autotune.qwen3:8b".  Strip any such prefix so Ollama always receives
+# the bare model name it actually knows about.
+_MODEL_PREFIX = "autotune."
+
+
+def _normalize_model_id(model_id: str) -> str:
+    """Strip autotune connection prefix from Open WebUI-routed model IDs."""
+    if model_id.startswith(_MODEL_PREFIX):
+        return model_id[len(_MODEL_PREFIX):]
+    return model_id
+
+
+# ---------------------------------------------------------------------------
+# Quant lookup — cached per model_id to avoid repeated Ollama round-trips
+# ---------------------------------------------------------------------------
+
+_quant_cache: dict[str, str] = {}
+
+
+async def _get_model_quant(model_id: str) -> str:
+    """
+    Return the quantization label for a model running on Ollama.
+
+    Queries ``POST /api/show`` once per unique model_id and caches the result
+    for the lifetime of the server process.  Falls back gracefully for non-Ollama
+    backends (MLX, LM Studio) where quant data isn't exposed via an API.
+    """
+    if model_id in _quant_cache:
+        return _quant_cache[model_id]
+    try:
+        import httpx as _hx
+        async with _hx.AsyncClient(timeout=2.0) as c:
+            r = await c.post(
+                "http://localhost:11434/api/show",
+                json={"name": model_id},
+            )
+            if r.status_code == 200:
+                q = r.json().get("details", {}).get("quantization_level") or "unknown"
+                _quant_cache[model_id] = q
+                return q
+    except Exception:
+        pass
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Shared run-telemetry helper — called from both streaming and non-streaming
+# ---------------------------------------------------------------------------
+
+async def _emit_run_telemetry(
+    *,
+    model_id: str,
+    hw_dict: dict,
+    profile_name: str,
+    ollama_opts: dict,
+    backend_name: str,
+    tps: float,
+    ttft_ms: float,
+    elapsed: float,
+    prompt_tokens: int,
+    comp_tokens: int,
+) -> None:
+    """
+    Log a completed inference run to local SQLite and (if opted in) Supabase.
+
+    Designed to be fire-and-forget from finally blocks.  All exceptions are
+    caught internally so a telemetry failure never surfaces to the caller.
+    """
+    quant = await _get_model_quant(model_id)
+
+    # ── Local SQLite ─────────────────────────────────────────────────────
+    try:
+        from autotune.db.store import get_db
+        db = get_db()
+        db.upsert_hardware(hw_dict)
+        db.log_run({
+            "model_id":          model_id,
+            "hardware_id":       hw_dict["id"],
+            "quant":             quant,
+            "context_len":       ollama_opts["num_ctx"],
+            "n_gpu_layers":      -1,
+            "tokens_per_sec":    round(tps, 1),
+            "gen_tokens_per_sec": round(tps, 1),
+            "ttft_ms":           round(ttft_ms, 1),
+            "notes": (
+                f"profile={profile_name} backend={backend_name} "
+                f"f16_kv={ollama_opts.get('f16_kv', True)}"
+            ),
+        })
+    except Exception as _db_exc:
+        logger.debug("local SQLite log failed: %s", _db_exc)
+
+    # ── Supabase (opt-in only) ────────────────────────────────────────────
+    try:
+        from autotune.telemetry import emit, get_install_key
+        from autotune.telemetry.client import get_client
+        from autotune.telemetry.events import EventType
+
+        install_key = get_install_key()
+        _tc = get_client()
+        if _tc:
+            _tc.record_run(install_key, {
+                "model_id":           model_id,
+                "hardware_key":       hw_dict["id"],
+                "os_name":            hw_dict.get("os_name"),
+                "cpu_arch":           hw_dict.get("cpu_arch"),
+                "total_ram_gb":       hw_dict.get("total_ram_gb"),
+                "gpu_backend":        hw_dict.get("gpu_backend"),
+                "quant":              quant,
+                "context_len":        ollama_opts["num_ctx"],
+                "n_gpu_layers":       -1,
+                "profile_name":       profile_name,
+                "f16_kv":             ollama_opts.get("f16_kv", True),
+                "tokens_per_sec":     round(tps, 1),
+                "gen_tokens_per_sec": round(tps, 1),
+                "ttft_ms":            round(ttft_ms, 1),
+                "prompt_tokens":      prompt_tokens,
+                "completion_tokens":  comp_tokens,
+                "elapsed_sec":        round(elapsed, 2),
+                "completed":          True,
+                "autotune_version":   _VERSION,
+            })
+        emit(
+            EventType.RUN_COMPLETE,
+            session_id=_SESSION_ID,
+            autotune_version=_VERSION,
+            model_id=model_id,
+            tokens_per_sec=round(tps, 1),
+            gen_tokens_per_sec=round(tps, 1),
+            ttft_ms=round(ttft_ms, 1),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=comp_tokens,
+            context_len=ollama_opts["num_ctx"],
+            profile_name=profile_name,
+            quant=quant,
+            elapsed_sec=round(elapsed, 2),
+            completed=True,
+        )
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
@@ -424,7 +608,10 @@ async def list_models():
             "id": m.id,
             "object": "model",
             "created": 0,
-            "owned_by": m.id.split("/")[0] if "/" in m.id else "local",
+            # "autotune" as the owner makes the source visible in Open WebUI's
+            # model picker, so users can immediately see these are autotune-routed
+            # models and not raw Ollama/LM Studio connections.
+            "owned_by": "autotune",
             "autotune": {
                 "source": m.source,
                 "available_locally": m.available_locally,
@@ -608,12 +795,19 @@ async def completions(req: CompletionRequest):
     try:
         await queue.acquire(timeout=_WAIT_TIMEOUT)
     except _QueueFullError as exc:
-        raise HTTPException(status_code=429, detail={
-            "error": "queue_full", "queue_depth": exc.depth,
-        })
+        raise HTTPException(
+            status_code=429,
+            headers={"Retry-After": "1"},
+            detail={"error": "queue_full", "queue_depth": exc.depth},
+        )
     except _asyncio.TimeoutError:
-        raise HTTPException(status_code=429, detail={"error": "queue_timeout"})
+        raise HTTPException(
+            status_code=429,
+            headers={"Retry-After": str(int(_WAIT_TIMEOUT))},
+            detail={"error": "queue_timeout"},
+        )
 
+    req.model  = _normalize_model_id(req.model)
     prompt_text = req.prompt if isinstance(req.prompt, str) else "\n".join(req.prompt)
     requested_max = req.max_tokens or 256
     max_tokens = (requested_max + _THINKING_OVERHEAD) if _is_thinking_model(req.model) else requested_max
@@ -856,6 +1050,7 @@ async def chat_completions(
     except _QueueFullError as exc:
         raise HTTPException(
             status_code=429,
+            headers={"Retry-After": "1"},
             detail={
                 "error": "queue_full",
                 "message": (
@@ -869,6 +1064,7 @@ async def chat_completions(
     except _asyncio.TimeoutError:
         raise HTTPException(
             status_code=429,
+            headers={"Retry-After": str(int(_WAIT_TIMEOUT))},
             detail={
                 "error": "queue_timeout",
                 "message": (
@@ -912,6 +1108,10 @@ async def _chat_completions_inner(
     x_conversation_id: Optional[str],
 ):
     """Core chat completions logic, called once the task semaphore is held."""
+    # Strip Open WebUI connection prefix (e.g. "autotune.qwen3:8b" → "qwen3:8b").
+    # Open WebUI prepends prefix_id + "." when a connection has a prefix configured.
+    req.model = _normalize_model_id(req.model)
+
     profile_name = x_autotune_profile or req.profile or "balanced"
     conv_id = x_conversation_id or req.conversation_id
 
@@ -1037,6 +1237,9 @@ async def _chat_completions_inner(
             elapsed = time.time() - start_time
             content = _think_filt.collected_text()
             comp_tokens = estimate_tokens(content)
+            prompt_tokens_s = estimate_tokens(
+                "".join(m.get("content", "") for m in messages)
+            )
             ttft_ms = (first_token_time - start_time) * 1000 if first_token_time else 0
             tps = comp_tokens / max(elapsed, 0.01)
 
@@ -1046,30 +1249,22 @@ async def _chat_completions_inner(
                     ttft_ms=ttft_ms, tokens_per_sec=tps, backend=backend_name,
                 )
 
-            try:
-                from autotune.db.store import get_db
-                from autotune.db.fingerprint import hardware_to_db_dict
-                hw = _hw
-                if hw:
-                    db = get_db()
-                    hw_dict = hardware_to_db_dict(hw)
-                    db.upsert_hardware(hw_dict)
-                    db.log_run({
-                        "model_id": req.model,
-                        "hardware_id": hw_dict["id"],
-                        "quant": "unknown",
-                        "context_len": ollama_opts["num_ctx"],
-                        "n_gpu_layers": -1,
-                        "tokens_per_sec": round(tps, 1),
-                        "gen_tokens_per_sec": round(tps, 1),
-                        "ttft_ms": round(ttft_ms, 1),
-                        "notes": (
-                            f"profile={profile_name} backend={backend_name} "
-                            f"f16_kv={ollama_opts.get('f16_kv', True)}"
-                        ),
-                    })
-            except Exception as _db_exc:
-                logger.debug("metrics DB log failed: %s", _db_exc)
+            from autotune.db.fingerprint import hardware_to_db_dict
+            hw = _hw
+            if hw:
+                hw_dict = hardware_to_db_dict(hw)
+                await _emit_run_telemetry(
+                    model_id=req.model,
+                    hw_dict=hw_dict,
+                    profile_name=profile_name,
+                    ollama_opts=ollama_opts,
+                    backend_name=backend_name,
+                    tps=tps,
+                    ttft_ms=ttft_ms,
+                    elapsed=elapsed,
+                    prompt_tokens=prompt_tokens_s,
+                    comp_tokens=comp_tokens,
+                )
 
         yield b"data: [DONE]\n\n"
 
@@ -1115,6 +1310,22 @@ async def _chat_completions_inner(
     if conv_id and content_out:
         conv_mgr.add_message(conv_id, "assistant", content_out,
                               ttft_ms=ttft, tokens_per_sec=tps2, backend=backend_used)
+
+    # SQLite + Supabase metrics for non-streaming path
+    from autotune.db.fingerprint import hardware_to_db_dict
+    if _hw:
+        await _emit_run_telemetry(
+            model_id=req.model,
+            hw_dict=hardware_to_db_dict(_hw),
+            profile_name=profile_name,
+            ollama_opts=ollama_opts,
+            backend_name=backend_used,
+            tps=tps2,
+            ttft_ms=ttft,
+            elapsed=elapsed2,
+            prompt_tokens=prompt_tokens,
+            comp_tokens=comp_tokens,
+        )
 
     return _make_completion_json(
         content_out, req.model, chunk_id, profile_name,

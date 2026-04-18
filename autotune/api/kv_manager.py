@@ -168,8 +168,12 @@ def build_ollama_options(
                 else:
                     break
         if num_keep > 0:
-            opts["num_keep"] = num_keep
-            logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
+            # Never let num_keep consume the entire context window — always
+            # leave at least 512 tokens for the actual conversation turn.
+            num_keep = min(num_keep, max(0, opts["num_ctx"] - 512))
+            if num_keep > 0:
+                opts["num_keep"] = num_keep
+                logger.debug("num_keep=%d (system prompt prefix cached)", num_keep)
 
     # ── Live memory-pressure reductions ─────────────────────────────────────
     # num_ctx is reduced first (cheap, immediate effect on KV allocation).

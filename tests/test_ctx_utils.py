@@ -28,8 +28,8 @@ def _make_profile(max_new_tokens=512, max_context_tokens=8192, kv_cache_precisio
 # ---------------------------------------------------------------------------
 
 class TestEstimateTokens:
-    def test_empty_string_returns_1(self):
-        assert estimate_tokens("") == 1
+    def test_empty_string_returns_0(self):
+        assert estimate_tokens("") == 0
 
     def test_short_string(self):
         # "hello" = 5 chars → 5//4 = 1, but max(1, 1) = 1
@@ -73,8 +73,8 @@ class TestEstimateMessagesTokens:
 
     def test_missing_content_key(self):
         msgs = [{"role": "user"}]
-        # estimate_tokens("") == 1
-        assert estimate_messages_tokens(msgs) == 1
+        # estimate_tokens("") == 0
+        assert estimate_messages_tokens(msgs) == 0
 
 
 # ---------------------------------------------------------------------------
