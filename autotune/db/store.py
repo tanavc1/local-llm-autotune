@@ -6,9 +6,18 @@ Tables
   models            – architecture + memory data fetched from HuggingFace
   hardware_profiles – fingerprint of each machine that has run autotune
   run_observations  – real token/sec + memory measurements logged over time
+  telemetry_events  – local system-pressure and lifecycle events
+  agent_runs        – agentic benchmark run records
+  agent_turns       – per-turn data within an agent run
+  tool_calls        – individual tool invocations within an agent turn
 
 The DB lives at ~/.local/share/autotune/autotune.db (XDG) or
 ~/Library/Application Support/autotune/autotune.db on macOS.
+
+Local storage can be disabled with `autotune storage off` — writes to
+run_observations, telemetry_events, hardware_profiles, and agent tables are
+silently skipped while storage is off.  Model metadata (models table) is
+always stored; it is reference data, not behavioral data.
 """
 
 from __future__ import annotations
@@ -21,6 +30,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Optional
+
+from autotune.db.storage_prefs import is_storage_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +57,9 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+-- ---------------------------------------------------------------------------
+-- models: HuggingFace architecture + memory data (always stored)
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS models (
     -- identity
     id                      TEXT PRIMARY KEY,   -- "meta-llama/Meta-Llama-3.1-8B"
@@ -123,8 +137,11 @@ CREATE TABLE IF NOT EXISTS models (
     raw_config              TEXT                -- full config.json as JSON string
 );
 
+-- ---------------------------------------------------------------------------
+-- hardware_profiles: one row per unique machine fingerprint
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS hardware_profiles (
-    id                      TEXT PRIMARY KEY,   -- sha256 of (os+cpu_brand+cpu_cores+total_ram+gpu_name)
+    id                      TEXT PRIMARY KEY,   -- sha256[:16] of (os+cpu+ram+gpu)
     os_name                 TEXT,
     os_version              TEXT,
     cpu_brand               TEXT,
@@ -133,75 +150,130 @@ CREATE TABLE IF NOT EXISTS hardware_profiles (
     cpu_arch                TEXT,
     total_ram_gb            REAL,
     gpu_name                TEXT,
-    gpu_backend             TEXT,               -- "cuda", "metal", "rocm", "none"
+    gpu_backend             TEXT,               -- "cuda" | "metal" | "rocm" | "none"
     gpu_vram_gb             REAL,
     is_unified_memory       INTEGER DEFAULT 0,
     first_seen              REAL NOT NULL,
     last_seen               REAL NOT NULL
 );
 
+-- ---------------------------------------------------------------------------
+-- run_observations: one row per completed LLM inference call
+-- NOTE: model_id is NOT a foreign key — the server logs Ollama model IDs
+-- like "qwen3:8b" which differ from HuggingFace IDs in the models table.
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS run_observations (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_id                TEXT NOT NULL REFERENCES models(id),
-    hardware_id             TEXT NOT NULL REFERENCES hardware_profiles(id),
+    model_id                TEXT NOT NULL,
+    hardware_id             TEXT REFERENCES hardware_profiles(id),
+    session_id              TEXT,               -- server session UUID
+    autotune_version        TEXT,               -- autotune version that produced this row
 
-    -- config used
+    -- inference config
     quant                   TEXT NOT NULL,
     context_len             INTEGER NOT NULL,
-    n_gpu_layers            INTEGER NOT NULL,
+    n_gpu_layers            INTEGER NOT NULL DEFAULT 0,
     batch_size              INTEGER DEFAULT 1,
-    profile_name            TEXT,               -- "fast" | "balanced" | "quality" | "raw_ollama_defaults"
-    bench_tag               TEXT,               -- bench run label for comparisons
+    profile_name            TEXT,               -- "fast" | "balanced" | "quality"
+    bench_tag               TEXT,               -- label for bench run comparisons
     f16_kv                  INTEGER,            -- 1=F16 KV, 0=Q8 KV
-    num_keep                INTEGER,            -- tokens pinned in KV (prefix cache)
+    num_keep                INTEGER,            -- tokens pinned in KV prefix cache
 
-    -- measurements
-    tokens_per_sec          REAL,               -- prompt eval throughput
-    gen_tokens_per_sec      REAL,               -- generation throughput
-    peak_ram_gb             REAL,               -- observed peak RSS
-    peak_vram_gb            REAL,               -- observed peak VRAM
-    ram_before_gb           REAL,               -- RAM before inference
-    ram_after_gb            REAL,               -- RAM after inference
-    delta_ram_gb            REAL,               -- ram_after - ram_before
+    -- throughput
+    tokens_per_sec          REAL,               -- prompt-eval throughput (tok/s)
+    gen_tokens_per_sec      REAL,               -- generation throughput (tok/s)
+
+    -- memory
+    peak_ram_gb             REAL,               -- peak RSS during inference
+    peak_vram_gb            REAL,               -- peak VRAM during inference
+    ram_before_gb           REAL,
+    ram_after_gb            REAL,
+    delta_ram_gb            REAL,               -- ram_after − ram_before
     swap_before_gb          REAL,
     swap_peak_gb            REAL,
     swap_after_gb           REAL,
     delta_swap_gb           REAL,
-    cpu_avg_pct             REAL,               -- average CPU % during inference
-    cpu_peak_pct            REAL,               -- peak CPU % during inference
-    load_time_sec           REAL,               -- time to load model
+
+    -- CPU
+    cpu_avg_pct             REAL,
+    cpu_peak_pct            REAL,
+
+    -- latency
+    load_time_sec           REAL,               -- model cold-start time
     ttft_ms                 REAL,               -- time-to-first-token (ms)
     elapsed_sec             REAL,               -- total wall time (s)
-    prompt_tokens           INTEGER,            -- estimated input tokens
-    completion_tokens       INTEGER,            -- estimated output tokens
+
+    -- tokens
+    prompt_tokens           INTEGER,
+    completion_tokens       INTEGER,
 
     -- outcome
-    completed               INTEGER DEFAULT 1,  -- 0 = OOM or crash
+    completed               INTEGER DEFAULT 1,  -- 0 = aborted / OOM
     oom                     INTEGER DEFAULT 0,
-    error_msg               TEXT,               -- error string if failed
-    notes                   TEXT,               -- free-form (legacy)
+    error_msg               TEXT,
+    notes                   TEXT,               -- legacy free-form field
 
     observed_at             REAL NOT NULL
 );
 
+-- ---------------------------------------------------------------------------
+-- telemetry_events: local system-pressure and lifecycle events
+-- Mirrors the Supabase telemetry_events schema so both stores stay in sync.
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS telemetry_events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id          INTEGER REFERENCES run_observations(id),
-    hardware_id     TEXT,
-    model_id        TEXT,
-    -- event_type: "ram_spike" | "swap_spike" | "cpu_peak" | "oom_near"
-    --             | "slow_token" | "error" | "kv_reduced" | "pressure_high"
-    event_type      TEXT NOT NULL,
-    value_num       REAL,       -- numeric value (e.g. RAM %)
-    value_text      TEXT,       -- text detail
-    observed_at     REAL NOT NULL
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id              INTEGER REFERENCES run_observations(id),
+    hardware_id         TEXT,
+    session_id          TEXT,
+    autotune_version    TEXT,
+    model_id            TEXT,
+
+    -- event type: "session_start" | "session_end" | "run_complete"
+    --           | "ram_spike" | "swap_spike" | "cpu_peak" | "oom_near"
+    --           | "kv_reduced" | "error" | "model_loaded" | "opt_in" | "opt_out"
+    event_type          TEXT NOT NULL,
+
+    -- inference metrics (populated for run_complete)
+    tokens_per_sec      REAL,
+    gen_tokens_per_sec  REAL,
+    ttft_ms             REAL,
+    prompt_tokens       INTEGER,
+    completion_tokens   INTEGER,
+    context_len         INTEGER,
+    peak_ram_gb         REAL,
+    cpu_avg_pct         REAL,
+    elapsed_sec         REAL,
+    profile_name        TEXT,
+    completed           INTEGER,
+    oom                 INTEGER DEFAULT 0,
+
+    -- system-pressure event payload
+    value_num           REAL,
+    value_text          TEXT,
+
+    -- error event payload
+    error_type          TEXT,
+    error_msg           TEXT,
+
+    observed_at         REAL NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_runs_model      ON run_observations(model_id);
-CREATE INDEX IF NOT EXISTS idx_runs_hardware   ON run_observations(hardware_id);
-CREATE INDEX IF NOT EXISTS idx_runs_quant      ON run_observations(quant);
-CREATE INDEX IF NOT EXISTS idx_telemetry_run   ON telemetry_events(run_id);
-CREATE INDEX IF NOT EXISTS idx_telemetry_model ON telemetry_events(model_id);
+-- ---------------------------------------------------------------------------
+-- Indexes
+-- ---------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_runs_model       ON run_observations(model_id);
+CREATE INDEX IF NOT EXISTS idx_runs_hardware    ON run_observations(hardware_id);
+CREATE INDEX IF NOT EXISTS idx_runs_quant       ON run_observations(quant);
+CREATE INDEX IF NOT EXISTS idx_runs_observed    ON run_observations(observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_session     ON run_observations(session_id)
+    WHERE session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_telemetry_run    ON telemetry_events(run_id)
+    WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_telemetry_model  ON telemetry_events(model_id)
+    WHERE model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_telemetry_type   ON telemetry_events(event_type, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_session ON telemetry_events(session_id)
+    WHERE session_id IS NOT NULL;
 """
 
 
@@ -375,6 +447,8 @@ class Database:
 
     def upsert_hardware(self, data: dict[str, Any]) -> str:
         """Insert or update a hardware profile. Returns the profile ID."""
+        if not is_storage_enabled():
+            return data.get("id", "")
         hw_id = data["id"]
         existing = self.conn.execute(
             "SELECT id FROM hardware_profiles WHERE id = ?", (hw_id,)
@@ -411,7 +485,9 @@ class Database:
     # ------------------------------------------------------------------ #
 
     def log_run(self, data: dict[str, Any]) -> int:
-        """Log a performance observation. Returns the new row ID."""
+        """Log a performance observation. Returns the new row ID, or -1 if storage disabled."""
+        if not is_storage_enabled():
+            return -1
         data = dict(data)
         data.setdefault("observed_at", time.time())
         cols = ", ".join(data.keys())
@@ -462,7 +538,9 @@ class Database:
         hardware_id: Optional[str] = None,
         model_id: Optional[str] = None,
     ) -> int:
-        """Append a system-level telemetry event. Returns the new row ID."""
+        """Append a system-level telemetry event. Returns the new row ID, or -1 if storage disabled."""
+        if not is_storage_enabled():
+            return -1
         with self.transaction():
             cur = self.conn.execute(
                 """INSERT INTO telemetry_events
@@ -556,6 +634,152 @@ class Database:
                 pct = round((b - a) / a * 100, 1)
                 result["deltas"][m] = {"a": a, "b": b, "delta_pct": pct}
         return result
+
+    # ------------------------------------------------------------------ #
+    # Agent benchmark tables (migration + CRUD)                           #
+    # ------------------------------------------------------------------ #
+
+    _AGENT_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id              TEXT NOT NULL,
+        condition            TEXT NOT NULL,
+        model_id             TEXT NOT NULL,
+        trial_idx            INTEGER NOT NULL,
+        profile              TEXT,
+        task_success         INTEGER NOT NULL,
+        exit_reason          TEXT NOT NULL,
+        total_wall_sec       REAL NOT NULL,
+        total_tool_calls     INTEGER NOT NULL,
+        tool_error_count     INTEGER NOT NULL,
+        backtrack_count      INTEGER NOT NULL,
+        total_turns          INTEGER NOT NULL,
+        reload_count         INTEGER NOT NULL,
+        peak_ram_gb          REAL NOT NULL,
+        swap_occurred        INTEGER NOT NULL,
+        free_floor_gb        REAL NOT NULL,
+        final_context_tokens INTEGER NOT NULL,
+        observed_at          REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_turns (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id               INTEGER NOT NULL REFERENCES agent_runs(id),
+        turn_idx             INTEGER NOT NULL,
+        role                 TEXT NOT NULL,
+        prefill_ms           REAL NOT NULL,
+        ttft_ms              REAL NOT NULL,
+        eval_tps             REAL NOT NULL,
+        total_ms             REAL NOT NULL,
+        ollama_ram_gb        REAL NOT NULL,
+        kv_cache_mb          REAL,
+        swap_delta_gb        REAL NOT NULL,
+        tokens_in_context    INTEGER NOT NULL,
+        num_ctx              INTEGER,
+        tool_name            TEXT,
+        tool_success         INTEGER,
+        tool_latency_ms      REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_calls (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id               INTEGER NOT NULL REFERENCES agent_runs(id),
+        turn_id              INTEGER NOT NULL REFERENCES agent_turns(id),
+        tool_name            TEXT NOT NULL,
+        args_json            TEXT,
+        result_preview       TEXT,
+        success              INTEGER NOT NULL,
+        latency_ms           REAL NOT NULL,
+        observed_at          REAL NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_task      ON agent_runs(task_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_condition ON agent_runs(condition);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_model     ON agent_runs(model_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_turns_run      ON agent_turns(run_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_run       ON tool_calls(run_id);
+    """
+
+    def migrate_agent_tables(self) -> None:
+        """Create agent benchmark tables if they don't already exist."""
+        self.conn.executescript(self._AGENT_SCHEMA)
+        self.conn.commit()
+
+    def log_agent_run(self, data: dict[str, Any]) -> int:
+        """Insert one AgentRunResult row. Returns the new row ID, or -1 if storage disabled."""
+        if not is_storage_enabled():
+            return -1
+        data = dict(data)
+        data.setdefault("observed_at", time.time())
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        with self.transaction():
+            cur = self.conn.execute(
+                f"INSERT INTO agent_runs ({cols}) VALUES ({placeholders})",
+                list(data.values()),
+            )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def log_agent_turn(self, run_id: int, data: dict[str, Any]) -> int:
+        """Insert one AgentTurnResult row. Returns the new row ID, or -1 if storage disabled."""
+        if not is_storage_enabled():
+            return -1
+        data = dict(data)
+        data["run_id"] = run_id
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        with self.transaction():
+            cur = self.conn.execute(
+                f"INSERT INTO agent_turns ({cols}) VALUES ({placeholders})",
+                list(data.values()),
+            )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def log_tool_call(self, run_id: int, turn_id: int, data: dict[str, Any]) -> int:
+        """Insert one tool_calls row. Returns the new row ID, or -1 if storage disabled."""
+        if not is_storage_enabled():
+            return -1
+        data = dict(data)
+        data["run_id"]  = run_id
+        data["turn_id"] = turn_id
+        data.setdefault("observed_at", time.time())
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        with self.transaction():
+            cur = self.conn.execute(
+                f"INSERT INTO tool_calls ({cols}) VALUES ({placeholders})",
+                list(data.values()),
+            )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_agent_runs(
+        self,
+        model_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        condition: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        q = "SELECT * FROM agent_runs WHERE 1=1"
+        args: list[Any] = []
+        if model_id:
+            q += " AND model_id = ?"
+            args.append(model_id)
+        if task_id:
+            q += " AND task_id = ?"
+            args.append(task_id)
+        if condition:
+            q += " AND condition = ?"
+            args.append(condition)
+        q += " ORDER BY observed_at DESC LIMIT ?"
+        args.append(limit)
+        return [dict(r) for r in self.conn.execute(q, args).fetchall()]
+
+    def get_agent_turns(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM agent_turns WHERE run_id = ? ORDER BY turn_idx ASC",
+            (run_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def model_count(self) -> int:
         """Return the number of models in the DB (used by CLI fetch-many)."""

@@ -2025,6 +2025,54 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
 
 
 # ---------------------------------------------------------------------------
+# `autotune storage`
+# ---------------------------------------------------------------------------
+
+@cli.command("storage")
+@click.argument("action", required=False, default=None,
+                metavar="[on|off|status]")
+def storage(action: Optional[str]) -> None:
+    """Manage local SQLite storage of performance data.
+
+    \b
+    Usage:
+      autotune storage on       Enable local storage (default)
+      autotune storage off      Disable local storage
+      autotune storage status   Show current setting
+
+    Model metadata fetched from HuggingFace is always stored regardless of
+    this setting.  Performance observations, telemetry events, and agent
+    benchmark results are skipped while storage is off.
+    """
+    from autotune.db.storage_prefs import (
+        is_storage_enabled, set_storage_enabled, storage_pref_set,
+    )
+
+    if action is None or action == "status":
+        enabled = is_storage_enabled()
+        configured = storage_pref_set()
+        state = "[green]enabled[/green]" if enabled else "[yellow]disabled[/yellow]"
+        default_note = "" if configured else " [dim](default)[/dim]"
+        console.print(f"Local storage: {state}{default_note}")
+        if not enabled:
+            console.print("[dim]Run `autotune storage on` to re-enable.[/dim]")
+        return
+
+    action = action.lower()
+    if action == "on":
+        set_storage_enabled(True)
+        console.print("[green]✓ Local storage enabled.[/green]")
+    elif action == "off":
+        set_storage_enabled(False)
+        console.print("[yellow]✓ Local storage disabled.[/yellow]")
+        console.print("[dim]Performance data will not be written to disk.[/dim]")
+        console.print("[dim]Run `autotune storage on` to re-enable.[/dim]")
+    else:
+        console.print(f"[red]Unknown action '{action}'. Use: on, off, or status.[/red]")
+        raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
 # `autotune serve`
 # ---------------------------------------------------------------------------
 
