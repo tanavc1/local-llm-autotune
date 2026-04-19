@@ -46,7 +46,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace as dc_replace
 from pathlib import Path
 from typing import Optional
 
@@ -96,6 +96,23 @@ _GROWTH_TURNS         = 4        # number of turns for memory-growth test
 
 DEFAULT_MODELS = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
 PROFILE_NAME   = "balanced"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run configuration — controls depth vs. speed trade-off
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class RunConfig:
+    """Controls which prompts, how many runs, and what cooldowns to use."""
+    mode: str                  # "quick" | "complete"
+    prompts: list              # list[BenchPrompt]; populated after PROMPTS is defined
+    n_runs: int                # runs per condition per prompt
+    run_growth: bool           # whether to run the multi-turn memory growth test
+    cooldown_run_sec: float    # pause between runs of the same condition
+    cooldown_cond_sec: float   # pause between raw → autotune switch
+    multi_model: bool          # True = all models, False = auto-select first available
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Benchmark prompt suite — 5 prompts covering TTFT, throughput, KV-heavy,
@@ -242,6 +259,32 @@ _GROWTH_TURNS_MSGS: list[dict] = [
 ]
 
 
+# Run configuration presets — defined after PROMPTS so we can reference them
+_QUICK_PROMPT_IDS = {"short_factual", "long_context", "multi_turn"}
+
+# Quick (~5-8 min): 3 KV-heavy prompts, 2 runs, no growth, short cooldowns
+QUICK_CONFIG = RunConfig(
+    mode="quick",
+    prompts=[p for p in PROMPTS if p.id in _QUICK_PROMPT_IDS],
+    n_runs=2,
+    run_growth=False,
+    cooldown_run_sec=1.0,
+    cooldown_cond_sec=5.0,
+    multi_model=False,
+)
+
+# Complete (~20-30 min): all 5 prompts, 3 runs, growth test, full cooldowns
+COMPLETE_CONFIG = RunConfig(
+    mode="complete",
+    prompts=list(PROMPTS),
+    n_runs=3,
+    run_growth=True,
+    cooldown_run_sec=_COOLDOWN_RUN_SEC,
+    cooldown_cond_sec=_COOLDOWN_COND_SEC,
+    multi_model=True,
+)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # KV cache size estimator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -268,21 +311,24 @@ class OllamaModelInfo:
         return bytes_ / (1024 ** 2)
 
 
-def _fetch_model_info(model_id: str) -> OllamaModelInfo:
+async def _fetch_model_info(model_id: str) -> OllamaModelInfo:
     """
     Query Ollama's /api/show endpoint to get model architecture for KV estimation.
 
     Looks for llama.block_count, llama.attention.kv_heads, llama.attention.head_count_kv,
     and llama.attention.head_dim in the model_info dict.  Falls back to zero on any
     key miss (estimate will be shown as 'N/A' in the report).
+
+    Async so it can be gathered in parallel with the raw warmup call.
     """
     info = OllamaModelInfo(model_id=model_id)
     try:
-        resp = httpx.post(
-            f"{_OLLAMA_BASE}/api/show",
-            json={"name": model_id, "verbose": True},
-            timeout=10.0,
-        )
+        async with httpx.AsyncClient() as _hclient:
+            resp = await _hclient.post(
+                f"{_OLLAMA_BASE}/api/show",
+                json={"name": model_id, "verbose": True},
+                timeout=10.0,
+            )
         data = resp.json()
         mi = data.get("model_info", {})
 
@@ -892,22 +938,20 @@ async def _warmup_autotune(
 
 async def run_model_benchmark(
     model_id: str,
-    n_runs: int,
+    run_cfg: RunConfig,
     profile_name: str,
     console: Console,
-    run_growth: bool = True,
 ) -> ModelReport:
     """
     Full benchmark for one model.
 
     Order:
-      1. Fetch model architecture info (for KV cache estimation)
-      2. Warmup call (not counted)
-      3. All raw runs (all prompts × n_runs, with cooldown between runs)
-      4. 10-second cooldown between conditions
-      5. All autotune runs (same structure)
-      6. Memory growth test (sequential multi-turn)
-      7. Compute statistics
+      1. Parallel: fetch model architecture info + raw warmup (overlap I/O)
+      2. All raw runs (run_cfg.prompts × n_runs, with cooldown between runs)
+      3. Cooldown between conditions
+      4. All autotune runs (per-prompt warmup + n_runs)
+      5. Memory growth test (complete mode only)
+      6. Compute statistics
     """
     hw     = profile_hardware()
     hw_str = (
@@ -916,27 +960,14 @@ async def run_model_benchmark(
         f"{hw.gpu.name if hw.gpu else 'CPU-only'}"
     )
 
-    console.print(f"[dim]  Fetching model architecture info for {model_id}…[/dim]")
-    model_info = _fetch_model_info(model_id)
-    if model_info.is_valid():
-        console.print(
-            f"[dim]  {model_id}: {model_info.n_layers} layers, "
-            f"{model_info.n_kv_heads} KV heads, head_dim={model_info.head_dim} → "
-            f"KV raw={model_info.estimate_kv_cache_mb(_RAW_NUM_CTX):.0f} MB[/dim]"
-        )
-    else:
-        console.print(f"[dim yellow]  Could not fetch architecture info — KV estimates will show N/A[/dim yellow]")
-
-    n_prompts  = len(PROMPTS)
-    # steps: raw warmup + (n_prompts * n_runs) raw + cooldown +
-    #        (n_prompts * (1 warmup + n_runs)) autotune + growth marker
-    growth_steps = (_GROWTH_TURNS * 2 + 1) if run_growth else 0
-    total_steps  = (1 + n_prompts * n_runs + 1
-                    + n_prompts * (1 + n_runs)
+    n_prompts    = len(run_cfg.prompts)
+    growth_steps = (_GROWTH_TURNS * 2 + 1) if run_cfg.run_growth else 0
+    total_steps  = (1 + n_prompts * run_cfg.n_runs + 1
+                    + n_prompts * (1 + run_cfg.n_runs)
                     + growth_steps)
 
-    raw_map:   dict[str, list[RunResult]] = {p.id: [] for p in PROMPTS}
-    tuned_map: dict[str, list[RunResult]] = {p.id: [] for p in PROMPTS}
+    raw_map:   dict[str, list[RunResult]] = {p.id: [] for p in run_cfg.prompts}
+    tuned_map: dict[str, list[RunResult]] = {p.id: [] for p in run_cfg.prompts}
 
     with Progress(
         SpinnerColumn(),
@@ -948,55 +979,68 @@ async def run_model_benchmark(
     ) as progress:
         task = progress.add_task(f"  {model_id}", total=total_steps)
 
-        # ── Raw warmup ─────────────────────────────────────────────────────
-        progress.update(task, description=f"  [dim]Warmup (raw): loading {model_id}…[/dim]")
-        await _warmup_raw(model_id, console)
+        # ── Parallel: model architecture info + raw warmup ────────────────
+        # Overlapping these two I/O-bound calls saves ~2–4 s per model.
+        progress.update(task,
+                        description=f"  [dim]Warmup + fetching arch for {model_id}…[/dim]")
+        model_info, _ = await asyncio.gather(
+            _fetch_model_info(model_id),
+            _warmup_raw(model_id, console),
+        )
+        if model_info.is_valid():
+            console.print(
+                f"[dim]  {model_id}: {model_info.n_layers} layers, "
+                f"{model_info.n_kv_heads} KV heads, head_dim={model_info.head_dim} → "
+                f"KV raw={model_info.estimate_kv_cache_mb(_RAW_NUM_CTX):.0f} MB[/dim]"
+            )
+        else:
+            console.print(
+                f"[dim yellow]  Could not fetch architecture info — "
+                f"KV estimates will show N/A[/dim yellow]"
+            )
         progress.advance(task)
 
         # ── Raw runs ───────────────────────────────────────────────────────
-        for prompt in PROMPTS:
-            for run_i in range(n_runs):
-                desc = (
-                    f"  [dim]Raw   · {prompt.label}"
-                    + (f" [{run_i+1}/{n_runs}]" if n_runs > 1 else "") + "[/dim]"
-                )
-                progress.update(task, description=desc)
+        for prompt in run_cfg.prompts:
+            for run_i in range(run_cfg.n_runs):
+                n_label = f" [{run_i+1}/{run_cfg.n_runs}]" if run_cfg.n_runs > 1 else ""
+                progress.update(task,
+                                description=f"  [dim]Raw   · {prompt.label}{n_label}[/dim]")
                 result = await _run_raw(model_id, prompt, model_info)
                 raw_map[prompt.id].append(result)
                 progress.advance(task)
-                if run_i < n_runs - 1:
-                    await asyncio.sleep(_COOLDOWN_RUN_SEC)
-            await asyncio.sleep(_COOLDOWN_RUN_SEC)
+                if run_i < run_cfg.n_runs - 1:
+                    await asyncio.sleep(run_cfg.cooldown_run_sec)
+            await asyncio.sleep(run_cfg.cooldown_run_sec)
 
         # ── Condition switch cooldown ─────────────────────────────────────
         progress.update(task, description="  [dim]Cooling down between conditions…[/dim]")
-        await asyncio.sleep(_COOLDOWN_COND_SEC)
+        await asyncio.sleep(run_cfg.cooldown_cond_sec)
 
         # ── Autotune runs ──────────────────────────────────────────────────
-        for prompt in PROMPTS:
+        for prompt in run_cfg.prompts:
             progress.update(task,
                             description=f"  [cyan]Warmup (autotune): {prompt.label}…[/cyan]")
             await _warmup_autotune(model_id, prompt, profile_name, console)
             progress.advance(task)
 
-            for run_i in range(n_runs):
-                desc = (
-                    f"  [cyan]Autotune · {prompt.label}"
-                    + (f" [{run_i+1}/{n_runs}]" if n_runs > 1 else "") + "[/cyan]"
-                )
-                progress.update(task, description=desc)
+            for run_i in range(run_cfg.n_runs):
+                n_label = f" [{run_i+1}/{run_cfg.n_runs}]" if run_cfg.n_runs > 1 else ""
+                progress.update(task,
+                                description=f"  [cyan]Autotune · {prompt.label}{n_label}[/cyan]")
                 result = await _run_autotune(model_id, prompt, model_info, profile_name)
                 tuned_map[prompt.id].append(result)
                 progress.advance(task)
-                if run_i < n_runs - 1:
-                    await asyncio.sleep(_COOLDOWN_RUN_SEC)
-            await asyncio.sleep(_COOLDOWN_RUN_SEC)
+                if run_i < run_cfg.n_runs - 1:
+                    await asyncio.sleep(run_cfg.cooldown_run_sec)
+            await asyncio.sleep(run_cfg.cooldown_run_sec)
 
         # ── Memory growth test ─────────────────────────────────────────────
         raw_growth:   list[GrowthPoint] = []
         tuned_growth: list[GrowthPoint] = []
-        if run_growth:
-            progress.update(task, description="  [yellow]Memory growth test (multi-turn)…[/yellow]")
+        if run_cfg.run_growth:
+            progress.update(task,
+                            description="  [yellow]Memory growth test (multi-turn)…[/yellow]")
             try:
                 raw_growth, tuned_growth = await _run_growth_test(
                     model_id, profile_name, model_info, console
@@ -1008,7 +1052,7 @@ async def run_model_benchmark(
 
     # ── Compute statistics per prompt ──────────────────────────────────────
     prompt_stats_list: list[PromptStats] = []
-    for prompt in PROMPTS:
+    for prompt in run_cfg.prompts:
         raw_ok   = [r for r in raw_map[prompt.id]   if r.ok]
         tuned_ok = [r for r in tuned_map[prompt.id] if r.ok]
 
@@ -1065,7 +1109,7 @@ async def run_model_benchmark(
 
     return ModelReport(
         model_id=model_id, profile=profile_name,
-        n_runs=n_runs, hw_str=hw_str, timestamp=time.time(),
+        n_runs=run_cfg.n_runs, hw_str=hw_str, timestamp=time.time(),
         model_info=model_info,
         prompt_stats=prompt_stats_list,
         raw_growth=raw_growth,
@@ -1425,8 +1469,9 @@ def print_cross_model_summary(reports: list[ModelReport], console: Console) -> N
     total_swap_r = sum(r.total_swaps_raw()  for r in valid)
     total_swap_t = sum(r.total_swaps_tuned() for r in valid)
 
+    n_prompt_types = len({p.id for r in valid for ps in r.prompt_stats for p in [ps.prompt]})
     console.print(Panel(
-        f"Across [bold]{len(valid)} model(s)[/bold] and [bold]{len(PROMPTS)} prompt types[/bold]:\n\n"
+        f"Across [bold]{len(valid)} model(s)[/bold] and [bold]{n_prompt_types} prompt types[/bold]:\n\n"
         f"  [green]⏱  You wait {abs(mean_ttft):.0f}% less for the first word to appear.[/green]\n"
         f"  [green]⚡ Text generation is {mean_tps:+.0f}% faster.[/green]\n"
         f"  [green]🧠 Your Mac uses {abs(mean_ram):.0f}% less RAM during inference.[/green]\n"
@@ -1440,6 +1485,96 @@ def print_cross_model_summary(reports: list[ModelReport], console: Console) -> N
         f"KV cache estimates from model architecture (n_layers × n_kv_heads × head_dim).[/dim]",
         title="[bold]What this means for you[/bold]",
         border_style="green",
+    ))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick-mode verdict panel
+# ─────────────────────────────────────────────────────────────────────────────
+
+def print_quick_verdict(report: ModelReport, console: Console) -> None:
+    """Compact, focused verdict for --quick mode: 4 core KPIs + a clear scorecard."""
+    if report.skipped or not report.prompt_stats:
+        return
+
+    ps_list  = report.prompt_stats
+    ttft_pcts = [ps.ttft.pct_change       for ps in ps_list if ps.ttft.n > 0]
+    pre_pcts  = [ps.prefill_ms.pct_change  for ps in ps_list if ps.prefill_ms.n > 0]
+    ram_pcts  = [ps.ollama_ram.pct_change  for ps in ps_list if ps.ollama_ram.n > 0]
+    kv_pcts   = [ps.kv_cache.pct_change    for ps in ps_list
+                 if ps.kv_cache.n > 0 and ps.kv_cache.raw_mean > 0]
+    ctx_ratios = [ps.num_ctx_raw / ps.num_ctx_tuned
+                  for ps in ps_list if ps.num_ctx_tuned > 0]
+
+    mean_ttft = statistics.mean(ttft_pcts)   if ttft_pcts  else 0.0
+    mean_pre  = statistics.mean(pre_pcts)    if pre_pcts   else 0.0
+    mean_ram  = statistics.mean(ram_pcts)    if ram_pcts   else 0.0
+    mean_kv   = statistics.mean(kv_pcts)     if kv_pcts    else 0.0
+    mean_ctx  = statistics.mean(ctx_ratios)  if ctx_ratios else 1.0
+
+    wins    = report.overall_wins()
+    total   = report.total_metrics()
+    win_pct = wins / total * 100 if total else 0.0
+
+    def _mk_row(icon: str, label: str, pct: float, lower_better: bool = True) -> str:
+        improved   = (pct < 0) if lower_better else (pct > 0)
+        color      = "green" if improved else "red"
+        bar_filled = int(min(abs(pct), 100) / 100 * 14)
+        bar        = "█" * bar_filled + "░" * (14 - bar_filled)
+        sign       = "−" if pct < 0 else "+"
+        return f"  {icon}  {label:<32}  [{color}]{sign}{abs(pct):.0f}%  {bar}[/{color}]"
+
+    ctx_avg = _RAW_NUM_CTX / mean_ctx if mean_ctx else _RAW_NUM_CTX
+
+    style = "green" if win_pct >= 60 else ("yellow" if win_pct >= 40 else "red")
+    icon  = "✓" if win_pct >= 60 else ("≈" if win_pct >= 40 else "✗")
+
+    lines: list[str] = [
+        f"[bold {style}]{icon}  autotune won {wins}/{total} metrics "
+        f"({win_pct:.0f}%) — {len(ps_list)} prompts · n={report.n_runs} runs/condition"
+        f"[/bold {style}]",
+        "",
+        _mk_row("⏱", "Time to first token (TTFT)", mean_ttft),
+        _mk_row("⚡", "KV prefill time",             mean_pre),
+        _mk_row("🧠", "Peak RAM (Ollama process)",   mean_ram),
+    ]
+    if mean_kv != 0:
+        lines.append(_mk_row("💾", "KV cache footprint", mean_kv))
+    ctx_color = "cyan" if mean_ctx > 1.05 else "dim"
+    lines += [
+        f"  📐  {'Context window':<32}  [{ctx_color}]{_RAW_NUM_CTX} → "
+        f"{ctx_avg:.0f} tokens  ({mean_ctx:.1f}× smaller)[/{ctx_color}]",
+        f"  🎯  {'KV buffer slots freed':<32}  [cyan]{report.total_tokens_saved():,}"
+        f" tokens across all runs[/cyan]",
+        "",
+        f"  [dim]Swap events:   raw {report.total_swaps_raw()} → "
+        f"autotune {report.total_swaps_tuned()}[/dim]",
+        f"  [dim]Model reloads: raw {report.total_reloads_raw()} → "
+        f"autotune {report.total_reloads_tuned()}[/dim]",
+        "",
+        f"  [dim]Run [bold]--complete[/bold] for all 5 prompts, growth test, "
+        f"and per-prompt stats tables.[/dim]",
+    ]
+
+    console.print()
+    console.rule(
+        f"[bold cyan]{report.model_id}[/bold cyan]  ·  "
+        f"Quick Proof  ·  autotune/{report.profile}",
+        style="cyan",
+    )
+    console.print(f"[dim]Hardware: {report.hw_str}[/dim]")
+    mi = report.model_info
+    if mi.is_valid():
+        console.print(
+            f"[dim]Architecture: {mi.n_layers} layers · "
+            f"{mi.n_kv_heads} KV heads · head_dim={mi.head_dim} · "
+            f"KV@4096={mi.estimate_kv_cache_mb(4096):.0f} MB (f16)[/dim]"
+        )
+    console.print()
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold]autotune vs. raw Ollama — Quick Verdict[/bold]",
+        border_style=style,
     ))
 
 
@@ -1468,12 +1603,15 @@ def _sr_dict(sr: StatResult) -> dict:
 
 
 def export_json(reports: list[ModelReport], path: str, console: Console) -> None:
+    # Use prompts from first valid report so the JSON reflects what actually ran
+    first_valid  = next((r for r in reports if not r.skipped and r.prompt_stats), None)
+    run_prompts  = [ps.prompt for ps in first_valid.prompt_stats] if first_valid else PROMPTS
     out: dict = {
         "tool":      "autotune proof suite",
         "version":   "2.0",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "profile":   PROFILE_NAME,
-        "prompts":   [{"id": p.id, "label": p.label, "domain": p.domain} for p in PROMPTS],
+        "prompts":   [{"id": p.id, "label": p.label, "domain": p.domain} for p in run_prompts],
         "kpis_measured": [
             "TTFT (ms)", "Prefill time (ms)", "Total response time (ms)",
             "Peak RAM - LLM process (GB)", "KV cache size est. (MB)",
@@ -1627,32 +1765,54 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples
 --------
-  # Full suite on all three default models (one at a time):
+  # Quick proof on best-available model (~5-8 min, DEFAULT):
   python scripts/proof_suite.py
 
-  # One model only:
+  # Quick proof on a specific model:
   python scripts/proof_suite.py --models llama3.2:3b
 
-  # More statistical power:
-  python scripts/proof_suite.py --runs 5 --output proof.json
+  # Comprehensive run on all 3 default models (~20-30 min):
+  python scripts/proof_suite.py --complete
 
-  # Skip the multi-turn growth test (faster):
-  python scripts/proof_suite.py --no-growth
+  # Complete run with more statistical power, saved to file:
+  python scripts/proof_suite.py --complete --runs 5 --output proof.json
+
+  # Skip the memory growth test in complete mode:
+  python scripts/proof_suite.py --complete --no-growth
 
   # List installed models:
   python scripts/proof_suite.py --list-models
         """,
     )
-    p.add_argument(
-        "--models", nargs="+", metavar="MODEL", default=None,
+    mode_grp = p.add_mutually_exclusive_group()
+    mode_grp.add_argument(
+        "--quick", action="store_true", default=False,
         help=(
-            f"Ollama model IDs to benchmark. Defaults to {DEFAULT_MODELS} "
-            "(or AUTOTUNE_PROOF_MODELS env var). Runs one model at a time."
+            "Quick proof: 3 KV-heavy prompts, 2 runs/condition, no growth test, "
+            "short cooldowns, auto-selects one model. ~5-8 min. [DEFAULT]"
+        ),
+    )
+    mode_grp.add_argument(
+        "--complete", action="store_true", default=False,
+        help=(
+            "Full benchmark: all 5 prompts, 3 runs/condition, growth test, "
+            "full cooldowns, all default models. ~20-30 min."
         ),
     )
     p.add_argument(
-        "--runs", "-n", type=int, default=3, metavar="N",
-        help="Inference runs per condition per prompt. Min 3 for statistics. (default: 3)",
+        "--models", nargs="+", metavar="MODEL", default=None,
+        help=(
+            "Ollama model IDs to benchmark. Quick mode defaults to the first "
+            f"available from {DEFAULT_MODELS}; complete mode runs all three "
+            "(or AUTOTUNE_PROOF_MODELS env var)."
+        ),
+    )
+    p.add_argument(
+        "--runs", "-n", type=int, default=None, metavar="N",
+        help=(
+            "Override runs per condition per prompt. "
+            "Defaults: 2 (quick) / 3 (complete). Min 3 for statistics."
+        ),
     )
     p.add_argument(
         "--profile", default=PROFILE_NAME,
@@ -1665,7 +1825,7 @@ Examples
     )
     p.add_argument(
         "--no-growth", action="store_true",
-        help="Skip the multi-turn memory growth test (saves ~5 min per model).",
+        help="Skip the multi-turn memory growth test (complete mode only).",
     )
     p.add_argument(
         "--list-models", action="store_true",
@@ -1675,8 +1835,8 @@ Examples
 
 
 def main() -> None:
-    parser = _build_parser()
-    args   = parser.parse_args()
+    parser  = _build_parser()
+    args    = parser.parse_args()
     console = Console(width=_CON_W)
 
     if args.list_models:
@@ -1698,25 +1858,57 @@ def main() -> None:
         ))
         sys.exit(1)
 
+    # Determine mode — default is quick unless --complete is specified
+    is_complete = args.complete
+    run_cfg: RunConfig = COMPLETE_CONFIG if is_complete else QUICK_CONFIG
+
+    # Override runs if caller supplied --runs
+    if args.runs is not None:
+        run_cfg = dc_replace(run_cfg, n_runs=args.runs)
+
+    # --no-growth only applies in complete mode
+    if args.no_growth and is_complete:
+        run_cfg = dc_replace(run_cfg, run_growth=False)
+
     # Resolve model list
+    installed  = _installed_models()
     env_models = os.environ.get("AUTOTUNE_PROOF_MODELS", "")
+
     if args.models:
         models = args.models
     elif env_models:
         models = [m.strip() for m in env_models.split(",") if m.strip()]
-    else:
+    elif is_complete:
         models = DEFAULT_MODELS
+    else:
+        # Quick mode: auto-select the first available default model
+        models = []
+        for m in DEFAULT_MODELS:
+            if m in installed:
+                models = [m]
+                break
+        if not models:
+            if installed:
+                models = [installed[0]]
+            else:
+                console.print(Panel(
+                    "[red]No Ollama models are installed.[/red]\n\n"
+                    "Pull one with:  [bold]ollama pull llama3.2:3b[/bold]",
+                    title="No models found", border_style="red",
+                ))
+                sys.exit(1)
 
-    installed = _installed_models()
-
+    mode_label = "complete" if is_complete else "quick"
     console.print()
     console.print(Panel(
-        f"[bold]autotune proof suite v2.0[/bold]\n\n"
+        f"[bold]autotune proof suite v2.0[/bold]  ·  [cyan]{mode_label} mode[/cyan]\n\n"
         f"Models:  {', '.join(models)}\n"
         f"Profile: autotune/{args.profile}\n"
-        f"Runs:    {args.runs} per condition per prompt\n"
+        f"Runs:    {run_cfg.n_runs} per condition per prompt\n"
+        f"Prompts: {', '.join(p.label for p in run_cfg.prompts)}\n"
+        f"Growth:  {'yes' if run_cfg.run_growth else 'no'}\n"
         f"KPIs:    TTFT · Prefill · Throughput · RAM · KV cache · "
-        f"Context · Growth · Swap · Reloads · Tokens saved\n\n"
+        f"Context · Swap · Reloads · Tokens freed\n\n"
         f"[dim]Each model runs sequentially to avoid memory contention.\n"
         f"Swap usage: {psutil.swap_memory().used/1024**3:.1f} GB / "
         f"{psutil.swap_memory().total/1024**3:.1f} GB before benchmark.[/dim]",
@@ -1724,7 +1916,6 @@ def main() -> None:
         border_style="cyan",
     ))
 
-    run_growth = not args.no_growth
     reports: list[ModelReport] = []
 
     for model_id in models:
@@ -1740,18 +1931,18 @@ def main() -> None:
                 )
             )
             reports.append(ModelReport(
-                model_id=model_id, profile=args.profile, n_runs=args.runs,
+                model_id=model_id, profile=args.profile, n_runs=run_cfg.n_runs,
                 hw_str="", timestamp=time.time(),
                 model_info=OllamaModelInfo(model_id=model_id),
                 prompt_stats=[], raw_growth=[], tuned_growth=[],
-                skipped=True, skip_reason=f"not installed",
+                skipped=True, skip_reason="not installed",
             ))
             continue
 
         console.rule(f"[bold]Benchmarking {model_id}[/bold]", style="cyan")
         try:
             report = asyncio.run(run_model_benchmark(
-                model_id, args.runs, args.profile, console, run_growth=run_growth,
+                model_id, run_cfg, args.profile, console,
             ))
         except KeyboardInterrupt:
             console.print("[yellow]Interrupted — saving partial results.[/yellow]")
@@ -1759,7 +1950,7 @@ def main() -> None:
         except Exception as exc:
             console.print(f"[red]Error benchmarking {model_id}: {exc}[/red]")
             reports.append(ModelReport(
-                model_id=model_id, profile=args.profile, n_runs=args.runs,
+                model_id=model_id, profile=args.profile, n_runs=run_cfg.n_runs,
                 hw_str="", timestamp=time.time(),
                 model_info=OllamaModelInfo(model_id=model_id),
                 prompt_stats=[], raw_growth=[], tuned_growth=[],
@@ -1768,9 +1959,14 @@ def main() -> None:
             continue
 
         reports.append(report)
-        print_model_report(report, console)
 
-        # Pause between models to let Ollama free memory
+        # Choose output format based on mode
+        if is_complete:
+            print_model_report(report, console)
+        else:
+            print_quick_verdict(report, console)
+
+        # Pause between models so Ollama can free memory
         if model_id != models[-1]:
             console.print(f"\n[dim]Pausing 20s before next model…[/dim]")
             time.sleep(20)

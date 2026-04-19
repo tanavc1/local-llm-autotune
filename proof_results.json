@@ -1,8 +1,8 @@
 {
   "tool": "autotune proof",
   "version": "3.0",
-  "timestamp": "2026-04-11T04:06:27Z",
-  "model": "qwen2.5-coder:14b",
+  "timestamp": "2026-04-15T09:34:08Z",
+  "model": "llama3.2:3b",
   "config": {
     "raw_ctx": 4096,
     "max_tokens": 120
@@ -15,10 +15,10 @@
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 1422.66425,
-          "eval_tps": 9.96966684000428,
-          "load_ms": 17991.189167,
-          "prompt_eval_count": 38,
+          "prefill_ms": 199.57975,
+          "eval_tps": 42.02862374129919,
+          "load_ms": 2666.963459,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -26,10 +26,10 @@
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 105.341333,
-          "eval_tps": 10.260424315055932,
-          "load_ms": 105.417,
-          "prompt_eval_count": 38,
+          "prefill_ms": 30.910959,
+          "eval_tps": 42.238300228075275,
+          "load_ms": 99.830084,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -37,10 +37,10 @@
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 102.1025,
-          "eval_tps": 10.216422233242191,
-          "load_ms": 78.923125,
-          "prompt_eval_count": 38,
+          "prefill_ms": 32.235167,
+          "eval_tps": 42.237004286745496,
+          "load_ms": 96.54475,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -48,10 +48,10 @@
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 713.022625,
-          "eval_tps": 9.326452779272218,
-          "load_ms": 97.601584,
-          "prompt_eval_count": 49,
+          "prefill_ms": 173.142459,
+          "eval_tps": 42.17092896146872,
+          "load_ms": 89.39225,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
@@ -59,10 +59,10 @@
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 108.043417,
-          "eval_tps": 9.594981025853459,
-          "load_ms": 142.403125,
-          "prompt_eval_count": 49,
+          "prefill_ms": 28.101542,
+          "eval_tps": 41.93659410284014,
+          "load_ms": 97.169208,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
@@ -70,10 +70,10 @@
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 104.676917,
-          "eval_tps": 9.635450392185847,
-          "load_ms": 84.305708,
-          "prompt_eval_count": 49,
+          "prefill_ms": 32.242208,
+          "eval_tps": 42.02950624115384,
+          "load_ms": 99.401667,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
@@ -81,10 +81,10 @@
           "mode": "raw",
           "run_idx": 0,
           "num_ctx": 4096,
-          "prefill_ms": 6625.341168,
-          "eval_tps": 9.883059248307019,
-          "load_ms": 245.07575,
-          "prompt_eval_count": 611,
+          "prefill_ms": 1435.380292,
+          "eval_tps": 41.171837476963006,
+          "load_ms": 99.12575,
+          "prompt_eval_count": 602,
           "error": null
         },
         {
@@ -92,10 +92,10 @@
           "mode": "raw",
           "run_idx": 1,
           "num_ctx": 4096,
-          "prefill_ms": 105.800959,
-          "eval_tps": 9.919970568002842,
-          "load_ms": 91.017541,
-          "prompt_eval_count": 611,
+          "prefill_ms": 37.026375,
+          "eval_tps": 39.470026650395525,
+          "load_ms": 94.647542,
+          "prompt_eval_count": 602,
           "error": null
         },
         {
@@ -103,10 +103,10 @@
           "mode": "raw",
           "run_idx": 2,
           "num_ctx": 4096,
-          "prefill_ms": 100.351125,
-          "eval_tps": 9.714781831493676,
-          "load_ms": 95.051458,
-          "prompt_eval_count": 611,
+          "prefill_ms": 25.623458,
+          "eval_tps": 39.280651709980006,
+          "load_ms": 73.7255,
+          "prompt_eval_count": 602,
           "error": null
         }
       ],
@@ -116,10 +116,10 @@
           "mode": "autotune",
           "run_idx": 0,
           "num_ctx": 512,
-          "prefill_ms": 745.40225,
-          "eval_tps": 9.964268897322196,
-          "load_ms": 1811.883042,
-          "prompt_eval_count": 38,
+          "prefill_ms": 185.318208,
+          "eval_tps": 41.33944858196268,
+          "load_ms": 654.500833,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -127,10 +127,10 @@
           "mode": "autotune",
           "run_idx": 1,
           "num_ctx": 512,
-          "prefill_ms": 101.646541,
-          "eval_tps": 9.919958677314321,
-          "load_ms": 92.764375,
-          "prompt_eval_count": 38,
+          "prefill_ms": 24.387541,
+          "eval_tps": 40.978322746943924,
+          "load_ms": 94.600208,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -138,10 +138,10 @@
           "mode": "autotune",
           "run_idx": 2,
           "num_ctx": 512,
-          "prefill_ms": 102.361791,
-          "eval_tps": 9.838106678505461,
-          "load_ms": 84.338584,
-          "prompt_eval_count": 38,
+          "prefill_ms": 24.402791,
+          "eval_tps": 41.365239060137114,
+          "load_ms": 94.417125,
+          "prompt_eval_count": 34,
           "error": null
         },
         {
@@ -149,10 +149,10 @@
           "mode": "autotune",
           "run_idx": 0,
           "num_ctx": 512,
-          "prefill_ms": 714.201,
-          "eval_tps": 9.092857250729823,
-          "load_ms": 93.927333,
-          "prompt_eval_count": 49,
+          "prefill_ms": 165.727625,
+          "eval_tps": 41.350939237273785,
+          "load_ms": 93.658083,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
@@ -160,10 +160,10 @@
           "mode": "autotune",
           "run_idx": 1,
           "num_ctx": 512,
-          "prefill_ms": 104.139292,
-          "eval_tps": 9.59090791597201,
-          "load_ms": 85.556625,
-          "prompt_eval_count": 49,
+          "prefill_ms": 32.553292,
+          "eval_tps": 41.24804855740076,
+          "load_ms": 96.520083,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
@@ -171,53 +171,53 @@
           "mode": "autotune",
           "run_idx": 2,
           "num_ctx": 512,
-          "prefill_ms": 105.196625,
-          "eval_tps": 8.94038442769729,
-          "load_ms": 93.892708,
-          "prompt_eval_count": 49,
+          "prefill_ms": 24.423333,
+          "eval_tps": 41.007917712041504,
+          "load_ms": 95.986959,
+          "prompt_eval_count": 61,
           "error": null
         },
         {
           "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 0,
-          "num_ctx": 512,
-          "prefill_ms": 5625.655958,
-          "eval_tps": 9.050461981861353,
-          "load_ms": 132.267125,
-          "prompt_eval_count": 512,
+          "num_ctx": 1024,
+          "prefill_ms": 1459.068209,
+          "eval_tps": 40.53690917300333,
+          "load_ms": 657.992875,
+          "prompt_eval_count": 602,
           "error": null
         },
         {
           "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 1,
-          "num_ctx": 512,
-          "prefill_ms": 5621.545833,
-          "eval_tps": 9.617278272118085,
-          "load_ms": 139.956542,
-          "prompt_eval_count": 512,
+          "num_ctx": 1024,
+          "prefill_ms": 33.45925,
+          "eval_tps": 40.94248404106754,
+          "load_ms": 90.720167,
+          "prompt_eval_count": 602,
           "error": null
         },
         {
           "prompt_id": "long_doc",
           "mode": "autotune",
           "run_idx": 2,
-          "num_ctx": 512,
-          "prefill_ms": 5551.2845,
-          "eval_tps": 9.226915900346183,
-          "load_ms": 113.560458,
-          "prompt_eval_count": 512,
+          "num_ctx": 1024,
+          "prefill_ms": 28.121584,
+          "eval_tps": 40.87496326426544,
+          "load_ms": 96.10875,
+          "prompt_eval_count": 602,
           "error": null
         }
       ]
     },
     "vram": {
       "raw_ctx": 4096,
-      "raw_gb": 9.047,
+      "raw_gb": 2.561,
       "tune_ctx": 512,
-      "tune_gb": 8.351,
-      "saved_gb": 0.696
+      "tune_gb": 2.179,
+      "saved_gb": 0.382
     }
   }
 }

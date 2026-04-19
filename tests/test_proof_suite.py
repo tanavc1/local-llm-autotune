@@ -28,6 +28,7 @@ from proof_suite import (
     DEFAULT_MODELS,
     PROMPTS,
     BenchPrompt,
+    OllamaModelInfo,
     OllamaRamSampler,
     RunResult,
     StatResult,
@@ -38,6 +39,8 @@ from proof_suite import (
     _pct_cell,
     export_json,
 )
+
+_DUMMY_INFO = OllamaModelInfo(model_id="test")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +60,10 @@ def _make_run(
     eval_count: int = 50,
     prompt_eval_count: int = 30,
     error: str | None = None,
+    swap_delta_gb: float = 0.0,
+    swap_occurred: bool = False,
+    kv_cache_mb: float = 400.0,
+    reload_detected: bool = False,
 ) -> RunResult:
     return RunResult(
         condition=condition,
@@ -71,6 +78,10 @@ def _make_run(
         ollama_peak_ram_gb=ollama_peak_ram_gb,
         ollama_ram_delta_gb=ollama_ram_delta_gb,
         free_floor_gb=free_floor_gb,
+        swap_delta_gb=swap_delta_gb,
+        swap_occurred=swap_occurred,
+        kv_cache_mb=kv_cache_mb,
+        reload_detected=reload_detected,
         error=error,
     )
 
@@ -339,28 +350,35 @@ def _make_prompt_stats(all_improved: bool = True) -> PromptStats:
         raw_runs=raw_runs,
         tuned_runs=tuned_runs,
         ttft=_make_stat_result(improved=all_improved, hib=False),
+        prefill_ms=_make_stat_result(improved=all_improved, hib=False),
         eval_tps=_make_stat_result(improved=all_improved, hib=True),
         total_ms=_make_stat_result(improved=all_improved, hib=False),
         ollama_ram=_make_stat_result(improved=all_improved, hib=False),
+        kv_cache=_make_stat_result(improved=all_improved, hib=False),
         num_ctx_raw=4096.0,
         num_ctx_tuned=1024.0,
+        tokens_saved=3072,
+        swap_occurred_raw=0,
+        swap_occurred_tuned=0,
+        reload_count_raw=0,
+        reload_count_tuned=0,
     )
 
 
 class TestModelReport:
     def test_overall_wins_all_improved(self):
         ps = _make_prompt_stats(all_improved=True)
-        r = ModelReport("m", "balanced", 3, "hw", 0.0, [ps])
-        # ttft, eval_tps, ollama_ram are the 3 counted metrics
-        assert r.overall_wins() == 3
+        r = ModelReport("m", "balanced", 3, "hw", 0.0, _DUMMY_INFO, [ps], [], [])
+        # ttft, eval_tps, ollama_ram, kv_cache, prefill_ms = 5 metrics per prompt
+        assert r.overall_wins() == 5
 
     def test_total_metrics_per_prompt(self):
         ps_list = [_make_prompt_stats() for _ in range(3)]
-        r = ModelReport("m", "balanced", 3, "hw", 0.0, ps_list)
-        assert r.total_metrics() == 3 * 3   # 3 prompts × 3 metrics
+        r = ModelReport("m", "balanced", 3, "hw", 0.0, _DUMMY_INFO, ps_list, [], [])
+        assert r.total_metrics() == 3 * 5   # 3 prompts × 5 metrics
 
     def test_skipped_report_has_no_metrics(self):
-        r = ModelReport("m", "balanced", 3, "", 0.0, [],
+        r = ModelReport("m", "balanced", 3, "", 0.0, _DUMMY_INFO, [], [], [],
                         skipped=True, skip_reason="not installed")
         assert r.total_metrics() == 0
         assert r.overall_wins() == 0
@@ -374,7 +392,7 @@ class TestExportJson:
     def test_valid_json_output(self, tmp_path):
         import json
         ps = _make_prompt_stats()
-        r = ModelReport("llama3.2:3b", "balanced", 3, "Apple M2", 0.0, [ps])
+        r = ModelReport("llama3.2:3b", "balanced", 3, "Apple M2", 0.0, _DUMMY_INFO, [ps], [], [])
         out_path = str(tmp_path / "out.json")
         from rich.console import Console
         export_json([r], out_path, Console(quiet=True))
@@ -397,7 +415,7 @@ class TestExportJson:
 
     def test_skipped_model_in_json(self, tmp_path):
         import json
-        r = ModelReport("ghost:7b", "balanced", 3, "", 0.0, [],
+        r = ModelReport("ghost:7b", "balanced", 3, "", 0.0, _DUMMY_INFO, [], [], [],
                         skipped=True, skip_reason="not installed")
         out_path = str(tmp_path / "skip.json")
         from rich.console import Console
@@ -410,7 +428,7 @@ class TestExportJson:
     def test_stat_result_fields_present(self, tmp_path):
         import json
         ps = _make_prompt_stats()
-        r  = ModelReport("m", "balanced", 3, "hw", 0.0, [ps])
+        r  = ModelReport("m", "balanced", 3, "hw", 0.0, _DUMMY_INFO, [ps], [], [])
         out_path = str(tmp_path / "fields.json")
         from rich.console import Console
         export_json([r], out_path, Console(quiet=True))
@@ -497,9 +515,10 @@ def smallest_model(ollama_running) -> str:
 class TestProofSuiteIntegration:
     def test_single_prompt_raw_run(self, smallest_model):
         """Raw run must return a valid RunResult with timing data."""
-        from proof_suite import _run_raw, PROMPTS
-        prompt = PROMPTS[0]   # shortest prompt
-        result = asyncio.run(_run_raw(smallest_model, prompt, max_tokens=16))
+        from proof_suite import _run_raw, _fetch_model_info, PROMPTS
+        prompt     = PROMPTS[0]   # shortest prompt
+        model_info = asyncio.run(_fetch_model_info(smallest_model))
+        result     = asyncio.run(_run_raw(smallest_model, prompt, model_info, max_tokens=16))
         assert result.ok, f"Raw run failed: {result.error}"
         assert result.prefill_ms > 0, "prefill_ms must be positive"
         assert result.eval_tps > 0,   "eval_tps must be positive"
@@ -508,9 +527,10 @@ class TestProofSuiteIntegration:
 
     def test_single_prompt_autotune_run(self, smallest_model):
         """Autotune run must return a valid RunResult with smaller num_ctx."""
-        from proof_suite import _run_autotune, PROMPTS
-        prompt = PROMPTS[0]
-        result = asyncio.run(_run_autotune(smallest_model, prompt))
+        from proof_suite import _run_autotune, _fetch_model_info, PROMPTS
+        prompt     = PROMPTS[0]
+        model_info = asyncio.run(_fetch_model_info(smallest_model))
+        result     = asyncio.run(_run_autotune(smallest_model, prompt, model_info))
         assert result.ok, f"Autotune run failed: {result.error}"
         assert result.prefill_ms > 0
         assert result.eval_tps > 0
@@ -521,10 +541,11 @@ class TestProofSuiteIntegration:
 
     def test_autotune_num_ctx_smaller_than_raw(self, smallest_model):
         """Autotune must always produce a smaller or equal num_ctx than raw."""
-        from proof_suite import _run_raw, _run_autotune, PROMPTS
+        from proof_suite import _run_raw, _run_autotune, _fetch_model_info, PROMPTS
+        model_info = asyncio.run(_fetch_model_info(smallest_model))
         for prompt in PROMPTS[:2]:   # first 2 prompts for speed
-            raw    = asyncio.run(_run_raw(smallest_model, prompt, max_tokens=16))
-            tuned  = asyncio.run(_run_autotune(smallest_model, prompt))
+            raw   = asyncio.run(_run_raw(smallest_model, prompt, model_info, max_tokens=16))
+            tuned = asyncio.run(_run_autotune(smallest_model, prompt, model_info))
             assert tuned.num_ctx <= raw.num_ctx, (
                 f"Prompt '{prompt.id}': autotune num_ctx ({tuned.num_ctx}) "
                 f">= raw ({raw.num_ctx})"
@@ -532,11 +553,14 @@ class TestProofSuiteIntegration:
 
     def test_stat_on_live_paired_runs(self, smallest_model):
         """_stat() must produce finite values on real paired data."""
-        from proof_suite import _run_raw, _run_autotune, _stat, PROMPTS
-        prompt = PROMPTS[0]
+        from proof_suite import _run_raw, _run_autotune, _fetch_model_info, _stat, PROMPTS
+        prompt     = PROMPTS[0]
+        model_info = asyncio.run(_fetch_model_info(smallest_model))
         n = 3
-        raw_r   = [asyncio.run(_run_raw(smallest_model, prompt, max_tokens=32)) for _ in range(n)]
-        tuned_r = [asyncio.run(_run_autotune(smallest_model, prompt)) for _ in range(n)]
+        raw_r   = [asyncio.run(_run_raw(smallest_model, prompt, model_info, max_tokens=32))
+                   for _ in range(n)]
+        tuned_r = [asyncio.run(_run_autotune(smallest_model, prompt, model_info))
+                   for _ in range(n)]
 
         raw_ttft   = [r.ttft_ms for r in raw_r   if r.ok]
         tuned_ttft = [r.ttft_ms for r in tuned_r if r.ok]
