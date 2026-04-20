@@ -43,10 +43,16 @@ from typing import Any, Optional
 _URL_ENV = "AUTOTUNE_SUPABASE_URL"
 _KEY_ENV = "AUTOTUNE_SUPABASE_KEY"
 
-# These values can be baked in at package-build time by the release pipeline.
-# They are intentionally empty here so the postgres superuser credentials are
-# never shipped in source.  Set the env vars in your shell or CI to activate
-# telemetry in development.
+# SECURITY NOTE — why these values are safe to ship in source:
+#
+# _BUILTIN_KEY is the Supabase *anon* (public) key — the same JWT that
+# Supabase embeds in every web SDK and recommends for client applications.
+# It is NOT a service_role or postgres password.  Combined with the Row
+# Level Security policies in schema.sql, this key can only INSERT rows into
+# the three telemetry tables; it cannot read, update, or delete ANY data.
+#
+# Overriding the env vars (AUTOTUNE_SUPABASE_URL / AUTOTUNE_SUPABASE_KEY)
+# allows operators to point at their own Supabase project instead.
 _BUILTIN_URL: str = os.environ.get(_URL_ENV, "https://gmsibgsdedyrbiucaitv.supabase.co")
 _BUILTIN_KEY: str = os.environ.get(
     _KEY_ENV,

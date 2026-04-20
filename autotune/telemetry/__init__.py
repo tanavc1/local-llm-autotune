@@ -24,6 +24,16 @@ from typing import Any
 
 from autotune.telemetry.consent import is_opted_in, prompt_opt_in, get_install_key
 from autotune.telemetry.client import get_client
+from autotune.telemetry.events import EventType
+
+__all__ = [
+    "maybe_prompt_consent",
+    "emit",
+    "register_install",
+    "EventType",
+    "is_opted_in",
+    "get_install_key",
+]
 
 
 def maybe_prompt_consent() -> None:

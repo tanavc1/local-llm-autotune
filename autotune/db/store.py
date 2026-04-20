@@ -25,13 +25,27 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Optional
 
 from autotune.db.storage_prefs import is_storage_enabled
+
+# Column names are interpolated into SQL strings (values use ?-placeholders).
+# Validate that keys contain only safe identifier characters so a malformed
+# dict can never become an injection vector, even if callers become untrusted.
+_SAFE_COL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_cols(data: dict[str, Any]) -> None:
+    """Raise ValueError if any key is not a safe SQL identifier."""
+    for k in data:
+        if not _SAFE_COL.match(k):
+            raise ValueError(f"Unsafe column name: {k!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +402,7 @@ class Database:
         if "raw_config" in data and isinstance(data["raw_config"], dict):
             data["raw_config"] = json.dumps(data["raw_config"])
         data.setdefault("fetched_at", time.time())
+        _safe_cols(data)
 
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
@@ -465,6 +480,7 @@ class Database:
             data = dict(data)
             data.setdefault("first_seen", now)
             data["last_seen"] = now
+            _safe_cols(data)
             cols = ", ".join(data.keys())
             placeholders = ", ".join("?" * len(data))
             with self.transaction():
@@ -490,6 +506,7 @@ class Database:
             return -1
         data = dict(data)
         data.setdefault("observed_at", time.time())
+        _safe_cols(data)
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         with self.transaction():
@@ -711,6 +728,7 @@ class Database:
             return -1
         data = dict(data)
         data.setdefault("observed_at", time.time())
+        _safe_cols(data)
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         with self.transaction():
@@ -726,6 +744,7 @@ class Database:
             return -1
         data = dict(data)
         data["run_id"] = run_id
+        _safe_cols(data)
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         with self.transaction():
@@ -743,6 +762,7 @@ class Database:
         data["run_id"]  = run_id
         data["turn_id"] = turn_id
         data.setdefault("observed_at", time.time())
+        _safe_cols(data)
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         with self.transaction():
@@ -800,12 +820,20 @@ class Database:
 # ---------------------------------------------------------------------------
 
 _db: Optional[Database] = None
+_db_lock = threading.Lock()
 
 
 def get_db() -> Database:
-    """Return the open module-level DB singleton (connects on first call)."""
+    """Return the open module-level DB singleton (connects on first call).
+
+    Uses double-checked locking so concurrent threads (FastAPI handlers +
+    background telemetry threads) never race to call connect() twice.
+    """
     global _db
-    if _db is None:
-        _db = Database()
-        _db.connect()
+    if _db is not None:
+        return _db
+    with _db_lock:
+        if _db is None:
+            _db = Database()
+            _db.connect()
     return _db

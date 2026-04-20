@@ -47,6 +47,8 @@ from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
 from .profiles import PROFILES, get_profile
 from .thinking import (
+    _THINK_CLOSE,
+    _THINK_OPEN,
     THINKING_OVERHEAD as _THINKING_OVERHEAD,
     ThinkingStreamFilter,
     filter_thinking_sse as _filter_thinking_stream,
@@ -380,7 +382,9 @@ _MODEL_PREFIX = "autotune."
 def _normalize_model_id(model_id: str) -> str:
     """Strip autotune connection prefix from Open WebUI-routed model IDs."""
     if model_id.startswith(_MODEL_PREFIX):
-        return model_id[len(_MODEL_PREFIX):]
+        model_id = model_id[len(_MODEL_PREFIX):]
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model name must not be empty")
     return model_id
 
 
@@ -389,6 +393,15 @@ def _normalize_model_id(model_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 _quant_cache: dict[str, str] = {}
+_quant_lock: _asyncio.Lock | None = None
+
+
+def _get_quant_lock() -> "_asyncio.Lock":
+    """Return (lazily creating) the per-process asyncio lock for quant lookups."""
+    global _quant_lock
+    if _quant_lock is None:
+        _quant_lock = _asyncio.Lock()
+    return _quant_lock
 
 
 async def _get_model_quant(model_id: str) -> str:
@@ -398,23 +411,31 @@ async def _get_model_quant(model_id: str) -> str:
     Queries ``POST /api/show`` once per unique model_id and caches the result
     for the lifetime of the server process.  Falls back gracefully for non-Ollama
     backends (MLX, LM Studio) where quant data isn't exposed via an API.
+
+    Uses an asyncio.Lock so concurrent requests for the same model only issue
+    one Ollama round-trip rather than racing to fill the cache.
     """
     if model_id in _quant_cache:
         return _quant_cache[model_id]
-    try:
-        import httpx as _hx
-        async with _hx.AsyncClient(timeout=2.0) as c:
-            r = await c.post(
-                "http://localhost:11434/api/show",
-                json={"name": model_id},
-            )
-            if r.status_code == 200:
-                q = r.json().get("details", {}).get("quantization_level") or "unknown"
-                _quant_cache[model_id] = q
-                return q
-    except Exception:
-        pass
-    return "unknown"
+    async with _get_quant_lock():
+        # Double-check inside the lock — another coroutine may have filled it.
+        if model_id in _quant_cache:
+            return _quant_cache[model_id]
+        try:
+            import httpx as _hx
+            async with _hx.AsyncClient(timeout=2.0) as c:
+                r = await c.post(
+                    "http://localhost:11434/api/show",
+                    json={"name": model_id},
+                )
+                if r.status_code == 200:
+                    q = r.json().get("details", {}).get("quantization_level") or "unknown"
+                    _quant_cache[model_id] = q
+                    return q
+        except Exception:
+            pass
+        _quant_cache[model_id] = "unknown"
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -907,8 +928,14 @@ async def completions(req: CompletionRequest):
                         yield f"data: {json.dumps(done)}\n\n".encode()
                         break
 
+            except _asyncio.CancelledError:
+                pass  # client disconnected — normal, no error chunk needed
             except (ModelNotAvailableError, AuthError, BackendError) as exc:
                 err = json.dumps({"error": {"message": str(exc), "type": "backend_error"}})
+                yield f"data: {err}\n\n".encode()
+            except Exception as exc:
+                logger.exception("Unhandled error in /v1/completions stream")
+                err = json.dumps({"error": {"message": str(exc), "type": "server_error"}})
                 yield f"data: {err}\n\n".encode()
             finally:
                 tuner._restore()
@@ -1222,6 +1249,8 @@ async def _chat_completions_inner(
                     yield _make_chunk_json("", req.model, chunk_id, chunk.finish_reason).encode()
                     break
 
+        except _asyncio.CancelledError:
+            pass  # client disconnected — normal, no error chunk needed
         except ModelNotAvailableError as e:
             err = json.dumps({"error": _make_error_body("model_not_found", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
@@ -1230,6 +1259,10 @@ async def _chat_completions_inner(
             yield f"data: {err}\n\n".encode()
         except BackendError as e:
             err = json.dumps({"error": _make_error_body("backend_error", str(e), req.model)})
+            yield f"data: {err}\n\n".encode()
+        except Exception as e:
+            logger.exception("Unhandled error in /v1/chat/completions stream")
+            err = json.dumps({"error": _make_error_body("server_error", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
         finally:
             tuner._restore()

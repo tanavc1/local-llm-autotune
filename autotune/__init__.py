@@ -6,7 +6,8 @@ Package layout
 ttft/           ← START HERE if you care about latency
                   Owns all three TTFT-reduction mechanisms:
                   dynamic num_ctx, keep_alive=-1, num_keep prefix caching.
-                  Benchmark: −44% average TTFT vs raw Ollama defaults.
+                  Benchmark: −39% average TTFT vs raw Ollama defaults
+                  (cross-model avg: qwen3:8b −53%, gemma3:4b −29%, llama3.2:3b −35%).
 
 api/            Inference pipeline: profiles, FastAPI server, terminal chat,
                 KV manager, hardware tuner, model selector, backends.

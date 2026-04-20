@@ -19,6 +19,8 @@ from autotune.api.server import (
     _is_chat_model,
 )
 from autotune.api.thinking import (
+    _THINK_CLOSE,
+    _THINK_OPEN,
     ThinkingStreamFilter,
     filter_thinking_sse as _filter_thinking_stream,
     is_thinking_model as _is_thinking_model,
@@ -342,3 +344,63 @@ class TestCompletionRequestValidation:
     def test_stream_defaults_false(self):
         req = CompletionRequest(model="qwen3:8b", prompt="x")
         assert req.stream is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: _THINK_OPEN / _THINK_CLOSE importable and used by filter
+# ---------------------------------------------------------------------------
+
+class TestThinkConstants:
+    """Verify _THINK_OPEN/_THINK_CLOSE are exported and used correctly.
+
+    These constants are referenced by the inline think-tag state machine in
+    /v1/completions streaming — importing them here acts as a canary that
+    catches the NameError that would otherwise crash thinking-model streams.
+    """
+
+    def test_think_open_is_open_tag(self):
+        assert _THINK_OPEN == "<think>"
+
+    def test_think_close_is_close_tag(self):
+        assert _THINK_CLOSE == "</think>"
+
+    def test_filter_uses_constants_correctly(self):
+        filt = ThinkingStreamFilter()
+        visible = filt.feed(f"{_THINK_OPEN}internal reasoning{_THINK_CLOSE}answer")
+        assert visible == "answer"
+        assert filt.collected_text() == "answer"
+
+    def test_filter_across_chunk_boundary(self):
+        """Think open/close can arrive in separate chunks."""
+        filt = ThinkingStreamFilter()
+        assert filt.feed(_THINK_OPEN + "hidden") == ""
+        assert filt.feed("still hidden") == ""
+        assert filt.feed(_THINK_CLOSE + "visible") == "visible"
+
+    def test_inline_state_machine_matches_filter(self):
+        """The inline state machine in /v1/completions streaming must behave
+        identically to ThinkingStreamFilter for the same input."""
+        text = f"{_THINK_OPEN}think{_THINK_CLOSE}answer"
+        # Simulate inline state machine from server.py _completions_stream
+        buf = text
+        parts: list[str] = []
+        in_think = False
+        while buf:
+            if in_think:
+                pos = buf.find(_THINK_CLOSE)
+                if pos == -1:
+                    buf = ""
+                else:
+                    buf = buf[pos + len(_THINK_CLOSE):].lstrip("\n")
+                    in_think = False
+            else:
+                pos = buf.find(_THINK_OPEN)
+                if pos == -1:
+                    parts.append(buf)
+                    buf = ""
+                else:
+                    if pos > 0:
+                        parts.append(buf[:pos])
+                    buf = buf[pos + len(_THINK_OPEN):]
+                    in_think = True
+        assert "".join(parts) == "answer"

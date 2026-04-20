@@ -26,6 +26,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -58,9 +59,10 @@ Changelog = "https://github.com/tanavc1/local-llm-autotune/releases"
 mlx = ["mlx-lm>=0.21"]
 # Development / testing — install with: pip install llm-autotune[dev]
 dev = [
-    "pytest>=7.4", 
-    "pytest-asyncio>=0.23", 
-    "pytest-cov>=4.1", 
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "scipy>=1.11",
 ]
 
 [project.scripts]
@@ -68,6 +70,14 @@ autotune = "autotune.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["autotune"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "autotune/**",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
