@@ -315,8 +315,9 @@ class ChatSession:
             running = await self.chain.ollama_running()
             if not running:
                 console.print(
-                    "[yellow]⚠ Ollama not detected.[/yellow]  "
-                    "[dim]Model will load on first message.[/dim]\n"
+                    "[yellow]⚠ Ollama is not running.[/yellow]\n"
+                    "  Start it with: [bold]ollama serve[/bold]\n"
+                    "  (or open the Ollama desktop app)\n"
                 )
         except Exception:
             pass
@@ -733,9 +734,14 @@ class ChatSession:
             if not header_shown:
                 _clear_line()
             error_msg = str(e)
-            # For Ollama-style names (no "/"), offer to pull the model right now
-            looks_like_ollama = "/" not in self.model_id and "hf_api" not in str(e).lower()
-            if looks_like_ollama and not _retried:
+            err_text = str(e)
+            # If Ollama is not running the error says so explicitly — show it and stop.
+            ollama_not_running = "Ollama is not running" in err_text
+            if ollama_not_running:
+                console.print(f"\n[yellow]{err_text.strip()}[/yellow]")
+            # For Ollama-style model names, offer to pull the model right now —
+            # but only when Ollama is actually running (otherwise the pull will fail too).
+            elif "/" not in self.model_id and not _retried:
                 console.print(
                     f"\n[yellow]Model [bold]{self.model_id}[/bold] not found locally.[/yellow]"
                 )

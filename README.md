@@ -184,12 +184,22 @@ ollama pull qwen2.5-coder:14b  # 9 GB — top coding model for 24+ GB RAM
 ### 2. Install autotune
 
 ```bash
-git clone https://github.com/tanavc1/local-llm-autotune.git
-cd local-llm-autotune
-pip install -e .
+pip install llm-autotune
 ```
 
 **Requirements:** Python 3.10+, Ollama running locally.
+
+> **Apple Silicon (M-series) acceleration:**
+> ```bash
+> pip install "llm-autotune[mlx]"   # adds mlx-lm for native Metal GPU inference
+> ```
+
+> **Developing locally:**
+> ```bash
+> git clone https://github.com/tanavc1/local-llm-autotune.git
+> cd local-llm-autotune
+> pip install -e ".[dev]"
+> ```
 
 ### 3. Check your hardware
 

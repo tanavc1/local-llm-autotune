@@ -17,6 +17,23 @@ env/
 
 # Benchmark output (generated, not source)
 benchmark_results.json
+stress_results*.json
+resource_results*.json
+proof_combined.json
+output.txt
+
+# Agent benchmark run artifacts (generated)
+agent_bench_results*.json
+agent_bench_results*.md
+agent_bench_run*.log
+agent_bench.log
+AGENT_BENCHMARK_RESULTS*.md
+
+# WebUI runtime secret
+.webui_secret_key
+
+# Homebrew formula lives in the separate homebrew-autotune tap repo
+Formula/
 
 # macOS
 .DS_Store

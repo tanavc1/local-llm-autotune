@@ -299,7 +299,8 @@ class BackendChain:
                 # Mapping exists but model not downloaded — fall through to Ollama
 
         # 2. Ollama
-        if await self.ollama_running():
+        ollama_up = await self.ollama_running()
+        if ollama_up:
             if self._ollama_has_model(model_id):
                 return _make_ollama_backend(model_id), model_id
             # Ollama is running but doesn't have the model — still try it
@@ -312,6 +313,20 @@ class BackendChain:
         # 4. HuggingFace Inference API
         token = _hf_token()
         if not token:
+            # Tailor the error to the most likely root cause so the user knows
+            # exactly what to fix rather than reading a wall of options.
+            if not ollama_up:
+                # Ollama is the primary backend and it's not running — this is
+                # almost certainly the problem.  Give a single clear action.
+                raise ModelNotAvailableError(
+                    "\n\nOllama is not running.\n\n"
+                    "Start it with:\n"
+                    "  ollama serve\n\n"
+                    "Or open the Ollama desktop app if you installed via the .dmg / .exe.\n\n"
+                    f"Once Ollama is running, pull your model if you haven't already:\n"
+                    f"  ollama pull {model_id.split('/')[-1].lower()}\n"
+                )
+
             mlx_hint = ""
             if IS_APPLE_SILICON:
                 base = model_id.split(":")[0].split("/")[-1].lower()
@@ -320,14 +335,14 @@ class BackendChain:
                     f"  autotune mlx pull {base}\n"
                 )
             instructions = (
-                f"\n\nModel '{model_id}' not found locally.\n"
-                "To use HuggingFace models:\n"
-                "  export HF_TOKEN=your_token_here\n"
-                "Get a free token at https://huggingface.co/settings/tokens\n\n"
-                "To load a model locally:\n"
+                f"\n\nModel '{model_id}' not found locally.\n\n"
+                "To use this model, pull it with Ollama:\n"
                 f"  ollama pull {model_id.split('/')[-1].lower()}\n"
-                f"{mlx_hint}"
-                "Or run `autotune fetch-many` to see available models."
+                f"{mlx_hint}\n"
+                "Or export HF_TOKEN to use HuggingFace-hosted models:\n"
+                "  export HF_TOKEN=your_token_here\n"
+                "  (free token: https://huggingface.co/settings/tokens)\n\n"
+                "Run `autotune ls` to see all locally available models."
             )
             raise ModelNotAvailableError(instructions)
 
