@@ -136,14 +136,17 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm text-white/60">
+            <a href="/install" className="hidden hover:text-white transition-colors sm:block">
+              Install
+            </a>
+            <a href="/commands" className="hidden hover:text-white transition-colors sm:block">
+              Commands
+            </a>
             <a href="#benchmarks" className="hidden hover:text-white transition-colors sm:block">
               Benchmarks
             </a>
             <a href="#features" className="hidden hover:text-white transition-colors sm:block">
               Features
-            </a>
-            <a href="#quickstart" className="hidden hover:text-white transition-colors sm:block">
-              Quickstart
             </a>
             <a
               href="https://github.com/tanavc1/local-llm-autotune"
@@ -538,6 +541,8 @@ export default function Home() {
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-3 sm:flex-row sm:justify-between text-xs text-white/30">
           <div>autotune v0.2.0 — MIT License</div>
           <div className="flex gap-6">
+            <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
+            <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>
             <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
             <a href="https://pypi.org/project/llm-autotune/" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">PyPI</a>
             <a href="https://github.com/tanavc1/local-llm-autotune/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">Changelog</a>

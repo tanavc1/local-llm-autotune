@@ -12,6 +12,13 @@ Commands
   autotune db                   Show database stats
   autotune db-models            List all models cached in the local DB
   autotune log-run              Manually log a real inference observation
+  autotune unload [model]       Release a model from memory without entering chat
+  autotune doctor               Diagnose installation, backends, RAM, and DB health
+  autotune config show          Show persistent user defaults
+  autotune config set key val   Set a persistent default (model, profile, port…)
+  autotune config get key       Print one config value
+  autotune config reset         Reset all config to built-in defaults
+  autotune compare m1 m2        Side-by-side benchmark of two models
   autotune mlx list             List locally cached MLX models (Apple Silicon)
   autotune mlx pull <model>     Download MLX-quantized model from mlx-community
   autotune mlx resolve <model>  Show which MLX model ID would be used
@@ -4965,6 +4972,715 @@ def webui_status(url: Optional[str], key: Optional[str], autotune_port: int) -> 
         title="[bold]autotune + Open WebUI status[/bold]",
         border_style=border_style,
     ))
+
+
+# ---------------------------------------------------------------------------
+# `autotune unload [model]`
+# ---------------------------------------------------------------------------
+
+@cli.command("unload")
+@click.argument("model", required=False, default=None, metavar="[MODEL]")
+def unload(model: Optional[str]) -> None:
+    """Release a model from memory without starting a chat session.
+
+    Sends Ollama's official keep_alive=0 unload signal, then frees the MLX
+    cache on Apple Silicon if the model was loaded there.  Use this after a
+    heavy session to reclaim RAM immediately.
+
+    If MODEL is omitted, shows a numbered picker of all currently loaded models.
+
+    \b
+    Examples:
+      autotune unload qwen3:8b
+      autotune unload                 # interactive picker
+    """
+    import asyncio
+    import httpx
+    from autotune.api.running_models import get_running_models
+
+    # ── Discover what's loaded ───────────────────────────────────────────
+    with console.status("[cyan]Querying loaded models…[/cyan]", spinner="dots"):
+        try:
+            running = get_running_models()
+        except Exception:
+            running = []
+
+    if not running:
+        console.print("[yellow]No models are currently loaded in memory.[/yellow]")
+        console.print("[dim]Run `autotune ps` to check anytime.[/dim]")
+        return
+
+    target = model
+
+    if not target:
+        # Interactive picker
+        console.print("\n[bold]Models in memory:[/bold]\n")
+        for i, m in enumerate(running, 1):
+            ram_str = f"  {m.size_gb:.1f} GB" if m.size_gb else ""
+            backend_str = f"  [{m.backend}]" if m.backend else ""
+            console.print(f"  [dim]{i}.[/dim]  [cyan]{m.name}[/cyan][dim]{ram_str}{backend_str}[/dim]")
+        console.print()
+        try:
+            choice = input("  Model to unload (number or name, Enter to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if not choice:
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(running):
+                target = running[idx].name
+            else:
+                console.print("[red]Invalid selection.[/red]")
+                return
+        else:
+            target = choice
+
+    # ── Determine backend for this model ────────────────────────────────
+    backend_hint = ""
+    for m in running:
+        if m.name.lower() == target.lower() or target.lower() in m.name.lower():
+            backend_hint = m.backend
+            target = m.name   # use canonical name
+            break
+
+    unloaded_any = False
+
+    # ── MLX unload ───────────────────────────────────────────────────────
+    if backend_hint in ("mlx", "") :
+        try:
+            from autotune.api.backends.mlx_backend import unload_mlx_model, mlx_available
+            if mlx_available():
+                if unload_mlx_model():
+                    console.print(f"[green]✓[/green] MLX model unloaded from Metal memory.")
+                    unloaded_any = True
+        except Exception:
+            pass
+
+    # ── Ollama unload ────────────────────────────────────────────────────
+    if backend_hint in ("ollama", ""):
+        async def _do_unload() -> bool:
+            from autotune.api.backends.chain import unload_ollama_model
+            return await unload_ollama_model(target)
+
+        try:
+            with console.status(
+                f"[cyan]Unloading[/cyan] [bold]{target}[/bold] from Ollama…",
+                spinner="dots",
+            ):
+                ok = asyncio.run(_do_unload())
+            if ok:
+                console.print(f"[green]✓[/green] [bold]{target}[/bold] unloaded — RAM returned to OS.")
+                unloaded_any = True
+            else:
+                if not unloaded_any:
+                    console.print(
+                        f"[yellow]Ollama did not confirm unload of [bold]{target}[/bold].[/yellow]\n"
+                        "[dim]It may already be unloaded, or Ollama is not running.[/dim]"
+                    )
+        except Exception as exc:
+            if not unloaded_any:
+                console.print(f"[red]Unload failed:[/red] {exc}")
+
+    if not unloaded_any:
+        console.print(
+            f"[yellow]Could not unload [bold]{target}[/bold].[/yellow]\n"
+            "[dim]Check that Ollama is running (`ollama serve`) and the model name is correct.[/dim]"
+        )
+    else:
+        console.print("[dim]Run `autotune ps` to confirm.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# `autotune doctor`
+# ---------------------------------------------------------------------------
+
+@cli.command("doctor")
+def doctor() -> None:
+    """Diagnose your autotune installation and system environment.
+
+    Checks Python version, required packages, backend availability (Ollama,
+    MLX, LM Studio), RAM / swap headroom, and DB health.  Every check shows
+    a clear pass/fail so you know exactly what needs fixing.
+
+    \b
+    Example:
+      autotune doctor
+    """
+    import importlib
+    import shutil
+    import sqlite3
+    import sys as _sys
+
+    import httpx
+    import psutil
+    from rich.table import Table
+    from rich import box as _box
+
+    console.rule("[bold blue]autotune doctor[/bold blue]")
+    console.print()
+
+    ok_mark  = "[green]✓[/green]"
+    fail_mark = "[red]✗[/red]"
+    warn_mark = "[yellow]⚠[/yellow]"
+
+    rows: list[tuple] = []   # (check, status, detail)
+
+    def _row(check: str, passed: bool | None, detail: str = "") -> None:
+        if passed is True:
+            icon = ok_mark
+        elif passed is False:
+            icon = fail_mark
+        else:
+            icon = warn_mark
+        rows.append((check, icon, detail))
+
+    # ── Python ──────────────────────────────────────────────────────────
+    py = _sys.version_info
+    py_ok = py >= (3, 10)
+    _row(
+        "Python version",
+        py_ok,
+        f"{py.major}.{py.minor}.{py.micro}"
+        + ("" if py_ok else "  [dim](3.10+ required)[/dim]"),
+    )
+
+    # ── Key packages ────────────────────────────────────────────────────
+    packages = [
+        ("click",       "click"),
+        ("rich",        "rich"),
+        ("httpx",       "httpx"),
+        ("psutil",      "psutil"),
+        ("fastapi",     "fastapi"),
+        ("uvicorn",     "uvicorn"),
+        ("numpy",       "numpy"),
+        ("sqlalchemy",  "sqlalchemy"),
+    ]
+    for label, mod in packages:
+        try:
+            m = importlib.import_module(mod)
+            ver = getattr(m, "__version__", "?")
+            _row(f"  {label}", True, f"v{ver}")
+        except ImportError:
+            _row(f"  {label}", False, "not installed — run `pip install llm-autotune`")
+
+    # ── Ollama ──────────────────────────────────────────────────────────
+    console.print()
+    try:
+        r = httpx.get("http://localhost:11434/api/version", timeout=2.0)
+        ver = r.json().get("version", "?")
+        _row("Ollama", True, f"v{ver} running at localhost:11434")
+        # How many models loaded?
+        try:
+            ps_r = httpx.get("http://localhost:11434/api/ps", timeout=2.0)
+            loaded = ps_r.json().get("models", [])
+            n = len(loaded)
+            if n:
+                names = ", ".join(m.get("name", "?") for m in loaded[:3])
+                suffix = f" and {n - 3} more" if n > 3 else ""
+                _row("  Models in memory", True, f"{n} loaded: {names}{suffix}")
+            else:
+                _row("  Models in memory", None, "none loaded  (load one to warm up)")
+        except Exception:
+            _row("  Models in memory", None, "could not query /api/ps")
+    except Exception:
+        _row(
+            "Ollama",
+            False,
+            "not running — start with `ollama serve` or open the Ollama app",
+        )
+
+    # ── MLX (Apple Silicon) ──────────────────────────────────────────────
+    try:
+        from autotune.api.backends.mlx_backend import mlx_available, list_cached_mlx_models
+        if mlx_available():
+            cached = list_cached_mlx_models()
+            _row(
+                "MLX backend",
+                True,
+                f"available  ·  {len(cached)} model(s) cached locally",
+            )
+        else:
+            _row(
+                "MLX backend",
+                None,
+                "not available (install: pip install mlx-lm)  or not Apple Silicon",
+            )
+    except Exception:
+        _row("MLX backend", None, "not installed")
+
+    # ── LM Studio ────────────────────────────────────────────────────────
+    try:
+        r = httpx.get("http://localhost:1234/v1/models", timeout=2.0)
+        if r.status_code == 200:
+            mods = r.json().get("data", [])
+            _row("LM Studio", True, f"running  ·  {len(mods)} model(s) available")
+        else:
+            _row("LM Studio", None, "not running (optional)")
+    except Exception:
+        _row("LM Studio", None, "not running (optional)")
+
+    # ── HuggingFace token ────────────────────────────────────────────────
+    hf = bool(__import__("os").environ.get("HF_TOKEN"))
+    _row(
+        "HF_TOKEN",
+        True if hf else None,
+        "set" if hf else "not set  (optional — needed for gated models)",
+    )
+
+    # ── RAM & swap ───────────────────────────────────────────────────────
+    console.print()
+    vm  = psutil.virtual_memory()
+    sw  = psutil.swap_memory()
+    ram_pct = vm.percent
+    ram_avail = vm.available / 1024**3
+    ram_total = vm.total / 1024**3
+    swap_used = sw.used / 1024**3
+
+    ram_ok: bool | None
+    ram_detail: str
+    if ram_pct >= 93:
+        ram_ok = False
+        ram_detail = f"{ram_pct:.0f}% used — critical, swap imminent  ({ram_avail:.1f} GB free of {ram_total:.0f} GB)"
+    elif ram_pct >= 80:
+        ram_ok = None
+        ram_detail = f"{ram_pct:.0f}% used — moderate pressure  ({ram_avail:.1f} GB free of {ram_total:.0f} GB)"
+    else:
+        ram_ok = True
+        ram_detail = f"{ram_pct:.0f}% used  ({ram_avail:.1f} GB free of {ram_total:.0f} GB)"
+    _row("RAM", ram_ok, ram_detail)
+
+    if swap_used > 0.5:
+        _row("Swap", False if swap_used > 2 else None,
+             f"{swap_used:.1f} GB in use — inference may be slow while swapping")
+    else:
+        _row("Swap", True, f"{swap_used:.2f} GB used — no pressure")
+
+    # ── autotune DB ──────────────────────────────────────────────────────
+    console.print()
+    try:
+        from autotune.db.store import get_db
+        db = get_db()
+        # Simple probe: count models
+        n_models = len(db.list_models() or [])
+        from autotune.db.store import _db_path  # type: ignore[attr-defined]
+        try:
+            db_size_mb = _db_path().stat().st_size / 1024**2
+            size_str = f"{db_size_mb:.1f} MB"
+        except Exception:
+            size_str = "?"
+        _row("autotune DB", True, f"{n_models} model(s) cached  ·  {size_str}")
+    except Exception as exc:
+        _row("autotune DB", False, f"could not open: {exc}")
+
+    # ── autotune config ──────────────────────────────────────────────────
+    try:
+        from autotune.config.user_config import load_config, _config_file
+        cfg = load_config()
+        cfg_path = _config_file()
+        if cfg:
+            keys_str = ", ".join(f"{k}={v}" for k, v in cfg.items() if not k.startswith("_"))
+            _row("User config", True, keys_str or "empty")
+        else:
+            _row("User config", None, f"no overrides set  (use `autotune config set <key> <val>`)")
+    except Exception:
+        _row("User config", None, "not found")
+
+    # ── Print results ────────────────────────────────────────────────────
+    t = Table(
+        box=_box.SIMPLE,
+        show_header=True,
+        header_style="bold dim",
+        pad_edge=False,
+        min_width=72,
+    )
+    t.add_column("Check",  style="bold", no_wrap=True, min_width=26)
+    t.add_column("Status", justify="center", no_wrap=True, min_width=4)
+    t.add_column("Detail")
+
+    failures = 0
+    warnings = 0
+    for check, icon, detail in rows:
+        t.add_row(check, icon, detail)
+        if "✗" in icon:
+            failures += 1
+        elif "⚠" in icon:
+            warnings += 1
+
+    console.print(t)
+
+    if failures == 0 and warnings == 0:
+        console.print("[green]Everything looks good![/green]\n")
+    elif failures == 0:
+        console.print(
+            f"[yellow]{warnings} warning(s)[/yellow] — optional items not configured.\n"
+        )
+    else:
+        console.print(
+            f"[red]{failures} failure(s)[/red], [yellow]{warnings} warning(s)[/yellow] "
+            "— fix failures before using autotune.\n"
+        )
+
+
+# ---------------------------------------------------------------------------
+# `autotune config`
+# ---------------------------------------------------------------------------
+
+@cli.group("config")
+def config_group() -> None:
+    """View and set persistent autotune defaults.
+
+    Settings are stored in your platform config directory and apply to all
+    autotune commands automatically.
+
+    \b
+    Available keys:
+      default_model     Model used when --model is not specified
+      default_profile   Inference profile: fast | balanced | quality  (default: balanced)
+      serve_host        Host for `autotune serve`  (default: 127.0.0.1)
+      serve_port        Port for `autotune serve`  (default: 8765)
+
+    \b
+    Examples:
+      autotune config show
+      autotune config set default_model qwen3:8b
+      autotune config set default_profile fast
+      autotune config get default_model
+      autotune config reset
+    """
+
+
+@config_group.command("show")
+def config_show() -> None:
+    """Show all current configuration values."""
+    from autotune.config.user_config import load_config, KNOWN_KEYS, _config_file
+    from rich.table import Table
+    from rich import box as _box
+
+    cfg = load_config()
+    path = _config_file()
+
+    t = Table(
+        box=_box.SIMPLE_HEAD,
+        show_header=True,
+        header_style="bold dim",
+        pad_edge=False,
+        min_width=70,
+    )
+    t.add_column("Key",         style="cyan", no_wrap=True, min_width=18)
+    t.add_column("Value",       style="bold", min_width=16)
+    t.add_column("Default",     style="dim",  min_width=12)
+    t.add_column("Description", style="dim")
+
+    for key, (type_hint, desc, default) in KNOWN_KEYS.items():
+        stored = cfg.get(key)
+        val_str = str(stored) if stored is not None else "[dim](not set)[/dim]"
+        def_str = str(default) if default is not None else "—"
+        t.add_row(key, val_str, def_str, desc)
+
+    console.print(t)
+    console.print(f"[dim]Config file: {path}[/dim]\n")
+
+
+@config_group.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set a configuration value.
+
+    \b
+    Examples:
+      autotune config set default_model qwen3:8b
+      autotune config set default_profile fast
+      autotune config set serve_port 9000
+    """
+    from autotune.config.user_config import set_value, KNOWN_KEYS
+
+    ok, err = set_value(key, value)
+    if not ok:
+        console.print(f"[red]Error:[/red] {err}")
+        raise SystemExit(1)
+
+    type_hint, _, _ = KNOWN_KEYS[key]
+    display = int(value) if type_hint == "int" else value
+    console.print(f"[green]✓[/green]  {key} = [bold]{display}[/bold]")
+
+
+@config_group.command("get")
+@click.argument("key")
+def config_get(key: str) -> None:
+    """Print the current value for a single key.
+
+    \b
+    Example:
+      autotune config get default_model
+    """
+    from autotune.config.user_config import get_value, effective_default, KNOWN_KEYS
+
+    if key not in KNOWN_KEYS:
+        known = ", ".join(KNOWN_KEYS)
+        console.print(f"[red]Unknown key {key!r}.[/red]  Known: {known}")
+        raise SystemExit(1)
+
+    stored = get_value(key)
+    effective = effective_default(key)
+    if stored is not None:
+        console.print(f"{key} = [bold]{stored}[/bold]  [dim](set by user)[/dim]")
+    else:
+        console.print(
+            f"{key} = [bold]{effective}[/bold]  [dim](default — not explicitly set)[/dim]"
+        )
+
+
+@config_group.command("reset")
+@click.option("--yes", is_flag=True, default=False, help="Skip confirmation prompt.")
+def config_reset(yes: bool) -> None:
+    """Remove all user config and restore built-in defaults."""
+    from autotune.config.user_config import reset_config, _config_file
+
+    path = _config_file()
+    if not path.exists():
+        console.print("[dim]No user config found — already at defaults.[/dim]")
+        return
+
+    if not yes:
+        try:
+            ans = input("  Reset all autotune config to defaults? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if ans not in ("y", "yes"):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    reset_config()
+    console.print("[green]✓[/green]  Config reset to defaults.")
+
+
+# ---------------------------------------------------------------------------
+# `autotune compare <model1> <model2>`
+# ---------------------------------------------------------------------------
+
+@cli.command("compare")
+@click.argument("model1")
+@click.argument("model2")
+@click.option(
+    "--prompt", "-p",
+    default=None,
+    metavar="TEXT",
+    help="Single prompt to compare with. Omit to use the built-in 4-prompt suite.",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced",
+    show_default=True,
+    help="autotune profile applied to both models.",
+)
+@click.option(
+    "--runs", "-n",
+    default=1,
+    show_default=True,
+    type=int,
+    metavar="N",
+    help="Number of runs per prompt per model (results are averaged).",
+)
+def compare(model1: str, model2: str, prompt: Optional[str], profile: str, runs: int) -> None:
+    """Side-by-side benchmark of two models on the same prompts.
+
+    Runs an identical prompt suite through MODEL1 and MODEL2 with autotune
+    optimization active on both, then displays a Rich table with TTFT, tok/s,
+    total time, peak RAM, and the response text preview.
+
+    The default suite covers four prompt types: short factual, code generation,
+    long-context analysis, and multi-turn reasoning — giving a rounded picture
+    of where each model excels.
+
+    \b
+    Examples:
+      autotune compare llama3.2:3b qwen3:8b
+      autotune compare llama3.2:3b qwen3:8b --prompt "Explain transformers in 3 lines"
+      autotune compare llama3.2:3b qwen3:8b -n 2 --profile fast
+    """
+    import asyncio
+    import statistics
+    from rich.table import Table
+    from rich import box as _box
+    from rich.panel import Panel
+
+    from autotune.bench.runner import run_bench, BenchResult
+
+    DEFAULT_PROMPTS = [
+        ("factual",  [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}]),
+        ("code",     [{"role": "user", "content": "Write a Python function that returns the nth Fibonacci number using memoization."}]),
+        ("analysis", [{"role": "user", "content": "Summarize the key trade-offs between SQL and NoSQL databases in 4 bullet points."}]),
+        ("reasoning",[{"role": "user", "content": "A bat and a ball cost $1.10. The bat costs $1 more than the ball. How much does the ball cost? Show your reasoning."}]),
+    ]
+
+    if prompt:
+        prompts = [("custom", [{"role": "user", "content": prompt}])]
+    else:
+        prompts = DEFAULT_PROMPTS
+
+    async def _run_all() -> dict[str, list[BenchResult]]:
+        results: dict[str, list[BenchResult]] = {model1: [], model2: []}
+        total = len(prompts) * 2 * runs
+        done = 0
+        for label, msgs in prompts:
+            for model in (model1, model2):
+                for run_idx in range(runs):
+                    done += 1
+                    with console.status(
+                        f"[cyan]Run {done}/{total}[/cyan]  "
+                        f"[bold]{model.split(':')[0]}[/bold]  ·  {label}"
+                        + (f" (run {run_idx+1}/{runs})" if runs > 1 else ""),
+                        spinner="dots",
+                    ):
+                        try:
+                            r = await run_bench(model, msgs, profile_name=profile, tag=f"compare_{label}")
+                        except Exception as exc:
+                            # Create an error result so the table still shows
+                            r = BenchResult(
+                                tag=f"compare_{label}", model_id=model,
+                                profile_name=profile, prompt_tokens=0,
+                                completion_tokens=0, ttft_ms=0, tokens_per_sec=0,
+                                elapsed_sec=0, ram_before_gb=0, ram_peak_gb=0,
+                                ram_after_gb=0, swap_before_gb=0, swap_peak_gb=0,
+                                swap_after_gb=0, cpu_avg_pct=0, cpu_peak_pct=0,
+                                error=str(exc),
+                            )
+                    results[model].append(r)
+        return results
+
+    console.print(
+        f"\n[bold]autotune compare[/bold]  ·  "
+        f"[cyan]{model1}[/cyan] vs [cyan]{model2}[/cyan]  ·  "
+        f"profile=[bold]{profile}[/bold]  ·  {runs} run(s) × {len(prompts)} prompt(s)\n"
+    )
+
+    results = asyncio.run(_run_all())
+
+    def _avg(vals: list[float]) -> float:
+        return statistics.mean(vals) if vals else 0.0
+
+    def _good(a: float, b: float, lower_is_better: bool = True) -> tuple[str, str]:
+        """Return (markup_a, markup_b) with winner highlighted green."""
+        if a == 0 and b == 0:
+            return "—", "—"
+        if a == 0:
+            return "—", f"[green]{b:.1f}[/green]"
+        if b == 0:
+            return f"[green]{a:.1f}[/green]", "—"
+        if lower_is_better:
+            better_a = a < b * 0.97
+            better_b = b < a * 0.97
+        else:
+            better_a = a > b * 1.03
+            better_b = b > a * 1.03
+        fa = f"[green]{a:.1f}[/green]" if better_a else f"{a:.1f}"
+        fb = f"[green]{b:.1f}[/green]" if better_b else f"{b:.1f}"
+        return fa, fb
+
+    # ── Per-prompt breakdown ─────────────────────────────────────────────
+    console.print("[bold]Per-prompt results[/bold]\n")
+
+    for i, (label, _) in enumerate(prompts):
+        r1_list = [r for r in results[model1] if label in r.tag]
+        r2_list = [r for r in results[model2] if label in r.tag]
+
+        t = Table(
+            title=f"[bold]{label}[/bold]",
+            box=_box.SIMPLE_HEAD,
+            show_header=True,
+            title_justify="left",
+            header_style="bold dim",
+            pad_edge=False,
+        )
+        t.add_column("Model",    style="cyan", no_wrap=True, min_width=22)
+        t.add_column("TTFT ms",  justify="right", min_width=8)
+        t.add_column("tok/s",    justify="right", min_width=7)
+        t.add_column("Time s",   justify="right", min_width=7)
+        t.add_column("RAM peak", justify="right", min_width=9)
+        t.add_column("Ctx",      justify="right", min_width=6)
+        t.add_column("Response preview", style="dim")
+
+        for model, r_list in ((model1, r1_list), (model2, r2_list)):
+            if not r_list:
+                t.add_row(model, "—", "—", "—", "—", "—", "[red]no data[/red]")
+                continue
+            errors = [r for r in r_list if r.error]
+            if errors:
+                t.add_row(model, "—", "—", "—", "—", "—",
+                          f"[red]error: {errors[0].error[:60]}[/red]")
+                continue
+            avg_ttft = _avg([r.ttft_ms for r in r_list])
+            avg_tps  = _avg([r.tokens_per_sec for r in r_list])
+            avg_time = _avg([r.elapsed_sec for r in r_list])
+            avg_ram  = _avg([r.ram_peak_gb for r in r_list])
+            avg_ctx  = _avg([r.num_ctx_used for r in r_list if r.num_ctx_used])
+            preview  = (r_list[-1].response_text or "")[:80].replace("\n", " ")
+
+            t.add_row(
+                model,
+                f"{avg_ttft:.0f}",
+                f"{avg_tps:.1f}",
+                f"{avg_time:.1f}",
+                f"{avg_ram:.2f} GB",
+                f"{int(avg_ctx):,}" if avg_ctx else "—",
+                preview + ("…" if len(r_list[-1].response_text or "") > 80 else ""),
+            )
+        console.print(t)
+
+    # ── Summary comparison ───────────────────────────────────────────────
+    console.print("\n[bold]Summary[/bold]\n")
+
+    s = Table(
+        box=_box.SIMPLE_HEAD,
+        show_header=True,
+        header_style="bold dim",
+        pad_edge=False,
+    )
+    s.add_column("Metric",    style="bold", min_width=20)
+    s.add_column(model1,      justify="right", min_width=14)
+    s.add_column(model2,      justify="right", min_width=14)
+    s.add_column("Winner",    justify="center", min_width=10)
+
+    metrics = [
+        ("TTFT (ms)",       "ttft_ms",         True),
+        ("tok/s",           "tokens_per_sec",   False),
+        ("Total time (s)",  "elapsed_sec",      True),
+        ("Peak RAM (GB)",   "ram_peak_gb",      True),
+    ]
+
+    for label, attr, lower_better in metrics:
+        v1_list = [getattr(r, attr) for r in results[model1] if not r.error]
+        v2_list = [getattr(r, attr) for r in results[model2] if not r.error]
+        if not v1_list or not v2_list:
+            s.add_row(label, "—", "—", "—")
+            continue
+        v1 = _avg(v1_list)
+        v2 = _avg(v2_list)
+        m1_str, m2_str = _good(v1, v2, lower_is_better=lower_better)
+
+        if lower_better:
+            winner = model1 if v1 < v2 * 0.97 else (model2 if v2 < v1 * 0.97 else "tie")
+        else:
+            winner = model1 if v1 > v2 * 1.03 else (model2 if v2 > v1 * 1.03 else "tie")
+
+        winner_fmt = (
+            f"[green]{winner.split(':')[0]}[/green]"
+            if winner != "tie"
+            else "[dim]tie[/dim]"
+        )
+        s.add_row(label, m1_str, m2_str, winner_fmt)
+
+    console.print(s)
+    console.print(
+        f"\n[dim]Both models ran with autotune optimization (profile: {profile}).  "
+        "Green = winner (>3% margin).  Results vary by hardware and model load state.[/dim]\n"
+    )
 
 
 # ---------------------------------------------------------------------------
