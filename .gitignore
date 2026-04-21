@@ -48,3 +48,7 @@ Formula/
 
 # autotune data dir (runtime)
 data/
+
+# Website build artifacts
+website/.next/
+website/node_modules/

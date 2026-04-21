@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090f;
+  --foreground: #e8e8f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.65s ease-out forwards;
+}
+
+.delay-100 { animation-delay: 0.10s; opacity: 0; }
+.delay-200 { animation-delay: 0.20s; opacity: 0; }
+.delay-300 { animation-delay: 0.30s; opacity: 0; }
+.delay-400 { animation-delay: 0.40s; opacity: 0; }
+.delay-500 { animation-delay: 0.55s; opacity: 0; }
+
+/* glow pulse on hero badge */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 12px 2px rgba(139, 92, 246, 0.3); }
+  50%       { box-shadow: 0 0 28px 6px rgba(139, 92, 246, 0.55); }
+}
+
+.badge-glow { animation: glow 3s ease-in-out infinite; }

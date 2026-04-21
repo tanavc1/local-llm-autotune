@@ -299,6 +299,7 @@ class Database:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path or _db_path()
         self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.RLock()  # serialise concurrent ops on shared connection
 
     # ------------------------------------------------------------------ #
     # Connection management                                                #
@@ -381,12 +382,13 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Generator[sqlite3.Connection, None, None]:
-        try:
-            yield self.conn
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
+        with self._lock:
+            try:
+                yield self.conn
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     # ------------------------------------------------------------------ #
     # Model CRUD                                                           #
