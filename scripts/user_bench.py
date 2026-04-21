@@ -530,25 +530,32 @@ async def benchmark_model(
     return comparisons
 
 
-async def main() -> None:
-    parser = argparse.ArgumentParser(
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
         description="autotune User Experience Benchmark — measures what users actually feel",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--model", "-m",   default="",         help="Ollama model to benchmark (e.g. qwen3:8b)")
-    parser.add_argument("--profile", "-p", default="balanced", help="autotune profile: fast|balanced|quality")
-    parser.add_argument("--runs",    "-r", type=int, default=3, help="Runs per scenario per condition (default: 3)")
-    parser.add_argument("--quick",   "-q", action="store_true",  help="Run fewer scenarios for a fast smoke test")
-    parser.add_argument("--all-models",    action="store_true",  help="Run on all locally installed Ollama models")
-    parser.add_argument("--background",    action="store_true",  help="Fork to background (survives terminal close)")
-    parser.add_argument("--output-dir",    default=".",          help="Directory for result JSON files")
-    args = parser.parse_args()
+    p.add_argument("--model", "-m",   default="",         help="Ollama model to benchmark (e.g. qwen3:8b)")
+    p.add_argument("--profile", "-p", default="balanced", help="autotune profile: fast|balanced|quality")
+    p.add_argument("--runs",    "-r", type=int, default=3, help="Runs per scenario per condition (default: 3)")
+    p.add_argument("--quick",   "-q", action="store_true", help="Run 2 scenarios instead of 4 for a faster smoke test")
+    p.add_argument("--all-models",    action="store_true", help="Run on all locally installed Ollama models")
+    p.add_argument("--background",    action="store_true", help="Fork to background (survives terminal close, sends desktop notification)")
+    p.add_argument("--output-dir",    default=".",         help="Directory for result JSON files (default: current dir)")
+    return p
 
-    # ── Background mode ───────────────────────────────────────────────────────
-    if args.background and os.fork() != 0:
-        print("✓ Benchmark running in background. You'll get a desktop notification when done.")
-        sys.exit(0)
 
+def _check_ollama_sync() -> list[str]:
+    """Synchronous Ollama check — used before forking so we fail-fast in the foreground."""
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{OLLAMA_BASE}/api/tags", timeout=3.0)
+        return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        return []
+
+
+async def main(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -573,7 +580,6 @@ async def main() -> None:
             sys.exit(1)
         models = [args.model]
     else:
-        # Pick smallest model for default run
         models = [available_models[0]]
         print(f"No model specified. Using: {models[0]}")
         print(f"Available: {', '.join(available_models)}\n")
@@ -633,7 +639,42 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # Windows compatibility
+    _parser = _build_parser()
+    _args   = _parser.parse_args()
+
+    # ── Fail-fast Ollama check BEFORE forking ─────────────────────────────────
+    # (Fork must happen before asyncio.run() — the child inherits the process
+    #  state before any event loop is created, avoiding coroutine corruption.)
+    if _args.background:
+        _models = _check_ollama_sync()
+        if not _models:
+            print(
+                "\n❌  Ollama is not running — cannot start background benchmark.\n"
+                "    Start it with: ollama serve\n"
+            )
+            sys.exit(1)
+
+        # Fork here, before asyncio
+        _pid = os.fork()
+        if _pid != 0:
+            # Parent: print confirmation and exit
+            _log = Path(_args.output_dir) / "user_bench.log"
+            print(
+                f"✓  Benchmark running in background (PID {_pid}).\n"
+                f"   Log: {_log}\n"
+                f"   You'll get a desktop notification when it's done."
+            )
+            sys.exit(0)
+
+        # Child: redirect stdout/stderr to log file so nothing is lost
+        _log_path = Path(_args.output_dir) / "user_bench.log"
+        _log_path.parent.mkdir(parents=True, exist_ok=True)
+        _log_fd = open(_log_path, "w", buffering=1)
+        sys.stdout = _log_fd
+        sys.stderr = _log_fd
+
+    # Windows asyncio policy
     if platform.system() == "Windows":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+
+    asyncio.run(main(_args))

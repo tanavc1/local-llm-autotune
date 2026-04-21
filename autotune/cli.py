@@ -3292,56 +3292,119 @@ def stress_test(
 # ---------------------------------------------------------------------------
 
 @cli.command("proof")
-@click.option("--model", "-m", default="qwen3:8b",
-              help="Ollama model to benchmark (default: qwen3:8b)")
-@click.option("--runs", "-r", type=int, default=3,
-              help="Warm inference runs per prompt per config (default: 3)")
-@click.option("--cold-runs", type=int, default=3,
-              help="Cold-start calls per config (default: 3)")
-@click.option("--output", "-o", default="proof_results.json",
-              help="JSON output path (default: proof_results.json)")
-@click.option("--with-cold",   is_flag=True, help="Include cold-start phase")
-@click.option("--with-noswap", is_flag=True, help="Include no-swap mode demonstration")
-@click.option("--list-models", is_flag=True, help="List available Ollama models and exit")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option("--runs", "-r", type=int, default=2, show_default=True,
+              help="Runs per condition. 2 is fast (~30s); 3+ gives more stable numbers.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to benchmark against raw Ollama.",
+)
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save JSON results to this path. Default: proof_<model>.json in current dir.")
+@click.option("--list-models", is_flag=True, help="List locally installed Ollama models and exit.")
 def proof(
-    model: str,
+    model: Optional[str],
     runs: int,
-    cold_runs: int,
-    output: str,
-    with_cold: bool,
-    with_noswap: bool,
+    profile: str,
+    output: Optional[str],
     list_models: bool,
 ) -> None:
-    """
-    Does autotune actually help? Run this to find out.
+    """Does autotune actually help on YOUR machine? Find out in ~30 seconds.
 
-    Measures three things on your model:\n
-      Speed    — time before first word appears (what we improve)\n
-      Memory   — RAM used while model is loaded (what we reduce)\n
-      Honesty  — generation speed (GPU-bound, we don't touch this)\n
+    Runs a head-to-head benchmark: raw Ollama defaults vs autotune.
+    All timing from Ollama's own Go nanosecond timers — nothing estimated.
 
-    Add --with-noswap to see how autotune prevents your Mac from\n
-    swapping under memory pressure.\n
+    \b
+    What it measures (honestly):
+      TTFT           — time to first word (autotune wins here)
+      Context window — autotune's dynamic num_ctx vs Ollama's fixed 4096
+      KV cache size  — how much RAM is freed by smaller context
+      RAM headroom   — how much is left for your other apps
+      Swap events    — any swap pressure (goal: 0 for both)
+      tok/s          — generation speed (GPU-bound; reported honestly as unchanged)
 
-    All numbers from Ollama's own internal timers. Nothing estimated.
+    \b
+    Examples:
+      autotune proof
+      autotune proof -m qwen3:8b
+      autotune proof -m qwen3:8b --runs 3 --output results.json
+      autotune proof --list-models
     """
     import asyncio as _asyncio
-    import argparse as _argparse
-    import sys as _sys
+    import httpx as _httpx
     from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
-    from proof import main as _proof_main
+    from rich.console import Console as _Console
 
-    ns = _argparse.Namespace(
-        model=model,
-        runs=runs,
-        cold_runs=cold_runs,
-        output=output,
-        with_cold=with_cold,
-        with_noswap=with_noswap,
-        list_models=list_models,
+    _console = _Console()
+
+    # ── List models shortcut ──────────────────────────────────────────────────
+    if list_models:
+        try:
+            r = _httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+            names = [m["name"] for m in r.json().get("models", [])]
+            if names:
+                _console.print("\n[bold]Installed Ollama models:[/bold]")
+                for n in names:
+                    _console.print(f"  {n}")
+            else:
+                _console.print("[yellow]No models installed.[/yellow] Pull one: [bold]ollama pull qwen3:8b[/bold]")
+        except Exception:
+            _console.print("[red]Ollama is not running.[/red] Start it: [bold]ollama serve[/bold]")
+        return
+
+    # ── Resolve model ─────────────────────────────────────────────────────────
+    _PREFERENCE = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
+    if not model:
+        try:
+            r = _httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+            installed = [m["name"] for m in r.json().get("models", [])]
+            for _pref in _PREFERENCE:
+                if _pref in installed:
+                    model = _pref
+                    break
+            if not model and installed:
+                model = installed[0]
+        except Exception:
+            pass
+
+    if not model:
+        _console.print(
+            "[red]Ollama is not running or no models installed.[/red]\n"
+            "Start Ollama: [bold]ollama serve[/bold]\n"
+            "Pull a model: [bold]ollama pull qwen3:8b[/bold]"
+        )
+        raise SystemExit(1)
+
+    # ── Resolve output path ───────────────────────────────────────────────────
+    _safe = model.replace(":", "_").replace("/", "_")
+    _out  = _Path(output) if output else _Path(f"proof_{_safe}.json")
+
+    # ── Run ───────────────────────────────────────────────────────────────────
+    from autotune.bench.quick_proof import run_quick_proof, print_proof_result
+
+    _console.print(
+        f"\n[bold]autotune proof[/bold]  ·  [cyan]{model}[/cyan]  ·  "
+        f"{runs} run{'s' if runs != 1 else ''} per condition  ·  profile: {profile}"
     )
-    _asyncio.run(_proof_main(ns))
+    _console.print("[dim]Using Ollama's internal Go nanosecond timers — not estimated.[/dim]\n")
+
+    def _step(msg: str) -> None:
+        _console.print(f"  [dim]{msg}[/dim]")
+
+    result = _asyncio.run(
+        run_quick_proof(
+            model_id=model,
+            profile_name=profile,
+            n_runs=runs,
+            output_path=_out,
+            on_step=_step,
+        )
+    )
+
+    print_proof_result(result, _console, output_path=_out)
 
 
 # ---------------------------------------------------------------------------
@@ -3490,6 +3553,128 @@ def agent_bench(
     import asyncio as _asyncio
     rc = _asyncio.run(_ab._async_main(ns))
     raise SystemExit(rc)
+
+
+# ---------------------------------------------------------------------------
+# `autotune user-bench`  — Real-world user experience benchmark
+# ---------------------------------------------------------------------------
+
+@cli.command("user-bench")
+@click.option("--model", "-m", default="", metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects first installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile.",
+)
+@click.option("--runs", "-r", type=int, default=3, show_default=True,
+              help="Runs per scenario per condition.")
+@click.option("--quick", "-q", is_flag=True,
+              help="Quick mode: 2 scenarios instead of 4 (~10-15 min).")
+@click.option("--all-models", is_flag=True,
+              help="Run on every locally installed Ollama model.")
+@click.option("--background", is_flag=True,
+              help="Fork to background (survives terminal close). Sends a desktop notification when done.")
+@click.option("--output-dir", default=".", show_default=True, metavar="DIR",
+              help="Directory for result JSON files.")
+def user_bench(
+    model: str,
+    profile: str,
+    runs: int,
+    quick: bool,
+    all_models: bool,
+    background: bool,
+    output_dir: str,
+) -> None:
+    """Real-world user experience benchmark — measures what users actually feel.
+
+    Runs autotune head-to-head against raw Ollama across realistic laptop
+    workflows: background queries, sustained chat, agent loops, and code
+    debugging.  Reports in user language — swap events, RAM headroom,
+    TTFT consistency, CPU spikes, and a 0–100 background impact score.
+
+    \b
+    The 7 KPIs:
+      swap_events           — "My computer never choked"        (goal: 0)
+      ram_headroom_gb       — "Chrome/Slack/VS Code had RAM"
+      ttft_ms               — "Responses felt fast"             (avg + p95)
+      ttft_consistency_pct  — "Response times were predictable"
+      cpu_spike_events      — "The fans didn't spin up"
+      memory_recovery_sec   — "RAM came back after each call"
+      background_impact     — Composite 0–100 score
+
+    \b
+    Results are saved to user_bench_<model>.json in the output directory.
+
+    \b
+    Examples:
+      autotune user-bench -m qwen3:8b
+      autotune user-bench -m qwen3:8b --quick
+      autotune user-bench -m qwen3:8b --background
+      autotune user-bench --all-models --runs 2
+    """
+    import os as _os
+    import sys as _sys
+    import asyncio as _asyncio
+    import platform as _platform
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
+    from user_bench import (  # type: ignore
+        _build_parser, _check_ollama_sync, _notify,
+        main as _ub_main,
+    )
+    import argparse as _argparse
+
+    # Build a Namespace that matches user_bench's schema
+    args = _argparse.Namespace(
+        model=model,
+        profile=profile,
+        runs=runs,
+        quick=quick,
+        all_models=all_models,
+        background=background,
+        output_dir=output_dir,
+    )
+
+    # ── Background mode: check Ollama BEFORE fork, then fork before asyncio ──
+    if background:
+        _models = _check_ollama_sync()
+        if not _models:
+            console.print(
+                "[red]Ollama is not running — cannot start background benchmark.[/red]\n"
+                "Start it with: [bold]ollama serve[/bold]"
+            )
+            raise SystemExit(1)
+
+        if not hasattr(_os, "fork"):
+            console.print("[yellow]Background mode is not supported on Windows.[/yellow]")
+            console.print("Running in foreground instead.")
+        else:
+            _pid = _os.fork()
+            if _pid != 0:
+                _log = _Path(output_dir) / "user_bench.log"
+                console.print(
+                    f"[green]✓[/green] Benchmark running in background "
+                    f"[dim](PID {_pid})[/dim]\n"
+                    f"  Log:  [cyan]{_log}[/cyan]\n"
+                    f"  You'll get a desktop notification when it's done."
+                )
+                return
+
+            # Child: redirect to log
+            _log_path = _Path(output_dir) / "user_bench.log"
+            _log_path.parent.mkdir(parents=True, exist_ok=True)
+            _lf = open(_log_path, "w", buffering=1)
+            _sys.stdout = _lf
+            _sys.stderr = _lf
+            args.background = False   # child runs foreground
+
+    if _platform.system() == "Windows":
+        _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+
+    _asyncio.run(_ub_main(args))
 
 
 # ---------------------------------------------------------------------------
