@@ -971,7 +971,7 @@ def _save_json(
 
 async def main(args: argparse.Namespace) -> None:
     if not await _check_ollama():
-        console.print("[red]Ollama is not running. Start it with: ollama serve[/red]")
+        console.print("[red]No models found. Pull one with: autotune pull qwen3:8b[/red]")
         sys.exit(1)
 
     if args.list_models:
@@ -981,13 +981,13 @@ async def main(args: argparse.Namespace) -> None:
             for m in models:
                 console.print(f"  {m}")
         else:
-            console.print("[dim]No models found. Pull one: ollama pull qwen3:8b[/dim]")
+            console.print("[dim]No models found. Pull one: autotune pull qwen3:8b[/dim]")
         return
 
     model = args.model
     if model not in await _list_models():
         console.print(f"[red]Model '{model}' not found.[/red]")
-        console.print(f"[dim]Pull it: ollama pull {model.split(':')[0]}[/dim]")
+        console.print(f"[dim]Pull it: autotune pull {model.split(':')[0]}[/dim]")
         sys.exit(1)
 
     chip   = _chip()

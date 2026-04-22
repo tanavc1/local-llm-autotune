@@ -2050,7 +2050,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     # ── Ollama check ─────────────────────────────────────────────────────
     if not await _check_ollama():
-        console.print("[red]Ollama is not running. Start it with: ollama serve[/red]")
+        console.print("[red]No models found. Pull one with: autotune pull qwen3:8b[/red]")
         return 1
 
     # ── Hardware ──────────────────────────────────────────────────────────

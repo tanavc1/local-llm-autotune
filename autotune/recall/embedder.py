@@ -12,7 +12,7 @@ Model discovery
 On first use the embedder hits `/api/tags` and selects the best available
 embedding model from PREFERRED_MODELS (earlier entries win).  The probe result
 is cached for the lifetime of the object; call reset() to force a re-probe,
-e.g. after pulling a new model with `ollama pull`.
+e.g. after pulling a new model with `autotune pull`.
 
 Threading / concurrency
 -----------------------
@@ -185,7 +185,7 @@ class MemoryEmbedder:
         """
         Clear the cached probe result so the next call re-discovers models.
 
-        Useful after pulling a new model with `ollama pull` without restarting
+        Useful after pulling a new model with `autotune pull` without restarting
         the autotune process.
         """
         self._probed = False

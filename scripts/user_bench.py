@@ -563,9 +563,9 @@ async def main(args: argparse.Namespace) -> None:
     available_models = await _check_ollama()
     if not available_models:
         print(
-            "\n❌  Ollama is not running.\n"
-            "    Start it with: ollama serve\n"
-            "    Then pull a model: ollama pull qwen3:8b\n"
+            "\n❌  No models installed.\n"
+            "    Pull one with: autotune pull qwen3:8b\n"
+            "    (autotune starts Ollama automatically)\n"
         )
         sys.exit(1)
 
@@ -576,7 +576,7 @@ async def main(args: argparse.Namespace) -> None:
         if args.model not in available_models:
             print(f"\n❌  Model '{args.model}' not installed.")
             print(f"    Available: {', '.join(available_models)}")
-            print(f"    Install with: ollama pull {args.model}\n")
+            print(f"    Install with: autotune pull {args.model}\n")
             sys.exit(1)
         models = [args.model]
     else:
@@ -649,8 +649,8 @@ if __name__ == "__main__":
         _models = _check_ollama_sync()
         if not _models:
             print(
-                "\n❌  Ollama is not running — cannot start background benchmark.\n"
-                "    Start it with: ollama serve\n"
+                "\n❌  No models installed — cannot start background benchmark.\n"
+                "    Pull one with: autotune pull qwen3:8b\n"
             )
             sys.exit(1)
 

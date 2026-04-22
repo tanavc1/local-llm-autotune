@@ -389,7 +389,7 @@ class ModelSelector:
             if sug_quant:
                 warning += (
                     f" Pull a smaller quant: "
-                    f"ollama pull {model_name.split(':')[0]}:{sug_quant.lower()} "
+                    f"autotune pull {model_name.split(':')[0]}:{sug_quant.lower()} "
                     f"(~{sug_gb:.1f} GB)"
                 )
 

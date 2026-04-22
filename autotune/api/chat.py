@@ -314,11 +314,8 @@ class ChatSession:
         try:
             running = await self.chain.ollama_running()
             if not running:
-                console.print(
-                    "[yellow]⚠ Ollama is not running.[/yellow]\n"
-                    "  Start it with: [bold]ollama serve[/bold]\n"
-                    "  (or open the Ollama desktop app)\n"
-                )
+                from autotune.api.ollama_pull import ensure_ollama_running
+                ensure_ollama_running(console)
         except Exception:
             pass
 

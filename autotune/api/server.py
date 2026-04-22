@@ -489,12 +489,13 @@ async def _emit_run_telemetry(
     # ── Supabase (opt-in only) ────────────────────────────────────────────
     try:
         from autotune.telemetry import emit, get_install_key
+        from autotune.telemetry.consent import is_opted_in
         from autotune.telemetry.client import get_client
         from autotune.telemetry.events import EventType
 
         install_key = get_install_key()
         _tc = get_client()
-        if _tc:
+        if _tc and is_opted_in():
             _tc.record_run(install_key, {
                 "model_id":           model_id,
                 "hardware_key":       hw_dict["id"],
@@ -1026,7 +1027,7 @@ def _make_error_body(error_type: str, message: str, model_id: str) -> dict:
     suggestion = ""
     if error_type == "model_not_found":
         suggestion = (
-            f"Pull the model first: ollama pull {model_id}  "
+            f"Pull the model first: autotune pull {model_id}  "
             f"or check available models at GET /v1/models"
         )
     elif error_type == "backend_error":
@@ -1040,8 +1041,8 @@ def _make_error_body(error_type: str, message: str, model_id: str) -> dict:
             )
         else:
             suggestion = (
-                "Check that Ollama is running: ollama serve  "
-                "or inspect server logs for details."
+                "Ollama may have crashed — autotune will restart it automatically on the next request. "
+                "Or inspect server logs for details."
             )
     elif error_type == "auth_error":
         suggestion = "Set HF_TOKEN if using HuggingFace models, or use a local model."

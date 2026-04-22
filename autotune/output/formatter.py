@@ -122,7 +122,7 @@ def _config_panel(sc: ScoredConfig, rank: int, mode: str) -> Panel:
     if c.model.ollama_tag:
         lines.append(
             f"[bold green]→ Install:[/bold green]  "
-            f"[bold cyan]ollama pull {c.model.ollama_tag}[/bold cyan]"
+            f"[bold cyan]autotune pull {c.model.ollama_tag}[/bold cyan]"
         )
         lines.append(
             f"[bold green]→ Chat:   [/bold green]  "
@@ -173,7 +173,7 @@ def print_recommendations(
     console.rule("[dim]Next Steps[/dim]")
     console.print()
     console.print(
-        "  [bold]1.[/bold]  Copy the [bold cyan]ollama pull ...[/bold cyan] command above and run it in your terminal."
+        "  [bold]1.[/bold]  Run the [bold cyan]autotune pull ...[/bold cyan] command above — autotune downloads and sets everything up."
     )
     console.print(
         "  [bold]2.[/bold]  Once downloaded, start chatting:  "

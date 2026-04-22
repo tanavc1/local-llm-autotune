@@ -231,7 +231,23 @@ class BackendChain:
             async with httpx.AsyncClient(timeout=1.5) as client:
                 r = await client.get("http://localhost:11434/api/tags")
                 self._ollama_ok = r.status_code == 200
-                self._ollama_models = (await _probe_ollama()) if self._ollama_ok else []
+                if self._ollama_ok:
+                    # Parse model list from the response we already have —
+                    # avoids a second HTTP call to the same endpoint.
+                    data = r.json()
+                    self._ollama_models = [
+                        ModelInfo(
+                            id=m.get("name", ""),
+                            name=m.get("name", "").split(":")[0],
+                            source="ollama",
+                            available_locally=True,
+                            size_gb=round(m.get("size", 0) / 1024**3, 2),
+                            backend_hint="ollama",
+                        )
+                        for m in data.get("models", [])
+                    ]
+                else:
+                    self._ollama_models = []
                 self._ollama_probed_at = now
                 return self._ollama_ok
         except Exception:
@@ -316,15 +332,12 @@ class BackendChain:
             # Tailor the error to the most likely root cause so the user knows
             # exactly what to fix rather than reading a wall of options.
             if not ollama_up:
-                # Ollama is the primary backend and it's not running — this is
-                # almost certainly the problem.  Give a single clear action.
                 raise ModelNotAvailableError(
-                    "\n\nOllama is not running.\n\n"
-                    "Start it with:\n"
-                    "  ollama serve\n\n"
-                    "Or open the Ollama desktop app if you installed via the .dmg / .exe.\n\n"
-                    f"Once Ollama is running, pull your model if you haven't already:\n"
-                    f"  ollama pull {model_id.split('/')[-1].lower()}\n"
+                    "\n\nautotune could not reach Ollama.\n\n"
+                    "If Ollama is not installed, get it from: https://ollama.ai\n\n"
+                    f"Once installed, pull your model:\n"
+                    f"  autotune pull {model_id.split('/')[-1].lower()}\n"
+                    "(autotune will start Ollama automatically)\n"
                 )
 
             mlx_hint = ""
@@ -336,8 +349,8 @@ class BackendChain:
                 )
             instructions = (
                 f"\n\nModel '{model_id}' not found locally.\n\n"
-                "To use this model, pull it with Ollama:\n"
-                f"  ollama pull {model_id.split('/')[-1].lower()}\n"
+                "Pull it with:\n"
+                f"  autotune pull {model_id.split('/')[-1].lower()}\n"
                 f"{mlx_hint}\n"
                 "Or export HF_TOKEN to use HuggingFace-hosted models:\n"
                 "  export HF_TOKEN=your_token_here\n"

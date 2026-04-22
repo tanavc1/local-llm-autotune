@@ -18,7 +18,10 @@ The Ollama pull API emits NDJSON:
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -136,6 +139,45 @@ def is_ollama_running() -> bool:
         return False
 
 
+def ensure_ollama_running(console: Optional[Console] = None) -> bool:
+    """Start Ollama in the background if not running. Returns True when ready."""
+    if is_ollama_running():
+        return True
+
+    con = console or Console()
+
+    if not shutil.which("ollama"):
+        con.print(
+            "[red]Ollama is not installed.[/red] "
+            "Download it from [bold]https://ollama.ai[/bold] and re-run."
+        )
+        return False
+
+    con.print("[dim]Ollama is not running — starting it in the background…[/dim]")
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        con.print(f"[red]Could not start Ollama:[/red] {exc}")
+        return False
+
+    for _ in range(20):
+        time.sleep(0.5)
+        if is_ollama_running():
+            con.print("[dim]Ollama started.[/dim]")
+            return True
+
+    con.print(
+        "[red]Ollama did not respond after 10 s.[/red] "
+        "Try opening the Ollama desktop app manually."
+    )
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Streaming pull
 # ---------------------------------------------------------------------------
@@ -181,14 +223,13 @@ def pull_model(model_id: str, console: Optional[Console] = None) -> bool:
     """
     con = console or Console()
 
-    if not is_ollama_running():
+    if not ensure_ollama_running(con):
         raise OllamaNotRunningError(
-            "Ollama is not running.\n"
-            "Start it with:  [bold]ollama serve[/bold]\n"
-            "or open the Ollama desktop app."
+            "Ollama could not be started automatically. "
+            "Install it from https://ollama.ai or open the Ollama desktop app."
         )
 
-    con.print(f"\n[bold]Pulling[/bold] [cyan]{model_id}[/cyan] via Ollama…\n")
+    con.print(f"\n[bold]Pulling[/bold] [cyan]{model_id}[/cyan]…\n")
 
     # Track layers: digest → (total_bytes, completed_bytes)
     layer_totals:    dict[str, int] = {}
@@ -282,9 +323,10 @@ def delete_model(model_id: str, console: Optional[Console] = None) -> bool:
     PullError               if the model doesn't exist or the server errors
     """
     con = console or Console()
-    if not is_ollama_running():
+    if not ensure_ollama_running(con):
         raise OllamaNotRunningError(
-            "Ollama is not running. Start it with: ollama serve"
+            "Ollama could not be started automatically. "
+            "Install it from https://ollama.ai or open the Ollama desktop app."
         )
     body = json.dumps({"model": model_id}).encode()
     req = urllib.request.Request(

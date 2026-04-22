@@ -263,9 +263,7 @@ def models(registry: bool) -> None:
         if not is_ollama_running():
             console.print(
                 "[yellow]No models found.[/yellow]\n"
-                "Ollama does not appear to be running.  Start it first:\n"
-                "  [bold]ollama serve[/bold]\n\n"
-                "Or pull a model directly:\n"
+                "Pull a model and autotune will start Ollama automatically:\n"
                 "  [bold]autotune pull qwen3:8b[/bold]"
             )
         else:
@@ -383,7 +381,6 @@ def pull(model: Optional[str], show_list: bool) -> None:
         if not model:
             return
 
-    console.print(f"[dim]Checking if Ollama is running…[/dim]")
     try:
         pull_model(model, console)
         console.print(
@@ -391,7 +388,7 @@ def pull(model: Optional[str], show_list: bool) -> None:
             f"           or list models: [bold]autotune ls[/bold][/dim]"
         )
     except OllamaNotRunningError as e:
-        console.print(f"[red]Ollama not running:[/red] {e}")
+        console.print(f"[red]Could not start Ollama:[/red] {e}")
         raise SystemExit(1)
     except PullError as e:
         console.print(f"[red]Pull failed:[/red] {e}")
@@ -427,8 +424,10 @@ def delete(model: Optional[str], yes: bool) -> None:
     # If no model given, show interactive picker
     if not model:
         if not is_ollama_running():
-            console.print("[red]Ollama is not running.[/red] Start it with: [bold]ollama serve[/bold]")
-            raise SystemExit(1)
+            console.print("[yellow]Ollama is not running — attempting to start it…[/yellow]")
+            from autotune.api.ollama_pull import ensure_ollama_running
+            if not ensure_ollama_running(console):
+                raise SystemExit(1)
         local = [m for m in list_local_models() if m.source == "ollama"]
         if not local:
             console.print("[yellow]No Ollama models found.[/yellow]")
@@ -1413,20 +1412,22 @@ def ls(as_json: bool) -> None:
     from rich import box
 
     # ── 1. Probe Ollama ─────────────────────────────────────────────────
+    from autotune.api.ollama_pull import ensure_ollama_running as _ensure_ollama
+    if not _ensure_ollama(console):
+        raise SystemExit(1)
+
     try:
         tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
         tags_resp.raise_for_status()
         ollama_models = tags_resp.json().get("models", [])
     except Exception:
-        console.print(
-            "[red]Ollama is not running.[/red]  Start it with: [cyan]ollama serve[/cyan]"
-        )
+        console.print("[red]Could not connect to Ollama.[/red]")
         raise SystemExit(1)
 
     if not ollama_models:
         console.print(
             "[yellow]No models downloaded.[/yellow]  "
-            "Pull one with: [cyan]ollama pull qwen3:8b[/cyan]"
+            "Pull one with: [cyan]autotune pull qwen3:8b[/cyan]"
         )
         return
 
@@ -1687,6 +1688,9 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
     modelinfo: dict           = {}
 
     console.print("  [dim]Querying Ollama for model info…[/dim]")
+    from autotune.api.ollama_pull import ensure_ollama_running as _ensure_ollama_run
+    if not _ensure_ollama_run(console):
+        raise SystemExit(1)
     try:
         tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
         for m in tags_resp.json().get("models", []):
@@ -1694,7 +1698,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
                 size_gb = m.get("size", 0) / 1024**3
                 break
     except Exception:
-        console.print("  [red]✗  Ollama is not running.[/red]  Start with: [bold]ollama serve[/bold]")
+        console.print("  [red]✗  Could not connect to Ollama.[/red]")
         raise SystemExit(1)
 
     try:
@@ -1721,8 +1725,8 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
 
     if size_gb == 0.0:
         console.print(
-            f"  [red]✗[/red]  Model [cyan]{model_name!r}[/cyan] not found in Ollama.\n"
-            f"  Pull it first: [bold]ollama pull {model_name}[/bold]"
+            f"  [red]✗[/red]  Model [cyan]{model_name!r}[/cyan] not found locally.\n"
+            f"  Pull it first: [bold]autotune pull {model_name}[/bold]"
         )
         raise SystemExit(1)
 
@@ -2158,6 +2162,32 @@ def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
         f'    [dim]curl {base}/v1/models[/dim]\n'
     )
 
+    # ── Pre-flight: check if port is already in use ──────────────────────
+    import socket as _socket
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _sock:
+        _sock.settimeout(0.5)
+        if _sock.connect_ex((host if host != "0.0.0.0" else "127.0.0.1", port)) == 0:
+            # Port is occupied — try to identify who is using it
+            _occupant = ""
+            try:
+                import psutil as _psutil
+                for conn in _psutil.net_connections(kind="tcp"):
+                    if conn.laddr.port == port and conn.status == "LISTEN":
+                        try:
+                            proc = _psutil.Process(conn.pid)
+                            _occupant = f" (PID {conn.pid}: {proc.name()})"
+                        except Exception:
+                            _occupant = f" (PID {conn.pid})"
+                        break
+            except Exception:
+                pass
+            console.print(
+                f"\n[bold red]✗  Port {port} is already in use{_occupant}[/bold red]\n\n"
+                f"  Either stop the process using that port, or start autotune on a different port:\n"
+                f"    [cyan]autotune serve --port {port + 1}[/cyan]\n"
+            )
+            raise SystemExit(1)
+
     uvicorn.run(
         "autotune.api.server:app",
         host=host,
@@ -2503,18 +2533,18 @@ def memory_setup() -> None:
         console.print("[yellow]Cancelled.[/yellow]")
         raise SystemExit(0)
 
-    console.print("[dim]Running: ollama pull nomic-embed-text[/dim]\n")
+    from autotune.api.ollama_pull import pull_model as _pull_model, OllamaNotRunningError, PullError
     try:
-        subprocess.run(["ollama", "pull", "nomic-embed-text"], check=True)
+        _pull_model("nomic-embed-text", console)
         console.print(
             "\n[green]✓ Done.[/green]  Semantic search is now active.\n"
             "[dim]Future conversations will be embedded automatically.[/dim]"
         )
-    except subprocess.CalledProcessError:
-        console.print("[red]Pull failed.[/red] Make sure Ollama is running: [bold]ollama serve[/bold]")
+    except OllamaNotRunningError as _e:
+        console.print(f"[red]Could not start Ollama:[/red] {_e}")
         raise SystemExit(1)
-    except FileNotFoundError:
-        console.print("[red]ollama not found.[/red] Install it from https://ollama.ai")
+    except PullError as _e:
+        console.print(f"[red]Pull failed:[/red] {_e}")
         raise SystemExit(1)
 
 
@@ -2738,40 +2768,20 @@ _SKIP_MODELS: set[str] = set()
 
 
 def _ollama_list_models() -> list[dict]:
-    """Return list of {name, size_gb} from ollama list."""
-    import subprocess, re
+    """Return list of {name, size_gb} from the Ollama API."""
     try:
-        out = subprocess.check_output(["ollama", "list"], text=True, timeout=10)
-        models = []
-        for line in out.strip().splitlines()[1:]:  # skip header
-            parts = line.split()
-            if not parts:
-                continue
-            name = parts[0]
-            size_gb = 0.0
-            for i, p in enumerate(parts):
-                if p in ("GB", "MB") and i > 0:
-                    try:
-                        val = float(parts[i-1])
-                        size_gb = val if p == "GB" else val / 1024
-                    except ValueError:
-                        pass
-            models.append({"name": name, "size_gb": size_gb})
-        return models
+        from autotune.api.local_models import _fetch_ollama_models
+        return [{"name": m.id, "size_gb": m.size_gb or 0.0} for m in _fetch_ollama_models()]
     except Exception:
         return []
 
 
 def _ollama_pull_model(model: str) -> bool:
-    """Pull a model via ollama pull. Returns True on success."""
-    import subprocess
+    """Pull a model via autotune's pull API. Returns True on success."""
     try:
-        result = subprocess.run(
-            ["ollama", "pull", model],
-            timeout=600,
-            capture_output=False,
-        )
-        return result.returncode == 0
+        from autotune.api.ollama_pull import pull_model
+        pull_model(model)
+        return True
     except Exception:
         return False
 
@@ -2947,7 +2957,7 @@ def stress_test(
     if not selected_models:
         console.print(
             "[red]No models available to test.[/red]\n"
-            "Pull a model first:  [bold]ollama pull qwen3-vl:8b[/bold]\n"
+            "Pull a model first:  [bold]autotune pull qwen3:8b[/bold]\n"
             "Or use --auto-pull to download recommended models automatically."
         )
         raise SystemExit(1)
@@ -3304,31 +3314,44 @@ def stress_test(
 @click.option("--output", "-o", default=None, metavar="PATH",
               help="Save JSON results to this path. Default: proof_<model>.json in current dir.")
 @click.option("--list-models", is_flag=True, help="List locally installed Ollama models and exit.")
+@click.option("--speed", is_flag=True,
+              help="Add a targeted prefill & TTFT test on a ~1000-token prompt to prove "
+                   "autotune's num_batch=1024 advantage. Adds ~1 minute.")
 def proof(
     model: Optional[str],
     runs: int,
     profile: str,
     output: Optional[str],
     list_models: bool,
+    speed: bool,
 ) -> None:
-    """Does autotune actually help on YOUR machine? Find out in ~30 seconds.
+    """Does autotune actually help on YOUR machine? Find out in ~45 seconds.
 
-    Runs a head-to-head benchmark: raw Ollama defaults vs autotune.
+    Runs two tests: raw Ollama defaults vs autotune.
     All timing from Ollama's own Go nanosecond timers — nothing estimated.
 
     \b
-    What it measures (honestly):
-      TTFT           — time to first word (autotune wins here)
-      Context window — autotune's dynamic num_ctx vs Ollama's fixed 4096
-      KV cache size  — how much RAM is freed by smaller context
-      RAM headroom   — how much is left for your other apps
-      Swap events    — any swap pressure (goal: 0 for both)
-      tok/s          — generation speed (GPU-bound; reported honestly as unchanged)
+    Test 1 — Every message you send (model already loaded):
+      RAM held for AI per request   — always reduced by autotune
+      Memory overflow events        — goal: 0
+      Words per second              — GPU-bound; reported honestly
+
+    \b
+    Test 2 — Starting a new chat (both conditions start fresh):
+      Time to first word            — shown only if autotune is faster
+      Memory setup time             — smaller block = potentially faster
+      RAM reserved at startup       — always reduced by autotune
+
+    \b
+    Test 3 — Prefill & TTFT speed (only with --speed flag):
+      Runs a ~1000-token prompt where autotune uses 1 GPU dispatch pass
+      vs Ollama's default 2 passes — genuinely faster prefill and TTFT.
 
     \b
     Examples:
       autotune proof
       autotune proof -m qwen3:8b
+      autotune proof -m qwen3:8b --speed
       autotune proof -m qwen3:8b --runs 3 --output results.json
       autotune proof --list-models
     """
@@ -3349,9 +3372,9 @@ def proof(
                 for n in names:
                     _console.print(f"  {n}")
             else:
-                _console.print("[yellow]No models installed.[/yellow] Pull one: [bold]ollama pull qwen3:8b[/bold]")
+                _console.print("[yellow]No models installed.[/yellow] Pull one: [bold]autotune pull qwen3:8b[/bold]")
         except Exception:
-            _console.print("[red]Ollama is not running.[/red] Start it: [bold]ollama serve[/bold]")
+            _console.print("[red]Could not connect to Ollama.[/red] Try: [bold]autotune pull qwen3:8b[/bold]")
         return
 
     # ── Resolve model ─────────────────────────────────────────────────────────
@@ -3371,9 +3394,8 @@ def proof(
 
     if not model:
         _console.print(
-            "[red]Ollama is not running or no models installed.[/red]\n"
-            "Start Ollama: [bold]ollama serve[/bold]\n"
-            "Pull a model: [bold]ollama pull qwen3:8b[/bold]"
+            "[red]No models installed.[/red]\n"
+            "Pull a model: [bold]autotune pull qwen3:8b[/bold]"
         )
         raise SystemExit(1)
 
@@ -3384,11 +3406,13 @@ def proof(
     # ── Run ───────────────────────────────────────────────────────────────────
     from autotune.bench.quick_proof import run_quick_proof, print_proof_result
 
+    _eta = "~45s" if not speed else "~2 min"
     _console.print(
         f"\n[bold]autotune proof[/bold]  ·  [cyan]{model}[/cyan]  ·  "
         f"{runs} run{'s' if runs != 1 else ''} per condition  ·  profile: {profile}"
+        + ("  ·  [bold]+speed[/bold]" if speed else "")
     )
-    _console.print("[dim]Using Ollama's internal Go nanosecond timers — not estimated.[/dim]\n")
+    _console.print(f"[dim]Using Ollama's internal Go nanosecond timers — not estimated.  ETA: {_eta}[/dim]\n")
 
     def _step(msg: str) -> None:
         _console.print(f"  [dim]{msg}[/dim]")
@@ -3401,6 +3425,7 @@ def proof(
                 n_runs=runs,
                 output_path=_out,
                 on_step=_step,
+                speed=speed,
             )
         )
     except RuntimeError as _exc:
@@ -3647,13 +3672,15 @@ def user_bench(
         output_dir=output_dir,
     )
 
-    # ── Background mode: check Ollama BEFORE fork, then fork before asyncio ──
+    # ── Background mode: ensure Ollama is running BEFORE fork ────────────────
     if background:
+        from autotune.api.ollama_pull import ensure_ollama_running as _ensure_ol
+        if not _ensure_ol(console):
+            raise SystemExit(1)
         _models = _check_ollama_sync()
         if not _models:
             console.print(
-                "[red]Ollama is not running — cannot start background benchmark.[/red]\n"
-                "Start it with: [bold]ollama serve[/bold]"
+                "[yellow]No models installed.[/yellow] Pull one: [bold]autotune pull qwen3:8b[/bold]"
             )
             raise SystemExit(1)
 
@@ -5281,7 +5308,7 @@ def unload(model: Optional[str]) -> None:
     if not unloaded_any:
         console.print(
             f"[yellow]Could not unload [bold]{target}[/bold].[/yellow]\n"
-            "[dim]Check that Ollama is running (`ollama serve`) and the model name is correct.[/dim]"
+            "[dim]Check that the model name is correct. Run [bold]autotune ls[/bold] to see installed models.[/dim]"
         )
     else:
         console.print("[dim]Run `autotune ps` to confirm.[/dim]")
@@ -5383,7 +5410,7 @@ def doctor() -> None:
         _row(
             "Ollama",
             False,
-            "not running — start with `ollama serve` or open the Ollama app",
+            "not running — autotune will start it automatically next time, or open the Ollama desktop app",
         )
 
     # ── MLX (Apple Silicon) ──────────────────────────────────────────────

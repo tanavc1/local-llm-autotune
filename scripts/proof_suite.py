@@ -1852,8 +1852,9 @@ def main() -> None:
 
     if not _probe_ollama():
         console.print(Panel(
-            "[red]Ollama is not running.[/red]\n\n"
-            "Start it with:  [bold]ollama serve[/bold]",
+            "[red]No models found or Ollama could not start.[/red]\n\n"
+            "Pull a model with:  [bold]autotune pull llama3.2:3b[/bold]\n"
+            "(autotune starts Ollama automatically)",
             title="Error", border_style="red",
         ))
         sys.exit(1)
@@ -1893,7 +1894,7 @@ def main() -> None:
             else:
                 console.print(Panel(
                     "[red]No Ollama models are installed.[/red]\n\n"
-                    "Pull one with:  [bold]ollama pull llama3.2:3b[/bold]",
+                    "Pull one with:  [bold]autotune pull llama3.2:3b[/bold]",
                     title="No models found", border_style="red",
                 ))
                 sys.exit(1)
@@ -1924,7 +1925,7 @@ def main() -> None:
             console.print(
                 Panel(
                     f"[yellow]{model_id}[/yellow] is not installed.\n\n"
-                    f"Pull it with:  [bold]ollama pull {model_id}[/bold]\n\n"
+                    f"Pull it with:  [bold]autotune pull {model_id}[/bold]\n\n"
                     f"Installed models:\n"
                     + "\n".join(f"  {m}" for m in installed),
                     title="Model not found", border_style="yellow",

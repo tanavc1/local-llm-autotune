@@ -59,10 +59,13 @@ autotune proof-suite --model qwen3:8b --runs 3
 
 ### 1. Install Ollama and pull a model
 
+Install Ollama from [https://ollama.com](https://ollama.com), then pull a model using autotune:
+
 ```bash
-# Install Ollama from https://ollama.com, then pull a model:
-ollama pull qwen3:8b           # 5.2 GB — best general model for 16 GB machines
+autotune pull qwen3:8b         # 5.2 GB — best general model for 16 GB machines
 ```
+
+autotune starts Ollama in the background automatically — no separate `ollama serve` needed.
 
 Not sure which model to use? Run `autotune recommend` after installing and it will pick the best model for your exact hardware.
 
@@ -89,7 +92,7 @@ cd local-llm-autotune && pip install -e ".[dev]"
 autotune recommend
 ```
 
-Profiles your CPU, RAM, and GPU, then scores every model in the registry against your hardware and recommends the best option with an exact `ollama pull` command to run.
+Profiles your CPU, RAM, and GPU, then scores every model in the registry against your hardware and recommends the best option with an exact `autotune pull` command to run.
 
 ### 4. Start chatting
 
@@ -115,14 +118,14 @@ autotune ls        # every locally installed model scored against your hardware
 
 | RAM | Recommended model | Pull command | Why |
 |-----|------------------|--------------|-----|
-| 8 GB | `qwen3:4b` | `ollama pull qwen3:4b` | Best 4B available; hybrid thinking mode |
-| 16 GB | `qwen3:8b` | `ollama pull qwen3:8b` | Near-frontier quality; best 8B as of 2026 |
-| 16 GB (coding) | `qwen2.5-coder:7b` | `ollama pull qwen2.5-coder:7b` | Near GPT-4o on HumanEval at 7B |
-| 24 GB | `qwen3:14b` | `ollama pull qwen3:14b` | Excellent reasoning; comfortable headroom |
-| 24 GB (coding) | `qwen2.5-coder:14b` | `ollama pull qwen2.5-coder:14b` | Best open coding model at this size |
-| 32 GB | `qwen3:30b-a3b` | `ollama pull qwen3:30b-a3b` | MoE: flagship quality at 7B inference cost |
-| 64 GB+ | `qwen3:32b` | `ollama pull qwen3:32b` | Top dense open model |
-| Reasoning | `deepseek-r1:14b` | `ollama pull deepseek-r1:14b` | Chain-of-thought; strong math and logic |
+| 8 GB | `qwen3:4b` | `autotune pull qwen3:4b` | Best 4B available; hybrid thinking mode |
+| 16 GB | `qwen3:8b` | `autotune pull qwen3:8b` | Near-frontier quality; best 8B as of 2026 |
+| 16 GB (coding) | `qwen2.5-coder:7b` | `autotune pull qwen2.5-coder:7b` | Near GPT-4o on HumanEval at 7B |
+| 24 GB | `qwen3:14b` | `autotune pull qwen3:14b` | Excellent reasoning; comfortable headroom |
+| 24 GB (coding) | `qwen2.5-coder:14b` | `autotune pull qwen2.5-coder:14b` | Best open coding model at this size |
+| 32 GB | `qwen3:30b-a3b` | `autotune pull qwen3:30b-a3b` | MoE: flagship quality at 7B inference cost |
+| 64 GB+ | `qwen3:32b` | `autotune pull qwen3:32b` | Top dense open model |
+| Reasoning | `deepseek-r1:14b` | `autotune pull deepseek-r1:14b` | Chain-of-thought; strong math and logic |
 
 Run `autotune recommend` to get a personalised pick with scores for your exact hardware configuration.
 
@@ -293,7 +296,7 @@ except Exception as e:
     error = e.response.json().get("detail", {})
     match error.get("type"):
         case "model_not_found":
-            print(f"Run: ollama pull {error['model']}")
+            print(f"Run: autotune pull {error['model']}")
         case "memory_pressure":
             print("Not enough RAM. Try a smaller model or --profile fast.")
         case "backend_error":
@@ -349,7 +352,7 @@ model:
 
 autotune sits between your code and Ollama as a transparent middleware layer. Every request passes through a stack of optimizations. Here's every one, explained plainly.
 
-> **Full explanations with examples:** [autotune.dev/what-we-do](https://autotune.dev/what-we-do)
+> **Full explanations with examples:** see below, or visit the [GitHub repo](https://github.com/tanavc1/local-llm-autotune#how-it-works--all-14-optimizations)
 
 ---
 
@@ -417,7 +420,7 @@ Changes are reported in the chat interface. No user action needed.
 
 **5. Pre-flight model fit analysis** — *before loading*
 
-Before a model is loaded, autotune calculates whether it will fit: `model_weights + kv_cache(context, precision) + runtime_overhead`. It classifies the result as SAFE / MARGINAL / SWAP_RISK / OOM and sets a safe context ceiling. If the model is too heavy, it recommends a lighter quantization with the exact `ollama pull` command to run.
+Before a model is loaded, autotune calculates whether it will fit: `model_weights + kv_cache(context, precision) + runtime_overhead`. It classifies the result as SAFE / MARGINAL / SWAP_RISK / OOM and sets a safe context ceiling. If the model is too heavy, it recommends a lighter quantization with the exact `autotune pull` command to run.
 
 ---
 
@@ -563,10 +566,10 @@ What is sent when opted in: CPU architecture, RAM size, GPU backend, tokens/sec,
 ## Troubleshooting
 
 **"Ollama is not running."**
-→ Start Ollama: `ollama serve` (in a separate terminal), or open the Ollama app.
+→ autotune starts Ollama automatically. If it still fails, install Ollama from https://ollama.ai or open the Ollama desktop app.
 
 **"No models found."**
-→ Pull a model: `ollama pull qwen3:8b` or run `autotune recommend` for a hardware-matched suggestion.
+→ Pull a model: `autotune pull qwen3:8b` or run `autotune recommend` for a hardware-matched suggestion.
 
 **"Memory pressure — context 8192→6144 tokens"**
 → RAM is 88%+ full. Close other apps or switch to a smaller model.
@@ -588,7 +591,7 @@ What is sent when opted in: CPU architecture, RAM size, GPU backend, tokens/sec,
 | `autotune run <model>` | Pre-flight RAM check + chat in one step. Best first command for any new model. |
 | `autotune chat --model <id>` | Start an optimized chat session with a model already installed. |
 | `autotune hardware` | Scan CPU/RAM/GPU, show which models fit, and suggest apps to close for more RAM. |
-| `autotune recommend` | Profile your hardware and recommend the best model+settings. Prints exact `ollama pull` commands. |
+| `autotune recommend` | Profile your hardware and recommend the best model+settings. Prints exact `autotune pull` commands. |
 
 ### Manage models
 
