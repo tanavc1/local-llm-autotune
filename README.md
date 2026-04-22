@@ -345,21 +345,167 @@ model:
 
 ---
 
-## How dynamic KV sizing works
+## How it works — all 14 optimizations
 
-Ollama allocates the full KV cache upfront before generating a single token. With `num_ctx=4096`, it zeros and initialises a 4,096-token buffer even if your prompt is 50 tokens. That initialization is what you wait for.
+autotune sits between your code and Ollama as a transparent middleware layer. Every request passes through a stack of optimizations. Here's every one, explained plainly.
 
-autotune computes the minimum `num_ctx` each request actually needs:
+> **Full explanations with examples:** [autotune.dev/what-we-do](https://autotune.dev/what-we-do)
+
+---
+
+### The KV cache — the central concept
+
+When an LLM generates text, every new token needs to "attend to" every previous token. The results of that attention computation — two tables of numbers per token called **K (keys)** and **V (values)** — are cached in RAM so they don't have to be recomputed. This is the KV cache.
+
+Its size is mathematically exact:
+```
+2 × n_layers × kv_heads × head_dim × num_ctx × bytes_per_element
+```
+
+For qwen3:8b at 4,096 context: **576 MB**. At 1,536 context: **216 MB**. The KV cache scales linearly with context length — that's the big lever.
+
+---
+
+### Memory optimizations
+
+**1. Dynamic context sizing** — *every request*
+
+Ollama allocates the full KV cache before generating the first token, using whatever `num_ctx` you've configured — even if your actual prompt is 50 words. autotune computes the minimum context each request actually needs:
 
 ```
 num_ctx = clamp(input_tokens + max_new_tokens + 256, 512, profile_max)
 ```
 
-For a typical conversation message on `balanced` (max 8,192 tokens):
-- Input: ~22 tokens → `num_ctx` = 22 + 1,024 + 256 = **1,302**
-- Savings on qwen3:8b: 4,096 → 1,302 tokens = **~224 MB never allocated**
+A typical balanced-profile message (22-token prompt + 1024 reply + 256 buffer = 1,302 tokens) allocates ~145 MB instead of ~576 MB on qwen3:8b. No tokens are dropped — the context window grows naturally as the conversation grows.
 
-Context grows naturally as the conversation grows — the full history is included on every request and no tokens are ever dropped.
+**2. KV cache precision control** — *per profile, adaptive*
+
+KV elements can be stored as F16 (2 bytes each) or Q8 (1 byte each). Q8 halves the entire KV cache footprint with negligible quality impact. This is separate from model quantization — it only affects the temporary computation cache, not the model weights.
+
+- `fast` profile: always Q8
+- `balanced` / `quality`: F16 by default, Q8 under memory pressure
+
+**3. NoSwapGuard — pre-flight RAM check** — *every request*
+
+Before sending any request to Ollama, autotune measures available RAM and calculates whether the KV allocation will fit without triggering swap. On Apple Silicon, swap during inference drops speed from 30+ tok/s to under 5 tok/s.
+
+If the KV won't fit, it reduces in levels (applied in order until it fits):
+
+| Level | Action |
+|-------|--------|
+| 0 | Fits — no change |
+| 1 | Trim context 25% |
+| 2 | Halve context |
+| 3 | Halve context + Q8 KV (saves ~50% more) |
+| 4 | Quarter context + Q8 |
+| 5 | Minimum (512 tokens) + Q8 — emergency floor |
+
+The model's architecture (layers, KV heads, head dimension) is queried from Ollama's `/api/show` once and cached — every calculation is exact, not estimated.
+
+**4. Live memory pressure response** — *every request, real-time*
+
+Even with pre-flight checks, RAM usage changes as other apps open files and browsers load pages. autotune monitors RAM on every request:
+
+| RAM usage | Context | KV precision |
+|-----------|---------|--------------|
+| < 80% | full | profile default |
+| 80–88% | −10% | profile default |
+| 88–93% | −25% | F16 → Q8 |
+| > 93% | halved | forced Q8 |
+
+Changes are reported in the chat interface. No user action needed.
+
+**5. Pre-flight model fit analysis** — *before loading*
+
+Before a model is loaded, autotune calculates whether it will fit: `model_weights + kv_cache(context, precision) + runtime_overhead`. It classifies the result as SAFE / MARGINAL / SWAP_RISK / OOM and sets a safe context ceiling. If the model is too heavy, it recommends a lighter quantization with the exact `ollama pull` command to run.
+
+---
+
+### Speed optimizations
+
+**6. Context bucket snapping** — *every request*
+
+After computing the minimum context, autotune snaps it to the nearest bucket from a fixed list: `[512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 32768]`.
+
+Why: Ollama caches the KV buffer for the most recently used context length. If `num_ctx` changes request-to-request (1,286 → 1,157 → 1,308), Ollama reallocates the Metal buffer on every call — even with the model already loaded. This "KV thrashing" adds 100–300 ms per request. Buckets eliminate it: prompts of 50–200 tokens all map to 1,536, Ollama allocates it once and reuses it forever.
+
+**7. System prompt prefix caching** — *multi-turn conversations*
+
+Ollama re-processes the system prompt from scratch on every turn. autotune pins the system prompt tokens in the KV cache via `num_keep` — they're evaluated once at the start and never again. In agentic sessions with 10+ turns, this compounding effect means TTFT actually *falls* as the session grows.
+
+**8. Model keep-alive** — *between sessions*
+
+Ollama unloads models after 5 minutes of idle. autotune sets `keep_alive="-1"` (forever) on every request. The model stays in RAM between conversations, eliminating the 1–4 second cold-reload cost you'd otherwise pay every time a session goes idle. This doesn't cost more RAM — the weights were already loaded; it just keeps them committed.
+
+**9. Flash attention** — *every request*
+
+Passes `flash_attn: true` to Ollama. Flash attention computes attention in tiles rather than materializing the full N² attention matrix, dramatically reducing the peak activation memory spike during prefill. Zero quality impact — it's mathematically identical to standard attention. Models that don't support it silently ignore the flag.
+
+**10. Larger prefill batch size** — *long prompts*
+
+Sets `num_batch=1024` (Ollama default: 512). During prefill (processing your prompt), tokens are fed through the model in chunks. A 700-token prompt with the default takes 2 GPU passes; with 1024, it takes 1. Fewer passes = fewer Metal kernel dispatches = lower TTFT for any prompt over 512 tokens. Short prompts are unaffected.
+
+---
+
+### Adaptive intelligence
+
+**11. Hardware tuner** — *around each inference call*
+
+Makes real OS-level changes before inference and restores them after:
+
+- **macOS QOS class:** Sets the thread to `USER_INTERACTIVE` — the highest scheduling priority on macOS (same class as UI scrolling animations). The process gets more CPU time over background tasks.
+- **Process priority (nice):** Raises the autotune and Ollama process priorities on macOS/Linux for better CPU scheduling.
+- **Python GC disabled:** Python's garbage collector causes "stop the world" pauses of up to tens of milliseconds. Disabling it during inference eliminates hitches in streamed output.
+- **Linux CPU governor:** Attempts to set the CPU to `performance` mode (full clock speed) during inference (requires root; silently skipped otherwise).
+
+**12. Adaptive session advisor** — *live monitoring*
+
+Continuously watches RAM%, swap activity, tokens/sec, and TTFT. Computes a 0–100 health score every 30 seconds. When the score drops below thresholds, takes the least-disruptive available action from an ordered list:
+
+1. Reduce concurrency
+2. Reduce context window
+3. Lower KV precision (F16 → Q8)
+4. Enable prompt caching
+5. Disable speculative decoding
+6. Lower quantization
+7. Suggest switching to a smaller model
+
+There's a 20-second cooldown between actions and a 90-second stability window before scale-up. The advisor attributes events — it knows whether a RAM spike was caused by loading a model, KV growth, or a background application.
+
+---
+
+### Context & conversation
+
+**13. Context compressor** — *long sessions*
+
+As conversation history grows toward the context limit, autotune compresses older messages in four tiers:
+
+```
+< 55%  FULL          — all turns verbatim
+55–75% RECENT+FACTS  — last 8 turns + structured facts for older
+75–90% COMPRESSED    — last 6 turns (lightly compressed) + compact summary
+> 90%  EMERGENCY     — last 4 turns (compressed) + one-line summary
+```
+
+Compression strategies (lightest first): strip noise → compress JSON blobs → shorten tool output (head + tail) → trim assistant messages (keep first paragraph + code blocks + last paragraph) → trim user messages (preserve intent). Code blocks are always preserved first. All cuts happen at sentence boundaries.
+
+**14. Conversation memory & recall** — *across sessions*
+
+Every conversation is saved to a local SQLite database (`~/.autotune/recall.db`). At the start of each new conversation, autotune searches your history for semantically relevant past context and quietly injects it as a system note.
+
+- **Vector search (primary):** Uses `nomic-embed-text` (local, ~274 MB, runs in Ollama) to find semantically similar past exchanges — even if they use different words.
+- **FTS5 keyword fallback:** Full-text search across all stored conversations when the embedding model isn't available.
+- **Injection threshold:** Only injects if cosine similarity > 0.38 — conservative by design. Better to show nothing than irrelevant noise. Up to 3 memories injected, capped at 1,200 characters total.
+
+All data is local. Nothing is sent to any server.
+
+---
+
+### What doesn't change
+
+- **Generation speed (tok/s):** Metal GPU-bound on Apple Silicon. autotune doesn't touch the generation loop. Benchmarks show ±2% variance — measurement noise.
+- **Output quality:** Model weights, sampling parameters, and temperature are unchanged. `prompt_eval_count` is identical — no tokens are dropped or skipped.
+- **Turn 1 in agentic sessions:** Pre-allocating a full session KV window makes turn 1 ~80% slower. From turn 2 onward, prefix-cache savings compound and total wall time comes out ~46% lower.
 
 ---
 

@@ -154,6 +154,9 @@ export default function Home() {
             <a href="#quickstart" className="hidden hover:text-white transition-colors sm:block">
               Install
             </a>
+            <a href="/what-we-do" className="hidden hover:text-white transition-colors sm:block font-medium text-violet-400 hover:text-violet-300">
+              All we do
+            </a>
             <a
               href="https://github.com/tanavc1/local-llm-autotune"
               target="_blank"
@@ -187,11 +190,12 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg text-white/60 leading-relaxed animate-fade-up delay-100">
-            autotune wraps Ollama in a smart proxy that right-sizes the KV buffer for each
-            request — freeing{" "}
-            <strong className="text-white/90">300+ MB of RAM</strong> back to your browser
-            and cutting time-to-first-word by up to{" "}
-            <strong className="text-white/90">53%</strong>.
+            autotune is an inference optimizer that sits in front of Ollama and applies
+            four automatic optimizations: right-sized KV buffers, system prompt caching,
+            adaptive memory precision, and model keep-alive.
+            The result: <strong className="text-white/90">300+ MB freed</strong> per
+            request, first word up to <strong className="text-white/90">53% faster</strong>,
+            and your computer stays responsive.
             No config changes. Your code stays exactly the same.
           </p>
 
@@ -228,82 +232,130 @@ export default function Home() {
         <div className="mx-auto max-w-5xl">
           <SectionLabel>How it works</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
-            The problem: Ollama over-allocates memory.
+            Four optimizations, applied automatically.
           </h2>
           <p className="text-white/55 mb-12 max-w-2xl">
-            Every request you send, Ollama reserves a fixed 4,096-token KV buffer — regardless
-            of how long your actual message is. For a typical 100-word message, that&apos;s
-            about 10× more memory than needed. autotune measures the actual prompt, allocates
-            only what&apos;s required, and returns the rest to your system.
+            autotune sits between your code and Ollama as a transparent proxy. Every request
+            passes through four layers of optimization — none require config, none change your
+            prompt or output quality.
           </p>
 
-          <div className="grid gap-6 sm:grid-cols-2">
-            {/* Without */}
-            <div className="rounded-2xl border border-red-500/15 bg-red-500/5 p-6">
-              <div className="text-xs font-semibold uppercase tracking-wider text-red-400/80 mb-4">
-                Without autotune
+          {/* Optimization cards */}
+          <div className="grid gap-5 sm:grid-cols-2">
+
+            {/* 1 — Dynamic KV sizing */}
+            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/20 text-xs font-bold text-violet-300">1</span>
+                <span className="text-sm font-semibold text-white">Dynamic KV buffer sizing</span>
               </div>
-              <div className="space-y-3 text-sm text-white/70">
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-red-400/60">→</span>
-                  <span>You send a message (100 words ≈ 340 tokens)</span>
+              <p className="text-sm text-white/60 mb-4">
+                Ollama always reserves a fixed 4,096-token KV buffer — regardless of how long
+                your message is. For a typical 340-token message, that&apos;s 3× more memory
+                than needed. autotune computes the exact minimum and allocates only that.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
+                  <div className="text-white/40 mb-0.5">Raw Ollama</div>
+                  <div className="font-mono text-white/70">448 MB reserved</div>
+                  <div className="text-white/35">for 4,096 tokens</div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-red-400/60">→</span>
-                  <span>
-                    Ollama reserves a fixed <strong className="text-white/85">448 MB</strong>{" "}
-                    KV buffer for 4,096 tokens
-                  </span>
-                </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-red-400/60">→</span>
-                  <span>Initializes the full buffer before generating token 1</span>
-                </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-red-400/60">→</span>
-                  <span>Chrome, Slack, VS Code fight for the remaining RAM</span>
+                <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
+                  <div className="text-white/40 mb-0.5">autotune</div>
+                  <div className="font-mono text-green-300">155 MB reserved</div>
+                  <div className="text-white/35">293 MB freed</div>
                 </div>
               </div>
             </div>
 
-            {/* With */}
-            <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6">
-              <div className="text-xs font-semibold uppercase tracking-wider text-green-400/80 mb-4">
-                With autotune
+            {/* 2 — System prompt caching */}
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-300">2</span>
+                <span className="text-sm font-semibold text-white">System prompt prefix caching</span>
               </div>
-              <div className="space-y-3 text-sm text-white/70">
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-green-400/60">→</span>
-                  <span>You send the same message (340 tokens)</span>
+              <p className="text-sm text-white/60 mb-4">
+                Every multi-turn conversation has a system prompt that Ollama re-processes
+                from scratch on each message. autotune pins those tokens in the KV cache via{" "}
+                <code className="text-white/70">num_keep</code> — they&apos;re evaluated once
+                and reused forever, cutting prefill time on every follow-up turn.
+              </p>
+              <div className="rounded-lg border border-blue-500/15 bg-blue-500/5 px-3 py-2 text-xs">
+                <div className="text-white/40 mb-1">Impact per follow-up message</div>
+                <div className="text-blue-300 font-mono">System prompt tokens: never re-evaluated</div>
+                <div className="text-white/35 mt-0.5">Pure latency win — zero quality impact</div>
+              </div>
+            </div>
+
+            {/* 3 — Adaptive KV precision */}
+            <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">3</span>
+                <span className="text-sm font-semibold text-white">Adaptive KV precision</span>
+              </div>
+              <p className="text-sm text-white/60 mb-4">
+                As your system RAM fills up, autotune automatically downgrades KV cache
+                precision from F16 to Q8 — cutting KV memory in half at three configurable
+                thresholds. On tight machines (8 GB MacBooks, RAM-heavy multitasking), this
+                prevents swap entirely.
+              </p>
+              <div className="space-y-1.5 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <span className="text-white/30">RAM &gt; 80%</span>
+                  <span className="text-orange-300/80">→ context −10%, stays F16</span>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-green-400/60">→</span>
-                  <span>
-                    autotune computes what&apos;s actually needed:{" "}
-                    <strong className="text-white/85">155 MB</strong> for 1,405 tokens
-                  </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-white/30">RAM &gt; 88%</span>
+                  <span className="text-orange-300">→ switch F16 → Q8  (½ KV memory)</span>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-green-400/60">→</span>
-                  <span>Smaller buffer initializes faster — first word arrives sooner</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-white/30">RAM &gt; 93%</span>
+                  <span className="text-red-300">→ context hard-capped, swap prevented</span>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 shrink-0 text-green-400/60">→</span>
-                  <span>
-                    <strong className="text-green-300">293 MB freed</strong> — back to your other
-                    apps, every single request
-                  </span>
+              </div>
+            </div>
+
+            {/* 4 — Keep-alive */}
+            <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-500/20 text-xs font-bold text-green-300">4</span>
+                <span className="text-sm font-semibold text-white">Model keep-alive</span>
+              </div>
+              <p className="text-sm text-white/60 mb-4">
+                Raw Ollama unloads the model after 5 minutes of idle. Every time you come
+                back, you pay a 1–3 second reload cost before your first token. autotune
+                keeps the model loaded in unified memory between sessions and manages
+                eviction gracefully when RAM is needed elsewhere.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
+                  <div className="text-white/40 mb-0.5">Raw Ollama (idle 5 min)</div>
+                  <div className="font-mono text-white/70">1–3s cold reload</div>
+                  <div className="text-white/35">every new session</div>
+                </div>
+                <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
+                  <div className="text-white/40 mb-0.5">autotune</div>
+                  <div className="font-mono text-green-300">stays loaded</div>
+                  <div className="text-white/35">instant first token</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <p className="mt-6 text-xs text-white/35 max-w-2xl">
-            Numbers above are for llama3.2:3b on Apple M2. KV buffer size scales with model
-            architecture — larger models free more RAM in absolute terms.
-            Generation quality and speed are identical: autotune changes only the buffer size,
-            not the model weights or sampling.
-          </p>
+          <div className="mt-6 flex flex-col sm:flex-row sm:items-center gap-4">
+            <p className="text-xs text-white/35 max-w-xl">
+              Numbers above use llama3.2:3b on Apple M2. KV size scales with model architecture —
+              larger models free more RAM in absolute terms.
+              Generation quality is identical: autotune changes buffer sizes and precision,
+              not model weights or sampling.
+            </p>
+            <a
+              href="/what-we-do"
+              className="shrink-0 rounded-lg border border-violet-500/30 bg-violet-500/8 px-4 py-2 text-xs font-medium text-violet-300 transition hover:border-violet-500/50 hover:bg-violet-500/15 hover:text-violet-200"
+            >
+              All 14 optimizations explained →
+            </a>
+          </div>
         </div>
       </section>
 
@@ -385,6 +437,102 @@ export default function Home() {
               </p>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── Agents ── */}
+      <section className="py-28 px-6">
+        <div className="mx-auto max-w-5xl">
+          <SectionLabel>Multi-turn &amp; agentic workloads</SectionLabel>
+          <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
+            Where it matters most.
+          </h2>
+          <p className="text-white/55 mb-4 max-w-2xl">
+            Single-prompt benchmarks miss the real problem: <strong className="text-white/80">context accumulates</strong>.
+            Each tool call, each reasoning step, each file read appends more tokens. By turn 8,
+            the model is processing 5–8× more tokens than turn 1 — and raw Ollama&apos;s fixed
+            4,096-token window runs out, forcing a full model reload mid-session.
+          </p>
+          <p className="text-white/55 mb-10 max-w-2xl">
+            autotune computes a session-ceiling KV window once before the loop starts and locks
+            it for the entire session. No reloads. And because the system prompt is pinned via
+            prefix caching, TTFT actually <em>falls</em> as the session grows — not climbs.
+          </p>
+
+          <div className="grid gap-6 lg:grid-cols-2 mb-8">
+            {/* Code debugger result */}
+            <div className="rounded-2xl border border-white/8 overflow-hidden">
+              <div className="border-b border-white/8 bg-white/3 px-5 py-3">
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider">
+                  Code debugger task — 10 turns, llama3.2:3b
+                </div>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/5 text-xs font-semibold uppercase tracking-wider text-white/35">
+                    <th className="px-5 py-3 text-left">Metric</th>
+                    <th className="px-5 py-3 text-right">Raw Ollama</th>
+                    <th className="px-5 py-3 text-right text-green-400/80">autotune</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { metric: "Session wall time", raw: "74 s", tuned: "40 s", good: true },
+                    { metric: "Model reloads", raw: "0.5", tuned: "0.5", good: false },
+                    { metric: "TTFT trend per turn", raw: "−101 ms/turn", tuned: "−435 ms/turn", good: true },
+                    { metric: "Swap events", raw: "0", tuned: "0", good: false },
+                    { metric: "Context at session end", raw: "3,043 tokens", tuned: "1,946 tokens", good: true },
+                  ].map((row, i) => (
+                    <tr key={row.metric} className={`border-b border-white/5 ${i % 2 === 0 ? "bg-white/2" : ""}`}>
+                      <td className="px-5 py-3 text-white/60">{row.metric}</td>
+                      <td className="px-5 py-3 text-right text-white/40 font-mono">{row.raw}</td>
+                      <td className={`px-5 py-3 text-right font-mono font-semibold ${row.good ? "text-green-400" : "text-white/50"}`}>
+                        {row.tuned}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Explanation cards */}
+            <div className="flex flex-col gap-4">
+              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-5">
+                <div className="text-sm font-semibold text-white mb-2">
+                  TTFT falls as the session grows
+                </div>
+                <p className="text-sm text-white/55">
+                  The system prompt is pinned in KV after turn 1 and never re-evaluated.
+                  Each new turn only prefills the new tokens — not the full conversation
+                  from scratch. By turn 5, autotune is noticeably faster than turn 1.
+                  By turn 10, the difference compounds significantly.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-5">
+                <div className="text-sm font-semibold text-white mb-2">
+                  Session window sized for the task
+                </div>
+                <p className="text-sm text-white/55">
+                  autotune computes a KV window for the <em>full session ceiling</em> before
+                  the first turn, then holds it constant. raw Ollama&apos;s fixed 4,096-token
+                  window fills up mid-task and forces a model reload (~1–3 s each).
+                  autotune trades a slightly higher turn-1 cost to eliminate all reloads.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3 text-xs text-white/40">
+                <strong className="text-white/55">Honest caveat:</strong> Turn 1 is ~80%
+                slower — autotune pre-allocates a larger KV window for the whole session.
+                From turn 2 onward prefix-cache savings compound and wall time comes out
+                46% lower. For single-turn usage, the per-request benchmark numbers apply.
+              </div>
+            </div>
+          </div>
+
+          <p className="text-xs text-white/30">
+            Benchmark: code_debugger task, N=2 trials, Apple M2 16 GB, llama3.2:3b balanced profile.
+            Timings from Ollama&apos;s internal Go nanosecond timers. Full methodology in{" "}
+            <code className="text-white/50">AGENT_BENCHMARK.md</code>.
+          </p>
         </div>
       </section>
 
@@ -682,6 +830,7 @@ export default function Home() {
           <div className="flex gap-6">
             <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
             <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>
+            <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>
             <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
             <a href="https://pypi.org/project/llm-autotune/" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">PyPI</a>
             <a href="https://github.com/tanavc1/local-llm-autotune/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">Changelog</a>
