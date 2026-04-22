@@ -10,8 +10,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich import print as rprint
-
 from autotune.config.generator import Recommendation, ScoredConfig
 from autotune.hardware.profiler import HardwareProfile, ProcessInfo
 from autotune.hardware.ram_advisor import UnlockGroup
@@ -118,6 +116,23 @@ def _config_panel(sc: ScoredConfig, rank: int, mode: str) -> Panel:
     lines.append(f"[dim]Composite  {bar(sc.composite)}  {sc.composite:.3f}[/dim]")
     lines.append("")
     lines.append(f"[dim italic]{sc.rationale}[/dim italic]")
+    lines.append("")
+
+    # Install + use commands — the most important thing for a new user
+    if c.model.ollama_tag:
+        lines.append(
+            f"[bold green]→ Install:[/bold green]  "
+            f"[bold cyan]ollama pull {c.model.ollama_tag}[/bold cyan]"
+        )
+        lines.append(
+            f"[bold green]→ Chat:   [/bold green]  "
+            f"[bold cyan]autotune chat --model {c.model.id}[/bold cyan]"
+        )
+    else:
+        lines.append(
+            f"[bold green]→ Chat:   [/bold green]  "
+            f"[bold cyan]autotune chat --model {c.model.id}[/bold cyan]"
+        )
 
     label, colour = MODE_META.get(mode, (mode, "white"))
     title = (
@@ -153,6 +168,28 @@ def print_recommendations(
                 console.print(_config_panel(alt, rank=i, mode=mode))
 
         console.print()
+
+    # ── Friendly next-steps footer ─────────────────────────────────────────
+    console.rule("[dim]Next Steps[/dim]")
+    console.print()
+    console.print(
+        "  [bold]1.[/bold]  Copy the [bold cyan]ollama pull ...[/bold cyan] command above and run it in your terminal."
+    )
+    console.print(
+        "  [bold]2.[/bold]  Once downloaded, start chatting:  "
+        "[bold cyan]autotune chat --model <model-id>[/bold cyan]"
+    )
+    console.print(
+        "  [bold]3.[/bold]  Verify autotune is actually helping:  "
+        "[bold cyan]autotune proof --model <model-id>[/bold cyan]"
+    )
+    console.print()
+    console.print(
+        "  [dim]Not sure which model to pick?  "
+        "Start with [bold]balanced[/bold] mode's primary recommendation — "
+        "it's the best all-round choice for most computers.[/dim]"
+    )
+    console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +262,10 @@ def print_running_models(models: list) -> None:  # list[RunningModel]
 
     total_ram = 0.0
     for m in models:
-        ram_str = f"{m.ram_gb:.2f} GB" if m.ram_gb else "[dim]—[/dim]"
-        if m.ram_gb >= 1.0:
-            ram_str = f"[red]{m.ram_gb:.2f} GB[/red]"
+        if m.ram_gb:
+            ram_str = f"[red]{m.ram_gb:.2f} GB[/red]" if m.ram_gb >= 1.0 else f"{m.ram_gb:.2f} GB"
+        else:
+            ram_str = "[dim]—[/dim]"
         ctx_str = f"{m.context_len:,}" if m.context_len else "[dim]—[/dim]"
         backend_label = _BACKEND_STYLE.get(m.backend, m.backend)
         quant_str = m.quant if m.quant else "[dim]—[/dim]"
@@ -243,7 +281,7 @@ def print_running_models(models: list) -> None:  # list[RunningModel]
             exp_str = "[dim]pinned[/dim]"
 
         t.add_row(m.name, backend_label, ram_str, ctx_str, quant_str, age_str, exp_str)
-        total_ram += m.ram_gb
+        total_ram += m.ram_gb or 0.0
 
     console.print(t)
 

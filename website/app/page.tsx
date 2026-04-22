@@ -500,6 +500,126 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Command overview */}
+      <section className="py-28 px-6 bg-white/[0.02] border-y border-white/5">
+        <div className="mx-auto max-w-5xl">
+          <SectionLabel>Command reference</SectionLabel>
+          <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
+            Everything you can do
+          </h2>
+          <p className="text-white/55 mb-10 max-w-2xl">
+            autotune is a full CLI — chat, benchmarking, memory, Apple Silicon acceleration, and more.
+            Every command is documented with examples and flags.
+          </p>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              {
+                group: "Get started",
+                color: "violet",
+                commands: [
+                  { name: "autotune run <model>", desc: "Pre-flight RAM check + chat" },
+                  { name: "autotune chat --model <id>", desc: "Start an optimized chat session" },
+                  { name: "autotune hardware", desc: "See what models fit in your RAM" },
+                  { name: "autotune recommend", desc: "Get the best model for your machine" },
+                ],
+              },
+              {
+                group: "Prove it works",
+                color: "green",
+                commands: [
+                  { name: "autotune proof -m <model>", desc: "30s head-to-head benchmark" },
+                  { name: "autotune proof-suite", desc: "Statistical multi-model benchmark" },
+                  { name: "autotune user-bench", desc: "Real-world UX benchmark" },
+                  { name: "autotune agent-bench", desc: "Agentic multi-turn benchmark" },
+                ],
+              },
+              {
+                group: "Manage models",
+                color: "blue",
+                commands: [
+                  { name: "autotune ls", desc: "List models with fit scores" },
+                  { name: "autotune ps", desc: "See what's loaded in RAM now" },
+                  { name: "autotune pull [model]", desc: "Download a model" },
+                  { name: "autotune unload [model]", desc: "Free RAM immediately" },
+                ],
+              },
+              {
+                group: "Conversation memory",
+                color: "yellow",
+                commands: [
+                  { name: `autotune memory search "..."`, desc: "Search past conversations" },
+                  { name: "autotune memory list", desc: "Browse stored memories" },
+                  { name: "autotune memory forget <id>", desc: "Delete a memory chunk" },
+                  { name: "autotune memory setup", desc: "Enable semantic vector search" },
+                ],
+              },
+              {
+                group: "Apple Silicon (MLX)",
+                color: "orange",
+                commands: [
+                  { name: "autotune mlx pull <model>", desc: "Download MLX model (10–40% faster)" },
+                  { name: "autotune mlx list", desc: "Show cached MLX models" },
+                  { name: "autotune serve --mlx", desc: "API server with MLX backend" },
+                  { name: "autotune mlx resolve <model>", desc: "Look up MLX model ID" },
+                ],
+              },
+              {
+                group: "Deploy & diagnose",
+                color: "gray",
+                commands: [
+                  { name: "autotune serve", desc: "OpenAI-compatible API on :8765" },
+                  { name: "autotune telemetry", desc: "View inference run history" },
+                  { name: "autotune storage on|off", desc: "Manage local SQLite storage" },
+                  { name: "autotune doctor", desc: "Full installation health check" },
+                ],
+              },
+            ].map((section) => {
+              const borderColor: Record<string, string> = {
+                violet: "border-violet-500/20",
+                green:  "border-green-500/20",
+                blue:   "border-blue-500/20",
+                yellow: "border-yellow-500/20",
+                orange: "border-orange-500/20",
+                gray:   "border-white/10",
+              };
+              const labelColor: Record<string, string> = {
+                violet: "text-violet-400",
+                green:  "text-green-400",
+                blue:   "text-blue-400",
+                yellow: "text-yellow-400",
+                orange: "text-orange-400",
+                gray:   "text-white/40",
+              };
+              return (
+                <div key={section.group} className={`rounded-2xl border ${borderColor[section.color]} bg-white/2 p-5`}>
+                  <div className={`text-xs font-semibold uppercase tracking-wider mb-4 ${labelColor[section.color]}`}>
+                    {section.group}
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {section.commands.map((cmd) => (
+                      <div key={cmd.name}>
+                        <code className="block text-xs font-mono text-green-300/90 mb-0.5">{cmd.name}</code>
+                        <span className="text-xs text-white/40">{cmd.desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-8 text-center">
+            <a
+              href="/commands"
+              className="inline-flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 px-6 py-3 text-sm font-medium text-violet-300 transition hover:bg-violet-500/20 hover:text-violet-200"
+            >
+              View full command reference with examples →
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="py-28 px-6">
         <div className="mx-auto max-w-3xl text-center">
