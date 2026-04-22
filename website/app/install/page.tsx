@@ -305,6 +305,18 @@ autotune chat --model qwen3:8b
 
         </div>
 
+        {/* Upgrading */}
+        <div className="mt-16 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6">
+          <h2 className="text-lg font-bold text-white mb-2">Keeping autotune up to date</h2>
+          <p className="text-sm text-white/60 mb-4">
+            autotune is updated frequently. Run this any time to check for a new version and upgrade:
+          </p>
+          <Code block>{`autotune upgrade`}</Code>
+          <p className="text-sm text-white/50 mt-3">
+            Or upgrade directly with pip: <code className="text-cyan-300">pip install --upgrade llm-autotune</code>
+          </p>
+        </div>
+
         {/* Troubleshooting */}
         <div className="mt-16">
           <h2 className="text-2xl font-bold text-white mb-6">Something went wrong?</h2>
@@ -316,11 +328,11 @@ autotune chat --model qwen3:8b
               },
               {
                 q: `"Ollama is not running"`,
-                a: `Open a separate terminal and run: ollama serve — leave it open`,
+                a: `autotune will try to start Ollama automatically. If that fails, open the Ollama desktop app or run: ollama serve`,
               },
               {
                 q: `"No models found"`,
-                a: `You need to download a model first. Run: ollama pull qwen3:8b`,
+                a: `You need to download a model first. Run: autotune pull qwen3:8b`,
               },
               {
                 q: `First message is very slow (5–10 seconds)`,

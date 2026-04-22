@@ -141,7 +141,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-tight text-white">autotune</span>
             <span className="hidden rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-medium text-violet-300 sm:block">
-              v0.2.0
+              v1.0.0
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm text-white/60">
@@ -826,7 +826,7 @@ export default function Home() {
       {/* ── Footer ── */}
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-3 sm:flex-row sm:justify-between text-xs text-white/30">
-          <div>autotune v0.2.0 — MIT License</div>
+          <div>autotune v1.0.0 — MIT License</div>
           <div className="flex gap-6">
             <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
             <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>

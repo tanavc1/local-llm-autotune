@@ -752,6 +752,13 @@ export default function CommandsPage() {
               description="Runs a full health check: Python version, required packages, whether Ollama and other backends are reachable, RAM and swap headroom, and database health. Every check shows a clear pass/fail so you know exactly what needs fixing."
               usage={`autotune doctor`}
             />
+
+            <CommandCard
+              name="upgrade"
+              tagline="Update to the latest version"
+              description="Checks PyPI for a newer version of autotune, shows what changed, and upgrades with one keypress. Because autotune is updated frequently, run this any time something seems off or you want the latest improvements."
+              usage={`autotune upgrade\nautotune upgrade --yes   # skip confirmation`}
+            />
           </div>
         </div>
 

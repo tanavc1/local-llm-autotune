@@ -19,6 +19,7 @@ Commands
   autotune config get key       Print one config value
   autotune config reset         Reset all config to built-in defaults
   autotune compare m1 m2        Side-by-side benchmark of two models
+  autotune upgrade              Check for a newer version and upgrade
   autotune mlx list             List locally cached MLX models (Apple Silicon)
   autotune mlx pull <model>     Download MLX-quantized model from mlx-community
   autotune mlx resolve <model>  Show which MLX model ID would be used
@@ -172,7 +173,98 @@ def recommend(
         f"  [green]✓[/green]  Done — found recommendations for "
         f"{len(recs)} mode(s)\n"
     )
-    print_recommendations(recs, modes=modes)
+    with console.pager(styles=True):
+        print_recommendations(recs, modes=modes)
+
+
+# ---------------------------------------------------------------------------
+# `autotune upgrade`
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def upgrade(yes: bool) -> None:
+    """Check for a newer version of autotune and upgrade if one is available.
+
+    \b
+    Examples:
+      autotune upgrade
+      autotune upgrade --yes      Skip the confirmation prompt
+    """
+    import importlib.metadata
+    import json
+    import subprocess
+    import urllib.request
+
+    # ── Current installed version ────────────────────────────────────────
+    try:
+        current = importlib.metadata.version("llm-autotune")
+    except Exception:
+        current = "unknown"
+
+    console.print(f"  Current version : [bold]{current}[/bold]")
+
+    # ── Latest version from PyPI ─────────────────────────────────────────
+    with console.status("[dim]Checking PyPI for latest version…[/dim]", spinner="dots"):
+        try:
+            req = urllib.request.Request(
+                "https://pypi.org/pypi/llm-autotune/json",
+                headers={"User-Agent": f"autotune/{current} upgrade-check"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            latest = data["info"]["version"]
+        except Exception as exc:
+            console.print(f"[red]Could not reach PyPI:[/red] {exc}")
+            console.print(
+                "\n  Upgrade manually:\n"
+                "    [bold cyan]pip install --upgrade llm-autotune[/bold cyan]"
+            )
+            raise SystemExit(1)
+
+    console.print(f"  Latest version  : [bold]{latest}[/bold]")
+
+    # ── Compare ──────────────────────────────────────────────────────────
+    def _newer(v_new: str, v_cur: str) -> bool:
+        try:
+            from packaging.version import Version
+            return Version(v_new) > Version(v_cur)
+        except Exception:
+            return v_new != v_cur
+
+    if not _newer(latest, current):
+        console.print("\n[green]✓ You are already on the latest version.[/green]")
+        return
+
+    # ── Upgrade available ─────────────────────────────────────────────────
+    console.print(f"\n[bold yellow]autotune {latest} is available![/bold yellow]")
+
+    if not yes:
+        try:
+            console.file.flush()
+            sys.stdout.flush()
+            answer = input(f"  Upgrade from {current} → {latest}? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer not in ("", "y", "yes"):
+            console.print(
+                "\n[dim]Upgrade skipped. Run when ready:[/dim]\n"
+                "  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]"
+            )
+            return
+
+    console.print(f"\n[bold cyan]Upgrading autotune {current} → {latest}…[/bold cyan]\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "llm-autotune"],
+        check=False,
+    )
+    if result.returncode == 0:
+        console.print(f"\n[green]✓ autotune upgraded to v{latest}[/green]")
+        console.print("[dim]Restart your terminal for the new version to take effect.[/dim]")
+    else:
+        console.print("\n[red]Upgrade failed.[/red] Try manually:")
+        console.print("  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]")
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------

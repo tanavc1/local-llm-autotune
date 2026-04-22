@@ -310,12 +310,63 @@ class ChatSession:
             except Exception:
                 pass
 
-        # ── Ollama probe ─────────────────────────────────────────────────
+        # ── Ollama probe + model preload ─────────────────────────────────
         try:
+            import httpx as _httpx
+            import json as _json
+            import urllib.request as _ur
+
             running = await self.chain.ollama_running()
             if not running:
                 from autotune.api.ollama_pull import ensure_ollama_running
                 ensure_ollama_running(console)
+                running = await self.chain.ollama_running()
+
+            if running:
+                # Check whether this model is already resident in Ollama's memory.
+                already_loaded = False
+                try:
+                    ps = _httpx.get("http://localhost:11434/api/ps", timeout=2.0)
+                    if ps.status_code == 200:
+                        names = {m.get("name", "").lower() for m in ps.json().get("models", [])}
+                        target = self.model_id.lower()
+                        already_loaded = any(target in n or n in target for n in names)
+                except Exception:
+                    pass
+
+                if already_loaded:
+                    console.print(f"[dim]Model already in memory.[/dim]\n")
+                else:
+                    # Warm-load the model before the user's first message so
+                    # they see a clear "Loading…" indicator rather than a long
+                    # silent pause labelled "generating".
+                    loop = asyncio.get_running_loop()
+                    load_ok = False
+                    with console.status(
+                        f"[cyan]Loading[/cyan] [bold]{self.model_id}[/bold] into memory…",
+                        spinner="dots",
+                    ):
+                        try:
+                            body = _json.dumps({
+                                "model": self.model_id,
+                                "prompt": "",
+                                "stream": False,
+                                "keep_alive": "5m",
+                            }).encode()
+                            req = _ur.Request(
+                                "http://localhost:11434/api/generate",
+                                data=body,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            await loop.run_in_executor(
+                                None, lambda: _ur.urlopen(req, timeout=120).read()
+                            )
+                            load_ok = True
+                        except Exception:
+                            pass  # model not downloaded yet — _chat() will handle it
+
+                    if load_ok:
+                        console.print("[green]✓ Model ready[/green]\n")
         except Exception:
             pass
 
@@ -687,10 +738,11 @@ class ChatSession:
         for note in pressure_notices:
             self._autotune_notice(note)
 
-        # Show a subtle loading hint.  Printed with \r so the first token
-        # can overwrite it cleanly — this avoids the old "Assistant: [blank]"
-        # prompt that made users think they needed to type the response.
-        sys.stdout.write("  \033[2m[generating…]\033[0m\r")
+        # Show a loading hint.  Printed with \r so the first token can
+        # overwrite it cleanly.  On the very first request the model may
+        # still be loading into memory, so use a more informative label.
+        _hint = "loading model…" if self._request_count == 0 else "generating…"
+        sys.stdout.write(f"  \033[2m[{_hint}]\033[0m\r")
         sys.stdout.flush()
 
         try:
