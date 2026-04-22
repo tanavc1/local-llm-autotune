@@ -36,6 +36,83 @@ from rich.console import Console
 
 console = Console()
 
+# Set to True inside `upgrade` so the post-command hook doesn't print a
+# redundant reminder immediately after the user just ran the upgrade.
+_SKIP_UPGRADE_HINT: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Version-check helpers (cache-backed, network-free on hot path)
+# ---------------------------------------------------------------------------
+
+def _version_newer(v_new: str, v_cur: str) -> bool:
+    try:
+        from packaging.version import Version
+        return Version(v_new) > Version(v_cur)
+    except Exception:
+        return v_new != v_cur
+
+
+def _show_upgrade_hint() -> None:
+    """Print a one-line upgrade reminder if a newer version is cached locally.
+
+    The cache lives at ~/.autotune/version_check.json and is refreshed in a
+    background thread at most once every 24 hours.  The hot path (reading the
+    cache) is purely local I/O — it adds < 1 ms to every command.
+    """
+    if _SKIP_UPGRADE_HINT:
+        return
+    import importlib.metadata
+    import json
+    import pathlib
+    import threading
+    import time as _time
+
+    try:
+        current = importlib.metadata.version("llm-autotune")
+    except Exception:
+        return  # dev install / not installed via pip — skip silently
+
+    cache_path = pathlib.Path.home() / ".autotune" / "version_check.json"
+    try:
+        data: dict = {}
+        if cache_path.exists():
+            try:
+                data = json.loads(cache_path.read_text())
+            except Exception:
+                pass
+
+        cached_latest = data.get("latest", "")
+        if cached_latest and _version_newer(cached_latest, current):
+            console.print(
+                f"\n[dim]▸ autotune {cached_latest} is available"
+                f"  —  run [bold cyan]autotune upgrade[/bold cyan] to update[/dim]\n"
+            )
+
+        # Refresh the cache in the background if it is older than 24 hours.
+        # We deliberately do NOT join() — the thread updates the cache for the
+        # *next* run so the check never adds latency to the current command.
+        if _time.time() - data.get("checked_at", 0.0) > 86_400:
+            def _fetch() -> None:
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(
+                        "https://pypi.org/pypi/llm-autotune/json",
+                        headers={"User-Agent": f"autotune/{current} version-check"},
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        latest = json.loads(r.read())["info"]["version"]
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_text(
+                        json.dumps({"checked_at": _time.time(), "latest": latest})
+                    )
+                except Exception:
+                    pass  # offline or PyPI unreachable — silent
+
+            threading.Thread(target=_fetch, daemon=True).start()
+    except Exception:
+        pass  # cache I/O failure — never crash a command
+
 
 # ---------------------------------------------------------------------------
 # CLI group
@@ -45,6 +122,12 @@ console = Console()
 @click.version_option(package_name="llm-autotune")
 def cli() -> None:
     """Local-LLM autotune – recommends the best inference config for your hardware."""
+
+
+@cli.result_callback()
+def _after_command(result: object, **_kwargs: object) -> None:
+    """Show a one-line upgrade hint after any command if a newer version is cached."""
+    _show_upgrade_hint()
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +274,9 @@ def upgrade(yes: bool) -> None:
       autotune upgrade
       autotune upgrade --yes      Skip the confirmation prompt
     """
+    global _SKIP_UPGRADE_HINT
+    _SKIP_UPGRADE_HINT = True  # don't show the hint right after this command
+
     import importlib.metadata
     import json
     import subprocess
@@ -261,6 +347,14 @@ def upgrade(yes: bool) -> None:
     if result.returncode == 0:
         console.print(f"\n[green]✓ autotune upgraded to v{latest}[/green]")
         console.print("[dim]Restart your terminal for the new version to take effect.[/dim]")
+        # Update the cache so the hint stops firing in the next session
+        try:
+            import pathlib, json as _j, time as _t
+            _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
+            _cp.parent.mkdir(parents=True, exist_ok=True)
+            _cp.write_text(_j.dumps({"checked_at": _t.time(), "latest": latest}))
+        except Exception:
+            pass
     else:
         console.print("\n[red]Upgrade failed.[/red] Try manually:")
         console.print("  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]")
