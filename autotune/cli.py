@@ -256,8 +256,7 @@ def recommend(
         f"  [green]✓[/green]  Done — found recommendations for "
         f"{len(recs)} mode(s)\n"
     )
-    with console.pager(styles=True):
-        print_recommendations(recs, modes=modes)
+    print_recommendations(recs, modes=modes)
 
 
 # ---------------------------------------------------------------------------
