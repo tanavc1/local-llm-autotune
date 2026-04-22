@@ -198,9 +198,10 @@ def estimate_arch_from_params(params_b: float) -> ArchInfo:
 
 class FitClass(Enum):
     SAFE      = "safe"       # <85% available RAM — comfortable headroom
-    MARGINAL  = "marginal"   # 85–92% — will work, but tight; use Q8 KV
-    SWAP_RISK = "swap_risk"  # 92–100% — macOS compressor/swap will activate
-    OOM       = "oom"        # >100% — kernel will OOM-kill or model hangs
+    MARGINAL  = "marginal"   # 85–92% available — will work, use Q8 KV
+    SWAP_RISK = "swap_risk"  # 92–100% available — autotune compresses context to help
+    TIGHT     = "tight"      # >available but fits in total RAM — close other apps
+    OOM       = "oom"        # >95% total RAM — physically won't fit
 
 
 @dataclass
@@ -314,8 +315,14 @@ class ModelSelector:
         util      = total_est / self.available_gb
 
         # ── 3. Fit classification ────────────────────────────────────────
-        if util > 1.0:
+        # OOM = won't fit even in total installed RAM (hard limit).
+        # TIGHT = exceeds currently free RAM but fits in total RAM; the user
+        #   can run it by closing other apps, or macOS memory compression will
+        #   handle it — this is NOT the same as being unable to run at all.
+        if total_est > self.total_ram_gb * 0.95:
             fit_class = FitClass.OOM
+        elif total_est > self.available_gb:
+            fit_class = FitClass.TIGHT
         elif util > SWAP_RISK_FRACTION:
             fit_class = FitClass.SWAP_RISK
         elif util > SAFE_RAM_FRACTION:
@@ -341,6 +348,19 @@ class ModelSelector:
         if fit_class == FitClass.OOM:
             rec_profile = "—"
             safe_ctx    = 0
+        elif fit_class == FitClass.TIGHT:
+            # Budget against total_ram with conservative headroom for OS + apps.
+            # Using 75% of total_ram leaves room for the OS and a few background
+            # processes after the user closes heavy apps.
+            tight_budget_gb = self.total_ram_gb * 0.75 - base_used
+            if arch and tight_budget_gb > 0:
+                bpt = arch.kv_bytes_per_token("Q8_0")
+                tight_tokens = int(tight_budget_gb * 1024**3 / max(bpt, 1))
+                safe_ctx = _round_context(min(tight_tokens, 8192))
+            else:
+                safe_ctx = 2048
+            safe_ctx    = max(safe_ctx, 512)
+            rec_profile = "fast"
         elif safe_ctx < 2048:
             rec_profile = "fast"
             safe_ctx    = max(safe_ctx, 512)
@@ -353,7 +373,7 @@ class ModelSelector:
 
         # ── 7. Quantization downgrade suggestion ─────────────────────────
         norm_quant = _normalize_quant(quant)
-        too_heavy  = fit_class in (FitClass.SWAP_RISK, FitClass.OOM)
+        too_heavy  = fit_class in (FitClass.TIGHT, FitClass.SWAP_RISK, FitClass.OOM)
         sug_quant = sug_gb = sug_headroom = None
 
         if too_heavy and params_b:
@@ -381,30 +401,44 @@ class ModelSelector:
         if fit_class == FitClass.OOM:
             fatal = True
             warning = (
-                f"Model requires ~{total_est:.1f} GB "
+                f"Model needs ~{total_est:.1f} GB "
                 f"(weights {size_gb:.1f} GB + KV {kv_q8:.2f} GB + overhead) "
-                f"but only {self.available_gb:.1f} GB is available. "
-                f"This will cause severe swap or OOM."
+                f"but your machine only has {self.total_ram_gb:.0f} GB total. "
+                f"This model is too large to run on this hardware."
             )
             if sug_quant:
                 warning += (
-                    f" Pull a smaller quant: "
+                    f" Try a smaller quantization: "
+                    f"autotune pull {model_name.split(':')[0]}:{sug_quant.lower()} "
+                    f"(~{sug_gb:.1f} GB)"
+                )
+
+        elif fit_class == FitClass.TIGHT:
+            warning = (
+                f"Model needs ~{total_est:.1f} GB but only {self.available_gb:.1f} GB "
+                f"is free right now (you have {self.total_ram_gb:.0f} GB total). "
+                f"Close other apps to free memory, then this will run fine."
+            )
+            if sug_quant:
+                warning += (
+                    f" Or pull a lighter quant for comfortable headroom: "
                     f"autotune pull {model_name.split(':')[0]}:{sug_quant.lower()} "
                     f"(~{sug_gb:.1f} GB)"
                 )
 
         elif fit_class == FitClass.SWAP_RISK:
             warning = (
-                f"Model uses {util*100:.0f}% of available RAM at 8k context. "
-                f"Context capped to {safe_ctx:,} tokens (Q8 KV) to avoid swap. "
+                f"Model uses {util*100:.0f}% of free RAM at 8k context — autotune "
+                f"will cap context to {safe_ctx:,} tokens and use Q8 KV to stay "
+                f"below the swap threshold."
             )
             if sug_quant:
-                warning += f"For more headroom: pull {sug_quant} (~{sug_gb:.1f} GB)."
+                warning += f" For more breathing room: pull {sug_quant} (~{sug_gb:.1f} GB)."
 
         elif fit_class == FitClass.MARGINAL:
             warning = (
-                f"Model is a tight fit ({util*100:.0f}% RAM at 8k context). "
-                f"Using Q8 KV cache and capping context at {safe_ctx:,} tokens."
+                f"Model is a snug fit ({util*100:.0f}% of free RAM at 8k context). "
+                f"autotune will use Q8 KV cache and keep context under {safe_ctx:,} tokens."
             )
 
         return FitReport(

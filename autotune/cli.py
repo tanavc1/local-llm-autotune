@@ -1667,15 +1667,19 @@ def ls(as_json: bool) -> None:
             modelinfo=modelinfo,
         )
 
-        # Score: 10 = perfect fit; penalise swap/OOM heavily
+        # Score: 10 = perfect fit; lower = harder to run
         fc = report.fit_class
         from autotune.api.model_selector import FitClass
         if fc == FitClass.OOM:
             score = 0.0
+        elif fc == FitClass.TIGHT:
+            # Usable but needs RAM freed — score by how much of total_ram it uses
+            total_util = report.total_est_gb / max(total_gb, 1) * 100
+            score = max(1.0, 3.5 - (total_util - 75) * 0.05)
         elif fc == FitClass.SWAP_RISK:
-            score = max(1.0, 3.0 - (report.ram_util_pct - 92) * 0.3)
+            score = max(3.5, 5.0 - (report.ram_util_pct - 92) * 0.2)
         elif fc == FitClass.MARGINAL:
-            score = 5.0 + (92 - report.ram_util_pct) * 0.3
+            score = 5.5 + (92 - report.ram_util_pct) * 0.2
         else:   # SAFE
             util = report.ram_util_pct / 100
             if util < 0.15:
@@ -1687,11 +1691,13 @@ def ls(as_json: bool) -> None:
 
         # Status label
         if fc == FitClass.OOM:
-            status = "[red]⛔ OOM[/red]"
+            status = "[red]⛔ too large[/red]"
+        elif fc == FitClass.TIGHT:
+            status = "[yellow]⚡ close apps[/yellow]"
         elif fc == FitClass.SWAP_RISK:
-            status = "[red]⚠ swap risk[/red]"
+            status = "[yellow]⚠ pressure[/yellow]"
         elif fc == FitClass.MARGINAL:
-            status = "[yellow]~ marginal[/yellow]"
+            status = "[yellow]~ snug[/yellow]"
         else:
             status = "[green]✓ fits[/green]"
 
@@ -1800,15 +1806,22 @@ def ls(as_json: bool) -> None:
 
     console.print(t)
     console.print(
-        "[dim]Total+KV = weights + KV cache (8k ctx) + runtime overhead.  "
-        "Safe ctx = max context before swap.  "
-        "Run: [cyan]autotune run <model>[/cyan][/dim]\n"
+        "[dim]Total+KV = weights + KV cache (8k ctx) + overhead.  "
+        "Safe ctx = max tokens before memory pressure.\n"
+        "  [green]✓ fits[/green]         runs great right now\n"
+        "  [yellow]~ snug[/yellow]         runs fine; autotune trims context + uses Q8 KV\n"
+        "  [yellow]⚠ pressure[/yellow]     runs but tight; autotune compresses context aggressively\n"
+        "  [yellow]⚡ close apps[/yellow]  needs RAM freed — quit heavy apps first, then it'll run\n"
+        "  [red]⛔ too large[/red]    exceeds your total RAM — try a smaller quantization\n"
+        "[/dim]"
+        "  Start: [cyan]autotune run <model>[/cyan]  (pre-flight check)  "
+        "or  [cyan]autotune chat --model <model>[/cyan]  (direct)\n"
     )
 
-    # Print warnings for problematic models
+    # Print notes for problematic models
     for r in rows:
         if r["warning"]:
-            icon = "[red]✗[/red]" if r["fatal"] else "[yellow]⚠[/yellow]"
+            icon = "[red]✗[/red]" if r["fatal"] else "[yellow]ℹ[/yellow]"
             console.print(f"  {icon} [bold]{r['name']}[/bold]: {r['warning']}")
 
 
@@ -1829,19 +1842,20 @@ def ls(as_json: bool) -> None:
 @click.option("--recall", is_flag=True, default=False,
               help="Inject relevant context from past conversations. Off by default.")
 def run(model_name: str, profile: str, system: Optional[str], force: bool, recall: bool) -> None:
-    """Pre-flight analysis + optimized chat for a locally downloaded Ollama model.
+    """Memory analysis + safe profile selection, then opens optimized chat.
 
-    Difference from `autotune chat`:
-      run  = pre-flight (memory fit, swap risk, auto-profile) + chat
-      chat = chat only (connects directly, optimization still active by default)
+    `autotune run` = pre-flight check → chat
+    `autotune chat` = chat directly (no pre-flight, same real-time optimizer)
 
-    Use `run` when you want autotune to analyze the model's memory requirements
-    before loading it — it will warn you about swap risk and automatically pick
-    the safest profile and context window.  Use `chat` for HuggingFace/MLX models
-    or when you already know the profile you want.
+    When to use which:
+      run   — first time with a model, or unsure if it fits your RAM.
+              Checks memory, warns if tight, auto-picks the safest profile
+              and context window, then starts chat.
+      chat  — you know the model fits (or don't need the analysis).
+              Faster to start. Also the only command for HuggingFace/MLX.
 
-    Both commands run the same real-time optimizer during inference (adaptive RAM
-    monitor, KV manager, context optimizer).
+    Both run the same real-time optimizer during inference: adaptive RAM
+    monitoring, KV cache manager, and dynamic context compression.
 
     \b
     Examples:
@@ -1935,22 +1949,34 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
 
     if report.fatal and not force:
         console.print(
-            f"\n[bold red]✗ Cannot load model safely[/bold red]\n"
+            f"\n[bold red]✗ Model too large for this machine[/bold red]\n"
             f"  {report.warning}\n"
-            f"  Use --force to override (will likely OOM or swap severely)."
+            f"  Use --force to try anyway (will likely crash or hang)."
         )
         raise SystemExit(1)
 
-    if report.fit_class == FitClass.SWAP_RISK and not force:
+    if report.fit_class == FitClass.TIGHT and not force:
         console.print(
-            f"\n[bold yellow]⚠ Swap risk detected[/bold yellow]\n"
+            f"\n[bold yellow]⚡ Needs RAM freed[/bold yellow]\n"
             f"  {report.warning}\n"
-            f"  Use --force to proceed anyway."
         )
-        raise SystemExit(1)
+        try:
+            console.file.flush()
+            sys.stdout.flush()
+            ans = input("  Proceed anyway? autotune will minimize context. [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans not in ("y", "yes"):
+            console.print("[dim]Tip: close Chrome, other apps, then retry.[/dim]")
+            raise SystemExit(0)
 
-    if report.warning:
+    elif report.fit_class == FitClass.SWAP_RISK:
+        # SWAP_RISK is autotune's wheelhouse — warn but proceed.
+        # The adaptive context reduction and Q8 KV cache are designed for this.
         console.print(f"[yellow]⚠[/yellow] {report.warning}")
+
+    elif report.warning:
+        console.print(f"[dim]ℹ {report.warning}[/dim]")
 
     # ── Select profile ───────────────────────────────────────────────────
     if profile == "auto":

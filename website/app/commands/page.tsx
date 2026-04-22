@@ -161,7 +161,7 @@ export default function CommandsPage() {
               "memory-search", "memory-list", "memory-stats", "memory-forget", "memory-setup",
               "mlx-list", "mlx-pull", "mlx-resolve",
               "telemetry", "storage",
-              "doctor",
+              "doctor", "upgrade",
             ].map((cmd) => (
               <a
                 key={cmd}
@@ -183,10 +183,10 @@ export default function CommandsPage() {
 
             <CommandCard
               name="chat"
-              tagline="Start an optimized conversation"
-              badge="Start here"
+              tagline="Jump straight into a conversation"
+              badge="Quick start"
               badgeColor="green"
-              description="Open an interactive chat with a local model. autotune automatically sizes the context window, enables prefix caching, and monitors RAM in real-time — your computer stays fast even while the model is running."
+              description="Opens chat immediately — no pre-flight check. autotune still applies all real-time optimizations (adaptive RAM monitoring, KV cache manager, dynamic context compression). Use this when you already know the model fits, or for HuggingFace and MLX models."
               usage={`autotune chat --model qwen3:8b`}
               examples={[
                 { label: "Basic chat", code: "autotune chat --model qwen3:8b" },
@@ -213,10 +213,10 @@ export default function CommandsPage() {
 
             <CommandCard
               name="run"
-              tagline="Pre-flight check + chat"
-              badge="Recommended"
+              tagline="Memory check, then chat"
+              badge="First time with a model"
               badgeColor="violet"
-              description="Like `chat` but runs a memory analysis before loading the model. autotune warns you if the model might cause swap (which makes your computer feel slow), automatically picks the safest context window size, and chooses the right profile. Use this the first time you try a model."
+              description="Analyzes the model's memory requirements before loading it — checks if it fits, how tight it is, and auto-selects the safest profile and context window. Then opens the same optimized chat. Use this the first time you try a model, or any time you're unsure if it fits your RAM."
               usage={`autotune run qwen3:8b`}
               examples={[
                 { code: "autotune run qwen3:8b" },
@@ -226,7 +226,7 @@ export default function CommandsPage() {
                   code: `autotune run llama3.2 --system "You are a helpful assistant"`,
                 },
                 {
-                  label: "Override swap warning and start anyway",
+                  label: "Override if autotune says the model is too large",
                   code: "autotune run qwen3:8b --force",
                 },
               ]}
@@ -234,7 +234,7 @@ export default function CommandsPage() {
                 { flag: "MODEL", desc: "Model name (positional argument, required)." },
                 { flag: "--profile, -p", desc: "fast / balanced / quality / auto. Default: auto (autotune picks for you)." },
                 { flag: "--system, -s", desc: "Custom system prompt." },
-                { flag: "--force", desc: "Start even if swap risk is detected (not recommended)." },
+                { flag: "--force", desc: "Override the memory check and start anyway." },
                 { flag: "--recall", desc: "Inject relevant context from past conversations." },
               ]}
             />
