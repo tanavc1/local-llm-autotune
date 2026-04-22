@@ -143,8 +143,8 @@ export default function CommandsPage() {
           </p>
           <h1 className="text-4xl font-bold text-white mb-4">All autotune commands</h1>
           <p className="text-white/55 text-lg max-w-2xl">
-            Every command listed with examples and flags. Start with{" "}
-            <Code>autotune hardware</Code> to see what your machine can do,
+            Every command listed with examples and flags. New? Start with{" "}
+            <Code>autotune recommend</Code> to get a hardware-matched model,
             then <Code>autotune proof</Code> to verify the improvement is real.
           </p>
         </div>
@@ -801,6 +801,22 @@ export default function CommandsPage() {
           </a>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="border-t border-white/5 px-6 py-8 mt-4">
+        <div className="mx-auto max-w-5xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
+          <div className="flex flex-col items-center sm:items-start gap-1">
+            <span>autotune v1.0.0 — MIT License</span>
+            <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
+          </div>
+          <div className="flex gap-5">
+            <a href="/" className="hover:text-white/60 transition-colors">Home</a>
+            <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
+            <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>
+            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

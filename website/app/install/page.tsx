@@ -179,33 +179,50 @@ ollama --version`}</Code>
           </Step>
 
           {/* Step 3 */}
-          <Step n="3" title="Start Ollama">
+          <Step n="3" title="Install Python (if you don't have it)">
             <p className="text-sm text-white/60 mb-1">
-              Ollama needs to be running in the background before you can use it.
+              autotune is a Python tool. You need Python 3.10 or newer.
             </p>
-            <div className="grid gap-3 sm:grid-cols-2 mt-4">
-              <div>
-                <div className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Mac / Linux</div>
-                <Code block>{`ollama serve`}</Code>
-                <p className="text-xs text-white/40 mt-2">
-                  Leave this terminal open. Open a new one for the next steps.
-                </p>
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Windows</div>
-                <p className="text-xs text-white/50">
-                  On Windows, Ollama starts automatically as a background service after installation.
-                  You can check the system tray icon.
-                </p>
-              </div>
-            </div>
+            <Code block>{`# Check if Python is already installed:
+python3 --version
+# Should print: Python 3.10.x or higher
+
+# If not installed, download from https://python.org/downloads
+# Mac users: you can also use Homebrew: brew install python@3.13`}</Code>
           </Step>
 
           {/* Step 4 */}
-          <Step n="4" title="Download an AI model">
+          <Step n="4" title="Install autotune">
+            <Code block>{`pip install llm-autotune
+
+# If you get a "command not found" error, try:
+pip3 install llm-autotune
+
+# Apple Silicon Mac (M1/M2/M3/M4)? Get faster inference too:
+pip install "llm-autotune[mlx]"`}</Code>
+            <Callout type="tip">
+              After install, the <Code>{`autotune`}</Code> command will be available in your terminal. Ollama is started automatically — no separate <Code>{`ollama serve`}</Code> needed.
+            </Callout>
+          </Step>
+
+          {/* Step 5 */}
+          <Step n="5" title="Find the best model for your hardware">
             <p className="text-sm text-white/60 mb-1">
-              Pick based on how much RAM your computer has. Not sure? Run{" "}
-              <Code>{`autotune hardware`}</Code> after step 6.
+              autotune scans your CPU, RAM, and GPU and tells you exactly which model to run.
+              You don&apos;t need to guess — it calculates the optimal model and quantization for your exact setup.
+            </p>
+            <Code block>{`autotune recommend`}</Code>
+            <p className="text-sm text-white/50 mt-3">
+              This prints the recommended model with an exact download command.
+              Copy the <Code>{`autotune pull`}</Code> command it shows and use it in the next step.
+            </p>
+          </Step>
+
+          {/* Step 6 */}
+          <Step n="6" title="Download your model">
+            <p className="text-sm text-white/60 mb-1">
+              Use the model name from <Code>{`autotune recommend`}</Code>, or pick from the table below.
+              autotune starts Ollama automatically — no separate <Code>{`ollama serve`}</Code> needed.
             </p>
             <div className="mt-4 overflow-hidden rounded-xl border border-white/8">
               <table className="w-full text-sm">
@@ -218,10 +235,10 @@ ollama --version`}</Code>
                 </thead>
                 <tbody>
                   {[
-                    { ram: "8 GB",  cmd: "ollama pull qwen3:4b",  size: "2.6 GB" },
-                    { ram: "16 GB", cmd: "ollama pull qwen3:8b",  size: "5.2 GB", recommended: true },
-                    { ram: "24 GB", cmd: "ollama pull qwen3:14b", size: "9.0 GB" },
-                    { ram: "32 GB+", cmd: "ollama pull qwen3:30b-a3b", size: "17 GB" },
+                    { ram: "8 GB",  cmd: "autotune pull qwen3:4b",  size: "2.6 GB" },
+                    { ram: "16 GB", cmd: "autotune pull qwen3:8b",  size: "5.2 GB", recommended: true },
+                    { ram: "24 GB", cmd: "autotune pull qwen3:14b", size: "9.0 GB" },
+                    { ram: "32 GB+", cmd: "autotune pull qwen3:30b-a3b", size: "17 GB" },
                   ].map((r) => (
                     <tr key={r.ram} className="border-b border-white/5">
                       <td className="px-4 py-3 text-xs font-medium text-white/60">{r.ram}</td>
@@ -240,7 +257,7 @@ ollama --version`}</Code>
               </table>
             </div>
             <Code block>{`# For most people (16 GB RAM):
-ollama pull qwen3:8b
+autotune pull qwen3:8b
 
 # Watch the download progress in your terminal.
 # This takes a few minutes depending on your internet speed.`}</Code>
@@ -249,46 +266,8 @@ ollama pull qwen3:8b
             </Callout>
           </Step>
 
-          {/* Step 5 */}
-          <Step n="5" title="Install Python (if you don't have it)">
-            <p className="text-sm text-white/60 mb-1">
-              autotune is a Python tool. You need Python 3.10 or newer.
-            </p>
-            <Code block>{`# Check if Python is already installed:
-python3 --version
-# Should print: Python 3.10.x or higher
-
-# If not installed, download from https://python.org/downloads
-# Mac users: you can also use Homebrew: brew install python@3.13`}</Code>
-          </Step>
-
-          {/* Step 6 */}
-          <Step n="6" title="Install autotune">
-            <Code block>{`pip install llm-autotune
-
-# If you get a "command not found" error, try:
-pip3 install llm-autotune
-
-# Apple Silicon Mac (M1/M2/M3/M4)? Get faster inference too:
-pip install "llm-autotune[mlx]"`}</Code>
-            <Callout type="tip">
-              After install, the <Code>{`autotune`}</Code> command will be available in your terminal.
-            </Callout>
-          </Step>
-
           {/* Step 7 */}
-          <Step n="7" title="Check your hardware">
-            <p className="text-sm text-white/60 mb-1">
-              This shows you what autotune detected about your machine.
-            </p>
-            <Code block>{`autotune hardware`}</Code>
-            <p className="text-sm text-white/50 mt-3">
-              You&apos;ll see your CPU, RAM, and GPU. autotune uses this to pick the right settings automatically.
-            </p>
-          </Step>
-
-          {/* Step 8 */}
-          <Step n="8" title="Start chatting!">
+          <Step n="7" title="Start chatting!">
             <p className="text-sm text-white/60 mb-1">
               That&apos;s it. autotune handles all the optimization automatically.
             </p>
@@ -301,6 +280,15 @@ autotune chat --model qwen3:8b
               You should see the first word appear about 39% faster than running Ollama alone.
               The second message will be even faster — autotune caches your conversation context.
             </Callout>
+          </Step>
+
+          {/* Step 8 */}
+          <Step n="8" title="Prove it on your hardware (optional)">
+            <p className="text-sm text-white/60 mb-1">
+              Run a 30-second benchmark using Ollama&apos;s own internal timers to see exactly how much faster autotune is on your machine.
+            </p>
+            <Code block>{`autotune proof -m qwen3:8b
+# Saves a proof_qwen3_8b.json file you can inspect or share.`}</Code>
           </Step>
 
         </div>
@@ -375,6 +363,22 @@ autotune chat --model qwen3:8b
           </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="border-t border-white/5 px-6 py-8 mt-4">
+        <div className="mx-auto max-w-4xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
+          <div className="flex flex-col items-center sm:items-start gap-1">
+            <span>autotune v1.0.0 — MIT License</span>
+            <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
+          </div>
+          <div className="flex gap-5">
+            <a href="/" className="hover:text-white/60 transition-colors">Home</a>
+            <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>
+            <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>
+            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

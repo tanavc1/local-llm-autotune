@@ -154,7 +154,7 @@ export default function Home() {
             <a href="#quickstart" className="hidden hover:text-white transition-colors sm:block">
               Install
             </a>
-            <a href="/what-we-do" className="hidden hover:text-white transition-colors sm:block font-medium text-violet-400 hover:text-violet-300">
+            <a href="/what-we-do" className="hidden hover:text-white transition-colors sm:block">
               All we do
             </a>
             <a
@@ -190,9 +190,9 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg text-white/60 leading-relaxed animate-fade-up delay-100">
-            autotune is an inference optimizer that sits in front of Ollama and applies
-            four automatic optimizations: right-sized KV buffers, system prompt caching,
-            adaptive memory precision, and model keep-alive.
+            autotune sits between your code and Ollama and applies automatic optimizations:
+            right-sized KV buffers, KV precision tuning, system prompt caching,
+            intelligent context management, and model keep-alive.
             The result: <strong className="text-white/90">300+ MB freed</strong> per
             request, first word up to <strong className="text-white/90">53% faster</strong>,
             and your computer stays responsive.
@@ -232,11 +232,11 @@ export default function Home() {
         <div className="mx-auto max-w-5xl">
           <SectionLabel>How it works</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
-            Four optimizations, applied automatically.
+            Automatic optimizations, applied to every request.
           </h2>
           <p className="text-white/55 mb-12 max-w-2xl">
             autotune sits between your code and Ollama as a transparent proxy. Every request
-            passes through four layers of optimization — none require config, none change your
+            passes through multiple layers of optimization — none require config, none change your
             prompt or output quality.
           </p>
 
@@ -287,30 +287,34 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 3 — Adaptive KV precision */}
+            {/* 3 — Adaptive memory management (KV precision + context cutting) */}
             <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-6">
               <div className="flex items-center gap-2 mb-3">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">3</span>
-                <span className="text-sm font-semibold text-white">Adaptive KV precision</span>
+                <span className="text-sm font-semibold text-white">KV precision + adaptive context</span>
               </div>
               <p className="text-sm text-white/60 mb-4">
-                As your system RAM fills up, autotune automatically downgrades KV cache
-                precision from F16 to Q8 — cutting KV memory in half at three configurable
-                thresholds. On tight machines (8 GB MacBooks, RAM-heavy multitasking), this
-                prevents swap entirely.
+                Two distinct mechanisms working together. <strong className="text-white/80">KV precision</strong>{" "}
+                is set appropriately per profile — F16 for quality, Q8 (half the footprint) for speed or tight machines.
+                Separately, the <strong className="text-white/80">context window is cut intelligently</strong>{" "}
+                as RAM pressure builds — not all at once, but in graduated steps so you keep as much context as possible.
               </p>
-              <div className="space-y-1.5 text-xs font-mono">
-                <div className="flex items-center gap-2">
-                  <span className="text-white/30">RAM &gt; 80%</span>
-                  <span className="text-orange-300/80">→ context −10%, stays F16</span>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center gap-2 font-mono">
+                  <span className="text-white/40 w-20 shrink-0">fast profile</span>
+                  <span className="text-orange-300">always Q8 KV — lowest latency</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-white/30">RAM &gt; 88%</span>
-                  <span className="text-orange-300">→ switch F16 → Q8  (½ KV memory)</span>
+                <div className="flex items-center gap-2 font-mono">
+                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 80%</span>
+                  <span className="text-orange-300/80">context −10% (KV stays F16)</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-white/30">RAM &gt; 93%</span>
-                  <span className="text-red-300">→ context hard-capped, swap prevented</span>
+                <div className="flex items-center gap-2 font-mono">
+                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 88%</span>
+                  <span className="text-orange-300">context −25%, KV: F16 → Q8</span>
+                </div>
+                <div className="flex items-center gap-2 font-mono">
+                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 93%</span>
+                  <span className="text-red-300">context halved, KV forced Q8</span>
                 </div>
               </div>
             </div>
@@ -342,7 +346,25 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-6 flex flex-col sm:flex-row sm:items-center gap-4">
+          {/* Context management callout */}
+          <div className="mt-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
+            <div className="flex items-start gap-3">
+              <span className="text-xl mt-0.5">🗜️</span>
+              <div>
+                <div className="text-sm font-semibold text-white mb-1">Intelligent context management</div>
+                <p className="text-sm text-white/60">
+                  As conversations grow, autotune compresses older messages in four progressive tiers —
+                  keeping all recent turns verbatim and summarising older ones — so you never hit
+                  a hard context wall. Every conversation is also saved to a local SQLite database
+                  and semantically searched at the start of each new session, so relevant past
+                  context is automatically available without you re-explaining it.
+                  <strong className="text-white/80"> All data stays on your machine.</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4">
             <p className="text-xs text-white/35 max-w-xl">
               Numbers above use llama3.2:3b on Apple M2. KV size scales with model architecture —
               larger models free more RAM in absolute terms.
@@ -591,31 +613,40 @@ export default function Home() {
           <div className="grid gap-12 lg:grid-cols-2">
             <div>
               <SectionLabel>Quickstart</SectionLabel>
-              <h2 className="text-3xl font-bold text-white mb-8">Up in 60 seconds</h2>
+              <h2 className="text-3xl font-bold text-white mb-3">Up in 60 seconds</h2>
+              <p className="text-sm text-white/50 mb-8">
+                No Ollama commands needed — autotune handles everything for you.
+              </p>
               <ol className="space-y-6">
                 {[
                   {
                     n: "1",
-                    title: "Install Ollama and pull a model",
-                    body: "Download from ollama.com — any model you already have works.",
-                    code: "ollama pull qwen3:8b",
-                  },
-                  {
-                    n: "2",
                     title: "Install autotune",
-                    body: "One pip install — no other configuration required.",
+                    body: "One pip install. Ollama is started automatically — no separate setup.",
                     code: "pip install llm-autotune",
                   },
                   {
+                    n: "2",
+                    title: "Find the best model for your hardware",
+                    body: "Scans your CPU, RAM, and GPU. Recommends the optimal model and settings — no guessing.",
+                    code: "autotune recommend",
+                  },
+                  {
                     n: "3",
-                    title: "Chat with automatic optimization",
-                    body: "autotune intercepts every Ollama request and right-sizes it.",
-                    code: "autotune chat --model qwen3:8b",
+                    title: "Download the recommended model",
+                    body: "autotune pulls the model and starts Ollama if it isn't already running.",
+                    code: "autotune pull qwen3:8b",
                   },
                   {
                     n: "4",
-                    title: "Prove it helps on your hardware",
-                    body: "30-second head-to-head. Uses Ollama's own timers.",
+                    title: "Start chatting with optimization",
+                    body: "Every request is automatically right-sized. No flags, no config.",
+                    code: "autotune chat --model qwen3:8b",
+                  },
+                  {
+                    n: "5",
+                    title: "Prove it on your own hardware",
+                    body: "30-second benchmark using Ollama's own nanosecond timers. Saves a JSON you can share.",
                     code: "autotune proof -m qwen3:8b",
                   },
                 ].map((step) => (
@@ -635,7 +666,7 @@ export default function Home() {
               </ol>
 
               <div className="mt-8 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
-                <div className="text-xs font-semibold text-blue-300 mb-1">Apple Silicon</div>
+                <div className="text-xs font-semibold text-blue-300 mb-1">Apple Silicon (M1/M2/M3/M4)</div>
                 <div className="text-xs text-white/50 mb-2">
                   Native Metal GPU kernels via MLX — 10–40% faster generation throughput.
                 </div>
@@ -825,9 +856,12 @@ export default function Home() {
 
       {/* ── Footer ── */}
       <footer className="border-t border-white/5 px-6 py-10">
-        <div className="mx-auto max-w-5xl flex flex-col items-center gap-3 sm:flex-row sm:justify-between text-xs text-white/30">
-          <div>autotune v1.0.0 — MIT License</div>
-          <div className="flex gap-6">
+        <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
+          <div className="flex flex-col items-center sm:items-start gap-1">
+            <span>autotune v1.0.0 — MIT License</span>
+            <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
+          </div>
+          <div className="flex flex-wrap justify-center gap-6">
             <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
             <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>
             <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>

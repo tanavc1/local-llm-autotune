@@ -61,7 +61,7 @@ Conversation content in `recall.db` is **never** transmitted to any external ser
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do NOT open a public GitHub issue.**
-2. Email: [security contact — add your email here]
+2. Email: [autotunellm@gmail.com](mailto:autotunellm@gmail.com)
 3. Include a description of the vulnerability and steps to reproduce.
 
 We will acknowledge receipt within 48 hours and provide a fix timeline.

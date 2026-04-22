@@ -561,6 +561,8 @@ autotune telemetry --disable   # opt out
 
 What is sent when opted in: CPU architecture, RAM size, GPU backend, tokens/sec, TTFT, context size, quantization label, session start/stop events. No hostnames, usernames, IP addresses, or conversation content. Data goes to a private Supabase instance and is never sold or shared.
 
+The Supabase anon key embedded in the package is a public client token (INSERT-only, row-level security enforced). See [SECURITY.md](SECURITY.md) for a full explanation.
+
 ---
 
 ## Troubleshooting
@@ -722,6 +724,12 @@ autotune/
 ```
 
 ---
+
+## Contributing & support
+
+Bug reports and pull requests welcome. Open an issue on GitHub or email [autotunellm@gmail.com](mailto:autotunellm@gmail.com).
+
+For security vulnerabilities, see [SECURITY.md](SECURITY.md) — please do not open a public issue.
 
 ## License
 

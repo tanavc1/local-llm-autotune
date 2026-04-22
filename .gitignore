@@ -6,6 +6,7 @@ dist/
 build/
 *.egg
 .env
+!.env.example
 .venv
 venv/
 env/
