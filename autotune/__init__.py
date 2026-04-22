@@ -106,7 +106,7 @@ def start(
         Default optimization profile (``"fast"``, ``"balanced"``, ``"quality"``).
         Sets the ``AUTOTUNE_DEFAULT_PROFILE`` env var for the spawned process.
     use_mlx : bool
-        Whether to allow the MLX backend on Apple Silicon. Default ``True``.
+        Whether to allow the MLX backend on Apple Silicon. Default ``False``.
 
         Set to ``False`` for the lightest possible memory footprint (~150 MB
         vs ~470 MB).  When disabled, all requests are routed through Ollama.
@@ -195,6 +195,10 @@ def start(
 
     # Timed out — kill the process we started.
     _managed_proc.terminate()
+    try:
+        _managed_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _managed_proc.kill()
     _managed_proc = None
     raise TimeoutError(
         f"autotune server did not become ready within {timeout:.0f}s. "

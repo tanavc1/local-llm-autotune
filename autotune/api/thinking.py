@@ -15,6 +15,7 @@ Import pattern (avoids circular deps):
 
 from __future__ import annotations
 
+import json
 import re
 from typing import AsyncGenerator
 
@@ -121,8 +122,6 @@ async def filter_thinking_sse(
     format.  The filter mutates the ``delta.content`` field and re-serialises.
     Finish-reason and [DONE] chunks are always passed through unchanged.
     """
-    import json
-
     in_think = False
 
     async for raw_chunk in source:

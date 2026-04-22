@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -700,7 +701,6 @@ async def model_status(model_id: str):
     """
     from autotune.api.running_models import get_running_models
     from autotune.api.model_selector import ModelSelector
-    import psutil as _psutil
 
     # ── 1. Is the model currently loaded in memory? ───────────────────────
     running = get_running_models()
@@ -735,7 +735,6 @@ async def model_status(model_id: str):
                     details = m.get("details", {})
                     quant = details.get("quantization_level", "Q4_K_M")
                     # Derive rough param count from name (e.g. "8b" → 8.0)
-                    import re
                     m2 = re.search(r"(\d+(?:\.\d+)?)\s*b", name.lower())
                     if m2:
                         params_b = float(m2.group(1))
@@ -774,7 +773,7 @@ async def model_status(model_id: str):
             logger.debug("fit assessment failed for %s: %s", model_id, _fit_exc)
     elif _hw is not None and status != "not_found":
         # Model is loaded but we couldn't read size — report RAM only
-        vm = _psutil.virtual_memory()
+        vm = psutil.virtual_memory()
         fit = {
             "class": "unknown",
             "available_gb": round(vm.available / 1024**3, 1),
@@ -1026,7 +1025,6 @@ def _make_error_body(error_type: str, message: str, model_id: str) -> dict:
     """
     suggestion = ""
     if error_type == "model_not_found":
-        base = model_id.split(":")[0].split("/")[-1].lower()
         suggestion = (
             f"Pull the model first: ollama pull {model_id}  "
             f"or check available models at GET /v1/models"

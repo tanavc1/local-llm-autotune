@@ -1178,8 +1178,7 @@ def bench(
 
         console.print()
         console.print("[dim]Cooling down 5 seconds to let RAM settle…[/dim]")
-        import asyncio as _asyncio
-        _asyncio.run(_asyncio.sleep(5))
+        _time.sleep(5)
         console.print()
 
         # ── Round 2: Autotune ────────────────────────────────────────────
@@ -3394,15 +3393,25 @@ def proof(
     def _step(msg: str) -> None:
         _console.print(f"  [dim]{msg}[/dim]")
 
-    result = _asyncio.run(
-        run_quick_proof(
-            model_id=model,
-            profile_name=profile,
-            n_runs=runs,
-            output_path=_out,
-            on_step=_step,
+    try:
+        result = _asyncio.run(
+            run_quick_proof(
+                model_id=model,
+                profile_name=profile,
+                n_runs=runs,
+                output_path=_out,
+                on_step=_step,
+            )
         )
-    )
+    except RuntimeError as _exc:
+        _console.print(f"\n[red]✗ {_exc}[/red]\n")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        _console.print("\n[dim]Interrupted.[/dim]\n")
+        raise SystemExit(0)
+    except Exception as _exc:
+        _console.print(f"\n[red]Unexpected error: {_exc}[/red]\n")
+        raise SystemExit(1)
 
     print_proof_result(result, _console, output_path=_out)
 
