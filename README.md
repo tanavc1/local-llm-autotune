@@ -57,9 +57,22 @@ autotune proof-suite --model qwen3:8b --runs 3
 
 ## Quickstart
 
-### 1. Install Ollama and pull a model
+### 1. Install Ollama
 
-Install Ollama from [https://ollama.com](https://ollama.com), then pull a model using autotune:
+**macOS**
+```bash
+brew install ollama
+```
+Or download the desktop app from [https://ollama.com/download](https://ollama.com/download).
+
+**Linux**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+**Windows** — download the installer from [https://ollama.com/download](https://ollama.com/download).
+
+Once installed, pull a model:
 
 ```bash
 autotune pull qwen3:8b         # 5.2 GB — best general model for 16 GB machines
@@ -568,7 +581,15 @@ The Supabase anon key embedded in the package is a public client token (INSERT-o
 ## Troubleshooting
 
 **"Ollama is not running."**
-→ autotune starts Ollama automatically. If it still fails, install Ollama from https://ollama.ai or open the Ollama desktop app.
+→ autotune starts Ollama automatically. If it still fails, install Ollama:
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+```
+Or download the desktop app from [https://ollama.com/download](https://ollama.com/download).
 
 **"No models found."**
 → Pull a model: `autotune pull qwen3:8b` or run `autotune recommend` for a hardware-matched suggestion.

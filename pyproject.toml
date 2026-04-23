@@ -92,7 +92,20 @@ addopts = "--tb=short -q"
 
 [tool.coverage.run]
 source = ["autotune"]
-omit = ["autotune/api/backends/mlx_backend.py"]  # requires mlx hardware
+omit = [
+    "autotune/api/backends/mlx_backend.py",  # requires mlx hardware
+    "autotune/cli.py",                        # CLI integration — requires live Ollama
+    "autotune/api/chat.py",                   # terminal REPL — requires live Ollama
+    "autotune/api/ollama_pull.py",            # requires live Ollama
+    "autotune/api/local_models.py",           # requires live Ollama
+    "autotune/bench/*.py",                    # benchmark suite — requires live Ollama
+    "autotune/hub/fetcher.py",                # requires network / HuggingFace
+    "autotune/recall/manager.py",             # requires live Ollama
+    "autotune/recall/embedder.py",            # requires live Ollama
+    "autotune/session/controller.py",         # terminal UI — requires interactive session
+    "autotune/session/dashboard.py",          # terminal UI — requires interactive session
+    "autotune/session/monitor.py",            # terminal UI — requires interactive session
+]
 
 [tool.coverage.report]
 fail_under = 60
