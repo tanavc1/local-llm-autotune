@@ -17,16 +17,15 @@ from __future__ import annotations
 import pytest
 
 from autotune.api.model_selector import (
-    ArchInfo,
-    FitClass,
-    ModelSelector,
     RUNTIME_OVERHEAD_GB,
     SAFE_RAM_FRACTION,
     SWAP_RISK_FRACTION,
+    ArchInfo,
+    FitClass,
+    ModelSelector,
     estimate_arch_from_params,
     extract_arch_from_modelinfo,
 )
-
 
 # ---------------------------------------------------------------------------
 # ArchInfo properties
@@ -239,6 +238,12 @@ class TestModelSelectorFitClasses:
         report = sel.assess("tight-model", size_gb=size_gb, params_b=7.0, quant="Q4_K_M")
         assert report.fit_class in (FitClass.SWAP_RISK, FitClass.MARGINAL, FitClass.OOM)
 
+    def test_tight_when_exceeds_available_but_fits_in_total_ram(self):
+        # available=4.0, total_ram=16.0 → model that needs ~6 GB is TIGHT (not OOM)
+        sel = ModelSelector(available_gb=4.0, total_ram_gb=16.0)
+        report = sel.assess("mid-model", size_gb=5.5, params_b=7.0, quant="Q4_K_M")
+        assert report.fit_class == FitClass.TIGHT
+
     def test_report_has_all_fields(self):
         sel = self._make_selector(16.0)
         report = sel.assess("qwen3:8b", size_gb=5.2, params_b=8.0, quant="Q4_K_M")
@@ -309,14 +314,16 @@ class TestModelSelectorFitClasses:
 # ---------------------------------------------------------------------------
 
 class TestFitClassEnum:
-    def test_all_four_classes_exist(self):
+    def test_all_fit_classes_exist(self):
         assert FitClass.SAFE
         assert FitClass.MARGINAL
         assert FitClass.SWAP_RISK
+        assert FitClass.TIGHT
         assert FitClass.OOM
 
     def test_string_values(self):
         assert FitClass.SAFE.value == "safe"
         assert FitClass.MARGINAL.value == "marginal"
         assert FitClass.SWAP_RISK.value == "swap_risk"
+        assert FitClass.TIGHT.value == "tight"
         assert FitClass.OOM.value == "oom"

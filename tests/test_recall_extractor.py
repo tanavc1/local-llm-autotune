@@ -2,8 +2,7 @@
 
 import pytest
 
-from autotune.recall.extractor import extract_chunks, estimate_conversation_value
-
+from autotune.recall.extractor import estimate_conversation_value, extract_chunks
 
 # ---------------------------------------------------------------------------
 # extract_chunks

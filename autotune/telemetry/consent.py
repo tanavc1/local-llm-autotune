@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -158,8 +157,8 @@ def _derive_install_key() -> str:
     PII — only CPU architecture, OS family, and machine type.
     """
     try:
-        from autotune.hardware.profiler import profile_hardware
         from autotune.db.fingerprint import hardware_id
+        from autotune.hardware.profiler import profile_hardware
         hw = profile_hardware()
         return hardware_id(hw)
     except Exception:  # noqa: BLE001

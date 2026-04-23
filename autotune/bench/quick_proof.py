@@ -32,7 +32,7 @@ import json
 import statistics
 import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -1092,9 +1092,9 @@ async def run_quick_proof(
 
 def print_proof_result(result: QuickProofResult, console, output_path: Optional[Path] = None) -> None:
     """Print the proof result in plain user-facing language."""
-    from rich.table import Table
     from rich import box as _box
     from rich.panel import Panel
+    from rich.table import Table
 
     console.print()
     console.rule(

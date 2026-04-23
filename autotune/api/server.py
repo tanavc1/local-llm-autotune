@@ -26,13 +26,14 @@ from typing import Any, AsyncGenerator, Optional, Union
 
 logger = logging.getLogger(__name__)
 
+from importlib.metadata import PackageNotFoundError as _PkgNFE
+from importlib.metadata import version as _pkg_version
+
 import psutil
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-
-from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNFE
 
 try:
     _VERSION = _pkg_version("llm-autotune")
@@ -40,23 +41,31 @@ except _PkgNFE:
     _VERSION = "0.1.0"
 
 from autotune.hardware.profiler import profile_hardware
+
 from .backends.chain import BackendChain, ModelNotAvailableError, get_chain
 from .backends.openai_compat import AuthError, BackendError
 from .conversation import ConversationManager, get_conv_manager
 from .ctx_utils import estimate_tokens
-from .kv_manager import build_ollama_options
 from .hardware_tuner import get_tuner
+from .kv_manager import build_ollama_options
 from .profiles import PROFILES, get_profile
 from .thinking import (
     _THINK_CLOSE,
     _THINK_OPEN,
-    THINKING_OVERHEAD as _THINKING_OVERHEAD,
     ThinkingStreamFilter,
+)
+from .thinking import (
+    THINKING_OVERHEAD as _THINKING_OVERHEAD,
+)
+from .thinking import (
     filter_thinking_sse as _filter_thinking_stream,
+)
+from .thinking import (
     is_thinking_model as _is_thinking_model,
+)
+from .thinking import (
     strip_thinking as _strip_thinking,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -197,7 +206,8 @@ async def lifespan(app: FastAPI):
     # FK row exists (which would cause a silent 409 constraint violation).
     try:
         import threading as _threading
-        from autotune.telemetry import register_install, emit
+
+        from autotune.telemetry import emit, register_install
         from autotune.telemetry.events import EventType
 
         def _startup_telemetry() -> None:
@@ -489,8 +499,8 @@ async def _emit_run_telemetry(
     # ── Supabase (opt-in only) ────────────────────────────────────────────
     try:
         from autotune.telemetry import emit, get_install_key
-        from autotune.telemetry.consent import is_opted_in
         from autotune.telemetry.client import get_client
+        from autotune.telemetry.consent import is_opted_in
         from autotune.telemetry.events import EventType
 
         install_key = get_install_key()
@@ -700,8 +710,8 @@ async def model_status(model_id: str):
             }
         }
     """
-    from autotune.api.running_models import get_running_models
     from autotune.api.model_selector import ModelSelector
+    from autotune.api.running_models import get_running_models
 
     # ── 1. Is the model currently loaded in memory? ───────────────────────
     running = get_running_models()
@@ -746,7 +756,10 @@ async def model_status(model_id: str):
     # ── 3. Check MLX cache ────────────────────────────────────────────────
     if status == "not_found":
         try:
-            from autotune.api.backends.mlx_backend import list_cached_mlx_models, resolve_mlx_model_id
+            from autotune.api.backends.mlx_backend import (
+                list_cached_mlx_models,
+                resolve_mlx_model_id,
+            )
             mlx_id = resolve_mlx_model_id(model_id)
             if mlx_id and any(m["id"] == mlx_id for m in list_cached_mlx_models()):
                 status = "available"
@@ -1157,8 +1170,6 @@ async def _chat_completions_inner(
         conv = conv_mgr.get(conv_id)
         if not conv:
             raise HTTPException(status_code=404, detail=f"Conversation {conv_id!r} not found")
-        # Use system prompt from request (if provided) or stored one
-        system = req.system or conv.get("system_prompt")
         if req.system:
             conv_mgr.update_system_prompt(conv_id, req.system)
         # Build context from history

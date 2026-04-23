@@ -32,10 +32,10 @@ import httpx
 from .base import Backend, ChatChunk
 from .mlx_backend import (
     IS_APPLE_SILICON,
-    mlx_available,
-    resolve_mlx_model_id,
     get_mlx_backend,
     list_cached_mlx_models,
+    mlx_available,
+    resolve_mlx_model_id,
 )
 from .openai_compat import ModelNotAvailableError, OpenAICompatBackend
 

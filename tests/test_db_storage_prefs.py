@@ -24,7 +24,6 @@ from autotune.db.storage_prefs import (
     storage_pref_set,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers: redirect config dir to tmp_path
 # ---------------------------------------------------------------------------

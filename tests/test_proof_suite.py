@@ -28,15 +28,15 @@ from proof_suite import (
     DEFAULT_MODELS,
     PROMPTS,
     BenchPrompt,
+    ModelReport,
     OllamaModelInfo,
     OllamaRamSampler,
+    PromptStats,
     RunResult,
     StatResult,
-    PromptStats,
-    ModelReport,
-    _stat,
     _find_ollama_runner_pid,
     _pct_cell,
+    _stat,
     export_json,
 )
 
@@ -319,7 +319,8 @@ class TestOllamaRamSampler:
         s = OllamaRamSampler()
         s._pid = None   # force no-process path
         s.start()
-        import time; time.sleep(0.2)
+        import time
+        time.sleep(0.2)
         s.stop()
         # free_samples should have accumulated even without a PID
         assert len(s._free_samples) >= 1
@@ -515,7 +516,7 @@ def smallest_model(ollama_running) -> str:
 class TestProofSuiteIntegration:
     def test_single_prompt_raw_run(self, smallest_model):
         """Raw run must return a valid RunResult with timing data."""
-        from proof_suite import _run_raw, _fetch_model_info, PROMPTS
+        from proof_suite import PROMPTS, _fetch_model_info, _run_raw
         prompt     = PROMPTS[0]   # shortest prompt
         model_info = asyncio.run(_fetch_model_info(smallest_model))
         result     = asyncio.run(_run_raw(smallest_model, prompt, model_info, max_tokens=16))
@@ -527,7 +528,7 @@ class TestProofSuiteIntegration:
 
     def test_single_prompt_autotune_run(self, smallest_model):
         """Autotune run must return a valid RunResult with smaller num_ctx."""
-        from proof_suite import _run_autotune, _fetch_model_info, PROMPTS
+        from proof_suite import PROMPTS, _fetch_model_info, _run_autotune
         prompt     = PROMPTS[0]
         model_info = asyncio.run(_fetch_model_info(smallest_model))
         result     = asyncio.run(_run_autotune(smallest_model, prompt, model_info))
@@ -541,7 +542,7 @@ class TestProofSuiteIntegration:
 
     def test_autotune_num_ctx_smaller_than_raw(self, smallest_model):
         """Autotune must always produce a smaller or equal num_ctx than raw."""
-        from proof_suite import _run_raw, _run_autotune, _fetch_model_info, PROMPTS
+        from proof_suite import PROMPTS, _fetch_model_info, _run_autotune, _run_raw
         model_info = asyncio.run(_fetch_model_info(smallest_model))
         for prompt in PROMPTS[:2]:   # first 2 prompts for speed
             raw   = asyncio.run(_run_raw(smallest_model, prompt, model_info, max_tokens=16))
@@ -553,7 +554,7 @@ class TestProofSuiteIntegration:
 
     def test_stat_on_live_paired_runs(self, smallest_model):
         """_stat() must produce finite values on real paired data."""
-        from proof_suite import _run_raw, _run_autotune, _fetch_model_info, _stat, PROMPTS
+        from proof_suite import PROMPTS, _fetch_model_info, _run_autotune, _run_raw, _stat
         prompt     = PROMPTS[0]
         model_info = asyncio.run(_fetch_model_info(smallest_model))
         n = 3

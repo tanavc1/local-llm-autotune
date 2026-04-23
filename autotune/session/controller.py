@@ -269,7 +269,7 @@ class SessionController:
 
         # ── 2. Detect active LLMs ───────────────────────────────────────
         console.print("\n[dim]Step 2 of 4[/dim]  Scanning for running LLMs…")
-        from .monitor import _query_ollama, _detect_llm_processes
+        from .monitor import _detect_llm_processes, _query_ollama
         with console.status("  [dim]Checking Ollama API, process list…[/dim]", spinner="dots"):
             ollama_models = _query_ollama()
             llm_procs = _detect_llm_processes()
@@ -314,7 +314,7 @@ class SessionController:
             return
 
         # ── 4. Start metrics collector ──────────────────────────────────
-        console.print(f"\n[dim]Step 4 of 4[/dim]  Starting live monitor…")
+        console.print("\n[dim]Step 4 of 4[/dim]  Starting live monitor…")
         monitor = MetricsCollector(interval_sec=self.interval)
         monitor.start()
         console.print(
@@ -352,8 +352,8 @@ class SessionController:
         hw_id: Optional[str] = None
         db = None
         try:
-            from autotune.db.store import get_db
             from autotune.db.fingerprint import hardware_to_db_dict
+            from autotune.db.store import get_db
             db = get_db()
             hw_dict = hardware_to_db_dict(hw)
             db.upsert_hardware(hw_dict)

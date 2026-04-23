@@ -27,6 +27,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
+from rich import box as _box
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -39,7 +40,6 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.table import Table
-from rich import box as _box
 
 _OLLAMA_BASE = "http://localhost:11434"
 

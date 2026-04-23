@@ -9,13 +9,13 @@ No HF token needed for public models.  Set HF_TOKEN env var for gated ones.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
 import urllib.error
 import urllib.request
-import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 HF_API = "https://huggingface.co"
@@ -204,7 +204,6 @@ def _parse_config(cfg: dict[str, Any], spec: HFModelSpec) -> None:
     )
 
     # RoPE
-    rope_cfg = cfg.get("rope_scaling") or {}
     spec.rope_theta = cfg.get("rope_theta") or cfg.get("rotary_emb_base")
 
     # Activation

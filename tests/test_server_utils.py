@@ -22,11 +22,16 @@ from autotune.api.thinking import (
     _THINK_CLOSE,
     _THINK_OPEN,
     ThinkingStreamFilter,
+)
+from autotune.api.thinking import (
     filter_thinking_sse as _filter_thinking_stream,
+)
+from autotune.api.thinking import (
     is_thinking_model as _is_thinking_model,
+)
+from autotune.api.thinking import (
     strip_thinking as _strip_thinking,
 )
-
 
 # ---------------------------------------------------------------------------
 # _strip_thinking

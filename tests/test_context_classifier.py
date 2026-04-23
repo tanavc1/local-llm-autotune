@@ -22,7 +22,6 @@ import pytest
 
 from autotune.context.classifier import MessageValue, is_droppable, score_message
 
-
 # ---------------------------------------------------------------------------
 # Pure chatter → LOW
 # ---------------------------------------------------------------------------

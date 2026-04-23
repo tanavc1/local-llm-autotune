@@ -20,7 +20,10 @@ from typing import Optional
 import psutil
 
 from .types import (
-    LLMProcess, LiveMetrics, OllamaModel, ThermalState,
+    LiveMetrics,
+    LLMProcess,
+    OllamaModel,
+    ThermalState,
 )
 
 # ---------------------------------------------------------------------------
@@ -107,7 +110,8 @@ def _thermal_macos() -> tuple[ThermalState, int, Optional[float]]:
 
 
 def _thermal_linux() -> tuple[ThermalState, int, Optional[float]]:
-    import os, glob
+    import glob
+    import os
     state = ThermalState.NOMINAL
     temp: Optional[float] = None
 
@@ -250,7 +254,6 @@ def _query_ollama() -> list[OllamaModel]:
         models = []
         for m in data.get("models", []):
             size_vram = m.get("size_vram", 0) / 1024**3
-            details = m.get("details", {})
             models.append(OllamaModel(
                 name=m.get("name", "?"),
                 size_gb=m.get("size", 0) / 1024**3,

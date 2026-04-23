@@ -1,15 +1,15 @@
 """Tests for autotune.api.kv_manager — build_ollama_options and pressure tiers."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from autotune.api.kv_manager import (
     build_ollama_options,
     compute_num_keep,
-    memory_pressure_snapshot,
     kv_memory_estimate_mb,
+    memory_pressure_snapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

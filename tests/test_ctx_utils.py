@@ -1,15 +1,15 @@
 """Tests for autotune.api.ctx_utils — token estimation and num_ctx computation."""
 
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from autotune.api.ctx_utils import (
-    estimate_tokens,
-    estimate_messages_tokens,
     compute_num_ctx,
+    estimate_messages_tokens,
+    estimate_tokens,
     ollama_options_for_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

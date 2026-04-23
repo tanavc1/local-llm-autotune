@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import statistics
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -35,7 +35,6 @@ from autotune.bench.user_metrics import (
     compute_ttft_consistency,
 )
 from autotune.memory.noswap import ModelArch, NoSwapGuard
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -516,7 +515,7 @@ class TestAgentLoopStability:
         autotune context trimming keeps session context from growing unboundedly.
         After RECENT+FACTS threshold, old turns should be summarised.
         """
-        from autotune.context.budget import classify_budget, BudgetTier
+        from autotune.context.budget import BudgetTier, classify_budget
 
         # At 80% usage → should be COMPRESSED or RECENT_PLUS_FACTS, not FULL
         state = classify_budget(history_tokens=6554, effective_budget=8192)   # ~80%

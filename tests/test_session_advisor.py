@@ -22,12 +22,12 @@ from unittest.mock import patch
 import pytest
 
 from autotune.session.advisor import (
-    AdaptiveAdvisor,
     MEM_ACTION_PCT,
     MEM_CRITICAL_PCT,
     MEM_WARN_PCT,
     MIN_ACTION_INTERVAL_SEC,
     STABLE_BEFORE_SCALEUP_SEC,
+    AdaptiveAdvisor,
     compute_health_score,
     health_status,
 )
@@ -38,7 +38,6 @@ from autotune.session.types import (
     SessionState,
     ThermalState,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -264,7 +263,7 @@ class TestAdvisorCooldown:
         high_ram = _make_metrics(ram_pct=MEM_ACTION_PCT + 1)
 
         # Trigger first action
-        d1 = adv.update(high_ram)
+        adv.update(high_ram)
         # Immediate second update — still within cooldown
         d2 = adv.update(high_ram)
         # Second call should not produce another decision

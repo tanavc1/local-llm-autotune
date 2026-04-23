@@ -172,10 +172,10 @@ def recommend(
     """Profile this machine and recommend the best LLM inference configuration."""
     from autotune.telemetry import maybe_prompt_consent
     maybe_prompt_consent()
+    from autotune.config.generator import MODE_WEIGHTS, generate_recommendations
     from autotune.hardware.profiler import profile_hardware
-    from autotune.config.generator import generate_recommendations, MODE_WEIGHTS
-    from autotune.output.formatter import print_hardware_profile, print_recommendations
     from autotune.models.registry import MODEL_REGISTRY
+    from autotune.output.formatter import print_hardware_profile, print_recommendations
 
     # ── Hardware profiling ──────────────────────────────────────────────
     console.rule("[bold blue]autotune recommend[/bold blue]")
@@ -348,7 +348,9 @@ def upgrade(yes: bool) -> None:
         console.print("[dim]Restart your terminal for the new version to take effect.[/dim]")
         # Update the cache so the hint stops firing in the next session
         try:
-            import pathlib, json as _j, time as _t
+            import json as _j
+            import pathlib
+            import time as _t
             _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
             _cp.parent.mkdir(parents=True, exist_ok=True)
             _cp.write_text(_j.dumps({"checked_at": _t.time(), "latest": latest}))
@@ -377,7 +379,7 @@ def hardware(ram_tips: bool) -> None:
     Also shows which apps are consuming the most RAM and which models you could
     run if you closed them (use --no-ram-tips to skip this section).
     """
-    from autotune.hardware.profiler import profile_hardware, get_ram_hogs
+    from autotune.hardware.profiler import get_ram_hogs, profile_hardware
     from autotune.hardware.ram_advisor import compute_unlock_suggestions
     from autotune.output.formatter import print_hardware_profile, print_ram_pressure_report
 
@@ -435,11 +437,12 @@ def models(registry: bool) -> None:
         print_model_table()
         return
 
-    from autotune.api.local_models import list_local_models, is_ollama_running
-    from autotune.models.quality import tier_badge, tier_markup
-    from rich.table import Table
     from rich import box as _box
+    from rich.table import Table
     from rich.text import Text
+
+    from autotune.api.local_models import is_ollama_running, list_local_models
+    from autotune.models.quality import tier_badge, tier_markup
 
     with console.status("[cyan]Scanning for local models…[/cyan]", spinner="dots"):
         local = list_local_models()
@@ -557,8 +560,10 @@ def pull(model: Optional[str], show_list: bool) -> None:
     Run without arguments (or with --list) to browse popular models.
     """
     from autotune.api.ollama_pull import (
-        OllamaNotRunningError, PullError,
-        print_popular_models, pull_model,
+        OllamaNotRunningError,
+        PullError,
+        print_popular_models,
+        pull_model,
     )
 
     if show_list or not model:
@@ -603,7 +608,7 @@ def delete(model: Optional[str], yes: bool) -> None:
       autotune delete qwen3:8b
       autotune delete               # interactive picker
     """
-    from autotune.api.local_models import list_local_models, is_ollama_running
+    from autotune.api.local_models import is_ollama_running, list_local_models
     from autotune.api.ollama_pull import OllamaNotRunningError, PullError, delete_model
 
     # If no model given, show interactive picker
@@ -618,8 +623,8 @@ def delete(model: Optional[str], yes: bool) -> None:
             console.print("[yellow]No Ollama models found.[/yellow]")
             raise SystemExit(0)
 
-        from rich.table import Table
         from rich import box as _box
+        from rich.table import Table
         tbl = Table(box=_box.SIMPLE, show_header=True, header_style="bold")
         tbl.add_column("#", style="dim", width=4)
         tbl.add_column("Model")
@@ -663,7 +668,7 @@ def delete(model: Optional[str], yes: bool) -> None:
     try:
         delete_model(model, console)
         console.print(
-            f"[dim]List remaining models: [bold]autotune ls[/bold][/dim]"
+            "[dim]List remaining models: [bold]autotune ls[/bold][/dim]"
         )
     except OllamaNotRunningError as e:
         console.print(f"[red]Ollama not running:[/red] {e}")
@@ -722,7 +727,7 @@ def benchmark(model: str, runs: int, profile: str, output: Optional[str], no_sav
     """
     import asyncio
 
-    from autotune.bench.compare import run_comparison, print_report, export_json
+    from autotune.bench.compare import export_json, print_report, run_comparison
 
     # Estimate duration so user isn't surprised
     est_min = runs * 6 * 2 * 1.5 / 60   # rough: 1.5 min per inference call
@@ -799,8 +804,8 @@ def fetch(model_id: str, force: bool) -> None:
 
     MODEL_ID is the HuggingFace repo ID, e.g. meta-llama/Meta-Llama-3.1-8B
     """
-    from autotune.hub.fetcher import fetch_model
     from autotune.db.store import get_db
+    from autotune.hub.fetcher import fetch_model
 
     db = get_db()
 
@@ -820,8 +825,8 @@ def fetch(model_id: str, force: bool) -> None:
 
 
 def _print_model_summary(d: dict) -> None:
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
 
     t = Table(box=box.ROUNDED, show_header=False, min_width=64)
     t.add_column("Field", style="bold")
@@ -951,8 +956,8 @@ CURATED_MODELS: list[str] = [
 )
 def fetch_many(force: bool, name_filter: Optional[str]) -> None:
     """Bulk-fetch all curated OSS models from HuggingFace into the local DB."""
-    from autotune.hub.fetcher import fetch_model
     from autotune.db.store import get_db
+    from autotune.hub.fetcher import fetch_model
 
     db = get_db()
     targets = CURATED_MODELS
@@ -999,9 +1004,10 @@ def fetch_many(force: bool, name_filter: Optional[str]) -> None:
 @cli.command("db")
 def db_stats() -> None:
     """Show local database statistics."""
-    from autotune.db.store import get_db
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
+
+    from autotune.db.store import get_db
 
     db = get_db()
     s = db.stats()
@@ -1026,9 +1032,10 @@ def db_stats() -> None:
 @click.option("--max-params", default=None, type=float, metavar="B", help="Max active params (billions).")
 def db_models(family: Optional[str], max_params: Optional[float]) -> None:
     """List all models cached in the local database."""
-    from autotune.db.store import get_db
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
+
+    from autotune.db.store import get_db
 
     db = get_db()
     rows = db.list_models(family=family, max_params_b=max_params)
@@ -1102,9 +1109,9 @@ def log_run(
     notes: str,
 ) -> None:
     """Log a real inference observation to the database."""
-    from autotune.hardware.profiler import profile_hardware
-    from autotune.db.store import get_db
     from autotune.db.fingerprint import hardware_id, hardware_to_db_dict
+    from autotune.db.store import get_db
+    from autotune.hardware.profiler import profile_hardware
 
     db = get_db()
 
@@ -1245,14 +1252,17 @@ def bench(
       autotune bench --compare my_baseline,my_fast
     """
     import asyncio
+
     import psutil as _psutil
+
     from autotune.bench.runner import run_bench, run_bench_ollama_only, run_raw_ollama, save_result
 
     # ── Compare mode ─────────────────────────────────────────────────────
     if compare:
-        from autotune.db.store import get_db
-        from rich.table import Table
         from rich import box
+        from rich.table import Table
+
+        from autotune.db.store import get_db
 
         parts = compare.split(",")
         if len(parts) != 2:
@@ -1319,10 +1329,10 @@ def bench(
 
     # ── DUEL MODE — run both raw and autotune, then show comparison ────────
     if duel:
-        from rich.table import Table
+        from rich import box
         from rich.panel import Panel
         from rich.rule import Rule
-        from rich import box
+        from rich.table import Table
 
         raw_tag   = tag + "_raw"   if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_raw_{ts}"
         tuned_tag = tag + "_tuned" if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_{profile}_{ts}"
@@ -1362,7 +1372,7 @@ def bench(
 
         console.print()
         console.print("[dim]Cooling down 5 seconds to let RAM settle…[/dim]")
-        _time.sleep(5)
+        time.sleep(5)
         console.print()
 
         # ── Round 2: Autotune ────────────────────────────────────────────
@@ -1514,9 +1524,9 @@ def bench(
         raise SystemExit(1)
 
     # ── Single-run results table ─────────────────────────────────────────
-    from rich.table import Table
-    from rich.panel import Panel
     from rich import box
+    from rich.panel import Panel
+    from rich.table import Table
 
     console.print(f"[bold green]✓ Done[/bold green]  {result.elapsed_sec:.1f}s total\n")
 
@@ -1572,7 +1582,7 @@ def bench(
         row_id = save_result(result)
         console.print(f"\n[dim]✓ Saved to DB as run #{row_id}  (tag: {auto_tag})[/dim]")
     else:
-        console.print(f"\n[dim]Not saved (--no-save)[/dim]")
+        console.print("\n[dim]Not saved (--no-save)[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1590,14 +1600,16 @@ def ls(as_json: bool) -> None:
     KV cache is included in all memory estimates.
     """
     import json as _json
+
     import httpx
-    from autotune.hardware.profiler import profile_hardware
-    from autotune.api.model_selector import ModelSelector
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
+
+    from autotune.api.model_selector import ModelSelector
 
     # ── 1. Probe Ollama ─────────────────────────────────────────────────
     from autotune.api.ollama_pull import ensure_ollama_running as _ensure_ollama
+    from autotune.hardware.profiler import profile_hardware
     if not _ensure_ollama(console):
         raise SystemExit(1)
 
@@ -1863,9 +1875,10 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
       autotune run llama3.2 --system "You are a concise coding assistant"
     """
     import httpx
-    from autotune.hardware.profiler import profile_hardware
+
     from autotune.api.chat import start_chat
-    from autotune.api.model_selector import ModelSelector, FitClass
+    from autotune.api.model_selector import FitClass, ModelSelector
+    from autotune.hardware.profiler import profile_hardware
 
     console.print(f"\n[bold]Pre-flight check for[/bold] [cyan]{model_name}[/cyan]\n")
 
@@ -2059,9 +2072,9 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
         raise SystemExit(1)
 
     if enable:
-        from autotune.telemetry.consent import set_consent, is_opted_in
-        from autotune.telemetry.events import EventType
         from autotune.telemetry import emit, register_install
+        from autotune.telemetry.consent import is_opted_in, set_consent
+        from autotune.telemetry.events import EventType
         already = is_opted_in()
         set_consent(True)
         if not already:
@@ -2075,9 +2088,9 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
         return
 
     if disable:
-        from autotune.telemetry.consent import set_consent, is_opted_in
-        from autotune.telemetry.events import EventType
         from autotune.telemetry import emit
+        from autotune.telemetry.consent import is_opted_in, set_consent
+        from autotune.telemetry.events import EventType
         was_opted_in = is_opted_in()
         if was_opted_in:
             emit(EventType.OPT_OUT)   # send one last event before disabling
@@ -2087,7 +2100,7 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
         return
 
     if status:
-        from autotune.telemetry.consent import is_opted_in, consent_answered, get_install_key
+        from autotune.telemetry.consent import consent_answered, get_install_key, is_opted_in
         answered = consent_answered()
         opted_in = is_opted_in()
         install_key = get_install_key() if answered else None
@@ -2104,10 +2117,12 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
             console.print("[dim]Run `autotune telemetry --enable` to opt in.[/dim]")
         console.print()
         return
-    from autotune.db.store import get_db
-    from rich.table import Table
-    from rich import box
     import datetime
+
+    from rich import box
+    from rich.table import Table
+
+    from autotune.db.store import get_db
 
     db = get_db()
 
@@ -2233,7 +2248,7 @@ def telemetry(model_id: Optional[str], limit: int, events: bool,
         )
 
     console.print()
-    console.print(f"[bold]Telemetry history[/bold]"
+    console.print("[bold]Telemetry history[/bold]"
                   + (f"  [dim]{model_id}[/dim]" if model_id else "")
                   + f"  [dim](last {len(rows)} runs)[/dim]")
     console.print()
@@ -2266,7 +2281,9 @@ def storage(action: Optional[str]) -> None:
     benchmark results are skipped while storage is off.
     """
     from autotune.db.storage_prefs import (
-        is_storage_enabled, set_storage_enabled, storage_pref_set,
+        is_storage_enabled,
+        set_storage_enabled,
+        storage_pref_set,
     )
 
     if action is None or action == "status":
@@ -2537,9 +2554,11 @@ def memory_search(query: str, top: int, min_score: float) -> None:
       autotune memory search "FastAPI authentication" --top 10
     """
     import asyncio
-    from autotune.recall.manager import get_recall_manager
-    from rich.table import Table
+
     from rich import box
+    from rich.table import Table
+
+    from autotune.recall.manager import get_recall_manager
 
     mgr = get_recall_manager()
 
@@ -2581,9 +2600,10 @@ def memory_list(limit: int, days: Optional[int], model_id: Optional[str]) -> Non
       autotune memory list --days 7
       autotune memory list --model qwen3:8b --limit 50
     """
-    from autotune.recall.manager import get_recall_manager
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
+
+    from autotune.recall.manager import get_recall_manager
 
     mgr = get_recall_manager()
     results = mgr.get_recent(limit=limit, model_id=model_id, days=days)
@@ -2621,8 +2641,9 @@ def memory_list(limit: int, days: Optional[int], model_id: Optional[str]) -> Non
 def memory_stats() -> None:
     """Show statistics about the local memory store."""
     import asyncio
-    from autotune.recall.manager import get_recall_manager
     import datetime
+
+    from autotune.recall.manager import get_recall_manager
 
     mgr = get_recall_manager()
     stats = mgr.stats()
@@ -2642,7 +2663,7 @@ def memory_stats() -> None:
         console.print(f"  Date range     : {oldest} → {newest}")
 
     if stats.get("by_model"):
-        console.print(f"  By model:")
+        console.print("  By model:")
         for model, cnt in stats["by_model"].items():
             console.print(f"    [cyan]{model}[/cyan]  {cnt} chunk(s)")
 
@@ -2744,7 +2765,8 @@ def memory_setup() -> None:
         console.print("[yellow]Cancelled.[/yellow]")
         raise SystemExit(0)
 
-    from autotune.api.ollama_pull import pull_model as _pull_model, OllamaNotRunningError, PullError
+    from autotune.api.ollama_pull import OllamaNotRunningError, PullError
+    from autotune.api.ollama_pull import pull_model as _pull_model
     try:
         _pull_model("nomic-embed-text", console)
         console.print(
@@ -2782,7 +2804,9 @@ def mlx_group() -> None:
 def mlx_list() -> None:
     """List MLX models available locally (already downloaded)."""
     from autotune.api.backends.mlx_backend import (
-        IS_APPLE_SILICON, mlx_available, list_cached_mlx_models,
+        IS_APPLE_SILICON,
+        list_cached_mlx_models,
+        mlx_available,
     )
 
     if not IS_APPLE_SILICON:
@@ -2839,7 +2863,9 @@ def mlx_pull(model: str, quant: str) -> None:
       autotune mlx pull qwen2.5-coder:14b --quant 8bit
     """
     from autotune.api.backends.mlx_backend import (
-        IS_APPLE_SILICON, mlx_available, resolve_mlx_model_id,
+        IS_APPLE_SILICON,
+        mlx_available,
+        resolve_mlx_model_id,
     )
 
     if not IS_APPLE_SILICON:
@@ -2892,7 +2918,9 @@ def mlx_pull(model: str, quant: str) -> None:
 def mlx_resolve(model: str) -> None:
     """Show which MLX model ID would be used for MODEL."""
     from autotune.api.backends.mlx_backend import (
-        IS_APPLE_SILICON, mlx_available, resolve_mlx_model_id,
+        IS_APPLE_SILICON,
+        mlx_available,
+        resolve_mlx_model_id,
     )
 
     if not IS_APPLE_SILICON:
@@ -3149,7 +3177,7 @@ def stress_test(
     total_ram_gb = vm.total / 1024**3
     avail_ram_gb = vm.available / 1024**3
 
-    console.print(f"[bold]Step 1 of 5[/bold]  Checking system resources…")
+    console.print("[bold]Step 1 of 5[/bold]  Checking system resources…")
     console.print(f"  RAM: [cyan]{total_ram_gb:.1f} GB[/cyan] total  /  "
                   f"[green]{avail_ram_gb:.1f} GB[/green] available")
 
@@ -3161,7 +3189,7 @@ def stress_test(
         )
 
     # ── Model selection ───────────────────────────────────────────────────
-    console.print(f"\n[bold]Step 2 of 5[/bold]  Selecting models to test…")
+    console.print("\n[bold]Step 2 of 5[/bold]  Selecting models to test…")
     force_models = [m.strip() for m in model_list.split(",")] if model_list else None
     selected_models = _select_stress_models(total_ram_gb, force_models, auto_pull)
 
@@ -3177,7 +3205,7 @@ def stress_test(
                   f"{', '.join(selected_models)}")
 
     # ── Plan overview ─────────────────────────────────────────────────────
-    console.print(f"\n[bold]Step 3 of 5[/bold]  Planning test matrix…")
+    console.print("\n[bold]Step 3 of 5[/bold]  Planning test matrix…")
     total_calls = len(selected_models) * len(active_prompts) * n_runs * 2  # raw + autotune
     console.print(f"  Models:   [cyan]{len(selected_models)}[/cyan]")
     console.print(f"  Prompts:  [cyan]{len(active_prompts)}[/cyan]  "
@@ -3187,9 +3215,9 @@ def stress_test(
     if fast:
         console.print("  [dim]Fast mode: 1 run per cell — less noise averaging but faster.[/dim]")
     console.print()
-    console.print(f"[bold]Step 4 of 5[/bold]  Running benchmarks…")
-    console.print(f"  [dim]psutil sampling every 250 ms · 3 s cooldown between runs · "
-                  f"10 s cooldown between models[/dim]")
+    console.print("[bold]Step 4 of 5[/bold]  Running benchmarks…")
+    console.print("  [dim]psutil sampling every 250 ms · 3 s cooldown between runs · "
+                  "10 s cooldown between models[/dim]")
     console.print()
 
     # ── Main benchmark loop ───────────────────────────────────────────────
@@ -3386,7 +3414,7 @@ def stress_test(
         })
 
         if m_idx < len(selected_models) - 1:
-            console.print(f"\n  [dim]Cooling down 10 s before next model…[/dim]")
+            console.print("\n  [dim]Cooling down 10 s before next model…[/dim]")
             _time.sleep(10)
 
     # ── Step 5: Aggregate verdict ──────────────────────────────────────
@@ -3567,8 +3595,9 @@ def proof(
       autotune proof --list-models
     """
     import asyncio as _asyncio
-    import httpx as _httpx
     from pathlib import Path as _Path
+
+    import httpx as _httpx
     from rich.console import Console as _Console
 
     _console = _Console()
@@ -3615,7 +3644,7 @@ def proof(
     _out  = _Path(output) if output else _Path(f"proof_{_safe}.json")
 
     # ── Run ───────────────────────────────────────────────────────────────────
-    from autotune.bench.quick_proof import run_quick_proof, print_proof_result
+    from autotune.bench.quick_proof import print_proof_result, run_quick_proof
 
     _eta = "~45s" if not speed else "~2 min"
     _console.print(
@@ -3781,9 +3810,9 @@ def agent_bench(
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
-    import agent_bench as _ab  # type: ignore
-
     import argparse as _argparse
+
+    import agent_bench as _ab  # type: ignore
 
     # Build a Namespace that matches agent_bench's argparse schema
     ns = _argparse.Namespace(
@@ -3859,18 +3888,23 @@ def user_bench(
       autotune user-bench -m qwen3:8b --background
       autotune user-bench --all-models --runs 2
     """
-    import os as _os
-    import sys as _sys
     import asyncio as _asyncio
+    import os as _os
     import platform as _platform
+    import sys as _sys
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
+    import argparse as _argparse
+
     from user_bench import (  # type: ignore
-        _build_parser, _check_ollama_sync, _notify,
+        _build_parser,
+        _check_ollama_sync,
+        _notify,
+    )
+    from user_bench import (
         main as _ub_main,
     )
-    import argparse as _argparse
 
     # Build a Namespace that matches user_bench's schema
     args = _argparse.Namespace(
@@ -4075,9 +4109,10 @@ def webui_chats(
     """
     import json as _json
     import webbrowser
+
     import httpx as _httpx
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
 
     resolved_key = _resolve_key(key)
 
@@ -4236,9 +4271,10 @@ def webui_models(url: str, key: Optional[str], as_json: bool) -> None:
       autotune webui models --json
     """
     import json as _json
+
     import httpx as _httpx
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
 
     resolved_key = _resolve_key(key)
 
@@ -4283,7 +4319,6 @@ def webui_models(url: str, key: Optional[str], as_json: bool) -> None:
     # So: openai = routed through autotune, ollama = bypasses autotune.
     n_autotune = sum(1 for m in model_list if m.get("owned_by") == "openai")
     n_direct   = sum(1 for m in model_list if m.get("owned_by") == "ollama")
-    n_other    = len(model_list) - n_autotune - n_direct
 
     console.print()
     console.print(
@@ -4360,8 +4395,9 @@ def webui_open(url: Optional[str], chat: Optional[str]) -> None:
       autotune webui open --chat <chat-id>
       autotune webui open --url http://myserver:3000
     """
-    import httpx
     import webbrowser
+
+    import httpx
 
     # ── Auto-detect port if URL not given ────────────────────────────────
     if not url:
@@ -4417,8 +4453,9 @@ def webui_login(
       autotune webui login --no-save          # print key only
       autotune webui login --new-key          # rotate to a fresh API key
     """
-    import httpx
     from pathlib import Path as _Path
+
+    import httpx
     from rich.panel import Panel
 
     # ── Prompt for password securely ─────────────────────────────────────
@@ -4521,7 +4558,7 @@ def webui_login(
         console.print("[yellow]No API key returned.[/yellow]  Try --new-key to generate one.")
         raise SystemExit(1)
 
-    console.print(f"[green]✓[/green]  API key retrieved")
+    console.print("[green]✓[/green]  API key retrieved")
 
     # ── Step 3: save to file ─────────────────────────────────────────────
     env_path = _Path.home() / ".config" / "autotune" / "webui.env"
@@ -4611,9 +4648,10 @@ def webui_install(start: bool, port: int, autotune_port: int, with_ollama: bool)
       autotune webui open      ← open in browser
     """
     import os as _os
-    import httpx
     import shutil
     import subprocess as _sp
+
+    import httpx
     from rich.panel import Panel
 
     autotune_url = f"http://localhost:{autotune_port}/v1"
@@ -4773,6 +4811,7 @@ def webui_launch(port: int, autotune_port: int, with_ollama: bool, enable_mlx: b
     import shutil
     import subprocess as _sp
     import time as _time
+
     import httpx
     from rich.panel import Panel
 
@@ -5210,6 +5249,7 @@ def webui_status(url: Optional[str], key: Optional[str], autotune_port: int) -> 
     """
     import os as _os
     import shutil
+
     import httpx
     from rich.panel import Panel
 
@@ -5301,7 +5341,6 @@ def webui_status(url: Optional[str], key: Optional[str], autotune_port: int) -> 
                          "Content-Type": "application/json"}
 
             # ── a) Check OpenAI connection config ────────────────────────
-            at_port     = str(autotune_port)
             at_url_frag = f"localhost:{autotune_port}"
             connection_found = False
             connection_idx   = -1
@@ -5427,7 +5466,9 @@ def unload(model: Optional[str]) -> None:
       autotune unload                 # interactive picker
     """
     import asyncio
+
     import httpx
+
     from autotune.api.running_models import get_running_models
 
     # ── Discover what's loaded ───────────────────────────────────────────
@@ -5483,10 +5524,10 @@ def unload(model: Optional[str]) -> None:
     # ── MLX unload ───────────────────────────────────────────────────────
     if backend_hint in ("mlx", "") :
         try:
-            from autotune.api.backends.mlx_backend import unload_mlx_model, mlx_available
+            from autotune.api.backends.mlx_backend import mlx_available, unload_mlx_model
             if mlx_available():
                 if unload_mlx_model():
-                    console.print(f"[green]✓[/green] MLX model unloaded from Metal memory.")
+                    console.print("[green]✓[/green] MLX model unloaded from Metal memory.")
                     unloaded_any = True
         except Exception:
             pass
@@ -5548,8 +5589,8 @@ def doctor() -> None:
 
     import httpx
     import psutil
-    from rich.table import Table
     from rich import box as _box
+    from rich.table import Table
 
     console.rule("[bold blue]autotune doctor[/bold blue]")
     console.print()
@@ -5626,7 +5667,7 @@ def doctor() -> None:
 
     # ── MLX (Apple Silicon) ──────────────────────────────────────────────
     try:
-        from autotune.api.backends.mlx_backend import mlx_available, list_cached_mlx_models
+        from autotune.api.backends.mlx_backend import list_cached_mlx_models, mlx_available
         if mlx_available():
             cached = list_cached_mlx_models()
             _row(
@@ -5709,14 +5750,13 @@ def doctor() -> None:
 
     # ── autotune config ──────────────────────────────────────────────────
     try:
-        from autotune.config.user_config import load_config, _config_file
+        from autotune.config.user_config import load_config
         cfg = load_config()
-        cfg_path = _config_file()
         if cfg:
             keys_str = ", ".join(f"{k}={v}" for k, v in cfg.items() if not k.startswith("_"))
             _row("User config", True, keys_str or "empty")
         else:
-            _row("User config", None, f"no overrides set  (use `autotune config set <key> <val>`)")
+            _row("User config", None, "no overrides set  (use `autotune config set <key> <val>`)")
     except Exception:
         _row("User config", None, "not found")
 
@@ -5787,9 +5827,10 @@ def config_group() -> None:
 @config_group.command("show")
 def config_show() -> None:
     """Show all current configuration values."""
-    from autotune.config.user_config import load_config, KNOWN_KEYS, _config_file
-    from rich.table import Table
     from rich import box as _box
+    from rich.table import Table
+
+    from autotune.config.user_config import KNOWN_KEYS, _config_file, load_config
 
     cfg = load_config()
     path = _config_file()
@@ -5828,7 +5869,7 @@ def config_set(key: str, value: str) -> None:
       autotune config set default_profile fast
       autotune config set serve_port 9000
     """
-    from autotune.config.user_config import set_value, KNOWN_KEYS
+    from autotune.config.user_config import KNOWN_KEYS, set_value
 
     ok, err = set_value(key, value)
     if not ok:
@@ -5849,7 +5890,7 @@ def config_get(key: str) -> None:
     Example:
       autotune config get default_model
     """
-    from autotune.config.user_config import get_value, effective_default, KNOWN_KEYS
+    from autotune.config.user_config import KNOWN_KEYS, effective_default, get_value
 
     if key not in KNOWN_KEYS:
         known = ", ".join(KNOWN_KEYS)
@@ -5870,7 +5911,7 @@ def config_get(key: str) -> None:
 @click.option("--yes", is_flag=True, default=False, help="Skip confirmation prompt.")
 def config_reset(yes: bool) -> None:
     """Remove all user config and restore built-in defaults."""
-    from autotune.config.user_config import reset_config, _config_file
+    from autotune.config.user_config import _config_file, reset_config
 
     path = _config_file()
     if not path.exists():
@@ -5938,11 +5979,12 @@ def compare(model1: str, model2: str, prompt: Optional[str], profile: str, runs:
     """
     import asyncio
     import statistics
-    from rich.table import Table
+
     from rich import box as _box
     from rich.panel import Panel
+    from rich.table import Table
 
-    from autotune.bench.runner import run_bench, BenchResult
+    from autotune.bench.runner import BenchResult, run_bench
 
     DEFAULT_PROMPTS = [
         ("factual",  [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}]),

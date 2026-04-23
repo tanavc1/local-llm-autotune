@@ -1,9 +1,9 @@
 from .generator import (
-    CandidateConfig,
-    ScoredConfig,
-    Recommendation,
-    generate_recommendations,
     CONTEXT_LENGTHS,
+    CandidateConfig,
+    Recommendation,
+    ScoredConfig,
+    generate_recommendations,
 )
 
 __all__ = [

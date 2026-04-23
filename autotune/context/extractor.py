@@ -17,7 +17,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -122,7 +121,6 @@ def extract_facts(messages: list[dict]) -> ConversationFacts:
 
     for msg in messages:
         content: str = msg.get("content", "") or ""
-        role: str = msg.get("role", "")
 
         for raw_line in content.splitlines():
             line = raw_line.strip()

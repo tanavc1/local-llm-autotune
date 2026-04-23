@@ -20,13 +20,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from autotune.memory.noswap import (
+    _FALLBACK_ARCH,
     ModelArch,
     NoSwapDecision,
     NoSwapGuard,
-    _FALLBACK_ARCH,
     _arch_cache,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -150,7 +149,6 @@ class TestNoSwapGuardApply:
         arch = ModelArch(n_layers=32, n_kv_heads=8, head_dim=128, arch_name="llama")
         num_ctx = 4096
         kv_full = arch.kv_gb(num_ctx, f16=True)
-        kv_75   = arch.kv_gb(int(num_ctx * 0.75), f16=True)
         # Available: slightly less than full but more than 75%
         available = kv_full * 0.9
         guard = NoSwapGuard(safety_margin_gb=0.0)

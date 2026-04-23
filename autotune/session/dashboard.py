@@ -25,12 +25,16 @@ from rich.table import Table
 from rich.text import Text
 
 from autotune.hardware.profiler import HardwareProfile
-from .types import (
-    AdvisorDecision, LiveMetrics, SessionConfig,
-    SessionEvent, SessionState, ThermalState,
-)
-from .advisor import compute_health_score, health_status
 
+from .advisor import compute_health_score, health_status
+from .types import (
+    AdvisorDecision,
+    LiveMetrics,
+    SessionConfig,
+    SessionEvent,
+    SessionState,
+    ThermalState,
+)
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -115,7 +119,7 @@ def _header_panel(hw: HardwareProfile, score: int, state: SessionState, start_ti
 
     # Health score — the most important single number
     score_color = "bold green" if score >= 90 else "bold yellow" if score >= 55 else "bold red"
-    t.append(f"Health ", style="dim")
+    t.append("Health ", style="dim")
     t.append(f"{score}/100", style=score_color)
     t.append("  │  ")
     t.append(f"{icon} {label}", style=color)

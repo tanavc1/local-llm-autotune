@@ -112,6 +112,9 @@ ignore = [
     "E501",   # line too long — handled by formatter, not enforced in CI
     "F401",   # unused imports in __init__ re-exports
     "E741",   # ambiguous variable name (l, O, I) — common in math-heavy code
+    "E402",   # module-level import not at top — intentional deferred imports throughout
+    "E701",   # multiple statements on one line (colon)
+    "E702",   # multiple statements on one line (semicolon)
 ]
 
 [tool.mypy]

@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
 from autotune.config.generator import Recommendation, ScoredConfig
 from autotune.hardware.profiler import HardwareProfile, ProcessInfo
 from autotune.hardware.ram_advisor import UnlockGroup

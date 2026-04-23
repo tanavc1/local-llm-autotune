@@ -23,13 +23,12 @@ All of these are translatable to plain English:
 from __future__ import annotations
 
 import statistics
-import time
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 import psutil
-
 
 # ---------------------------------------------------------------------------
 # Low-level sampler

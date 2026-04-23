@@ -5,9 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from autotune.hardware.profiler import ProcessInfo
-from autotune.models.registry import MODEL_REGISTRY, ModelProfile
 from autotune.memory.estimator import RUNTIME_OVERHEAD_GB, SAFETY_MARGIN_FRACTION
-
+from autotune.models.registry import MODEL_REGISTRY, ModelProfile
 
 # Quantizations to probe, in preference order (best quality first)
 _PROBE_QUANTS = ["Q4_K_M", "Q5_K_M", "Q4_K_S", "Q6_K"]

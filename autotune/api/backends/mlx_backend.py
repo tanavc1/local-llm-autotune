@@ -270,7 +270,6 @@ _STATE_FILE = Path.home() / ".autotune" / "mlx_running.json"
 
 def _write_mlx_state(model_id: str, loaded_at: float) -> None:
     """Persist MLX model state to disk so other processes can read it."""
-    import json
     try:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _STATE_FILE.write_text(json.dumps({
@@ -402,7 +401,7 @@ class MLXBackend(Backend):
 
         def _run_generation() -> None:
             from mlx_lm import stream_generate
-            from mlx_lm.sample_utils import make_sampler, make_logits_processors
+            from mlx_lm.sample_utils import make_logits_processors, make_sampler
             try:
                 # Build sampler — mlx-lm ≥ 0.21 uses sampler/logits_processors
                 # instead of bare temp/top_p kwargs.

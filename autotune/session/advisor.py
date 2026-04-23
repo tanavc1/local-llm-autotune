@@ -30,10 +30,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .types import (
-    AdvisorDecision, LiveMetrics, SessionConfig, SessionEvent,
-    SessionState, ThermalState,
+    AdvisorDecision,
+    LiveMetrics,
+    SessionConfig,
+    SessionEvent,
+    SessionState,
+    ThermalState,
 )
-
 
 # ---------------------------------------------------------------------------
 # Health scoring

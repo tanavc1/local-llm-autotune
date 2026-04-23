@@ -20,7 +20,6 @@ from typing import Optional
 
 from autotune.models.quality import QualityInfo, get_quality
 
-
 _OLLAMA_BASE = "http://localhost:11434"
 _LMSTUDIO_BASE = "http://localhost:1234"
 

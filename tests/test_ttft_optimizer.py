@@ -1,10 +1,10 @@
 """Tests for autotune.ttft.optimizer — TTFTOptimizer and bucket snapping."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from autotune.ttft.optimizer import TTFTOptimizer, _snap_to_bucket, _CTX_BUCKETS, KEEP_ALIVE_FOREVER
+import pytest
 
+from autotune.ttft.optimizer import _CTX_BUCKETS, KEEP_ALIVE_FOREVER, TTFTOptimizer, _snap_to_bucket
 
 # ---------------------------------------------------------------------------
 # Helpers

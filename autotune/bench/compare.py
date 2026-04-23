@@ -45,7 +45,6 @@ from rich.text import Text
 
 from autotune.bench.runner import BenchResult, run_bench, run_raw_ollama, save_result
 
-
 # ---------------------------------------------------------------------------
 # Benchmark prompt suite
 # ---------------------------------------------------------------------------
@@ -698,7 +697,7 @@ def print_report(report: CompareReport, console: Console) -> None:  # noqa: C901
         f"[dim](Ollama default: 4096  ·  profile max: {max_ctx:,})[/dim]",
         f"  [bold]KV precision:[/bold]    {kv_label}  "
         f"[dim](Ollama default: F16)[/dim]",
-        f"  [bold]Prefix cache:[/bold]    "
+        "  [bold]Prefix cache:[/bold]    "
         + (f"{avg_keep:.0f} tokens pinned (system prompt)  [dim](Ollama: none)[/dim]"
            if avg_keep > 0 else "[dim]none (no system prompts in test)[/dim]"),
         f"  [bold]Max new tokens:[/bold]  {max_tok}  "
@@ -707,7 +706,7 @@ def print_report(report: CompareReport, console: Console) -> None:  # noqa: C901
         f"[dim](Ollama default: DEFAULT)[/dim]",
         f"  [bold]GC during infer:[/bold] {'disabled' if gc_off else 'enabled'}  "
         f"[dim](Ollama: always enabled)[/dim]",
-        f"  [bold]MLX routing:[/bold]     auto (Apple Silicon) — Ollama does not do this",
+        "  [bold]MLX routing:[/bold]     auto (Apple Silicon) — Ollama does not do this",
     ]
     console.print(Panel(
         "\n".join(settings_lines),

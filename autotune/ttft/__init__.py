@@ -44,6 +44,6 @@ Public API
     # Pass ollama_opts["options"] to Ollama and ollama_opts["keep_alive"] top-level.
 """
 
-from autotune.ttft.optimizer import TTFTOptimizer, KEEP_ALIVE_FOREVER
+from autotune.ttft.optimizer import KEEP_ALIVE_FOREVER, TTFTOptimizer
 
 __all__ = ["TTFTOptimizer", "KEEP_ALIVE_FOREVER"]

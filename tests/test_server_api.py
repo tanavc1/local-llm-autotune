@@ -329,6 +329,7 @@ class TestNormalizeModelId:
 
     def test_empty_after_strip_raises_http(self):
         from fastapi import HTTPException
+
         from autotune.api.server import _normalize_model_id
         with pytest.raises(HTTPException) as exc_info:
             _normalize_model_id("autotune.")

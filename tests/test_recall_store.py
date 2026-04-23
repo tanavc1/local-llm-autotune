@@ -1,15 +1,14 @@
 """Tests for autotune.recall.store — RecallStore CRUD and search."""
 
-import time
 import struct
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from autotune.recall.store import RecallStore, MemoryChunk
-
+from autotune.recall.store import MemoryChunk, RecallStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -110,7 +109,7 @@ class TestGetRecent:
 
 class TestDelete:
     def test_delete_single_chunk(self, store):
-        n = store.save("c1", "m", [
+        store.save("c1", "m", [
             {"text": "User: del\nAssistant: del answer here", "created_at": time.time(), "turn_start": 0, "turn_end": 1}
         ])
         chunks = store.get_recent()
@@ -208,7 +207,6 @@ class TestSearchVector:
 
     def test_respects_min_score(self, store):
         vec_a = _unit_vec(8, 0)
-        vec_b = _unit_vec(8, 1)
         # Diagonal vector has 0.707 cosine similarity to both unit vectors
         diag = _vec([1.0, 1.0, 0, 0, 0, 0, 0, 0])
         store.save("c1", "m", [

@@ -37,9 +37,9 @@ from rich.panel import Panel
 from .backends.chain import get_chain
 from .backends.openai_compat import AuthError, BackendError, ModelNotAvailableError
 from .conversation import get_conv_manager
-from .ctx_utils import estimate_tokens, estimate_messages_tokens
-from .kv_manager import build_ollama_options
+from .ctx_utils import estimate_messages_tokens, estimate_tokens
 from .hardware_tuner import get_tuner
+from .kv_manager import build_ollama_options
 from .profiles import PROFILES, get_profile
 from .thinking import ThinkingStreamFilter, is_thinking_model
 
@@ -262,9 +262,9 @@ class ChatSession:
         # ── Hardware profile + DB registration ──────────────────────────
         if self._hw_profile is None:
             try:
-                from autotune.hardware.profiler import profile_hardware
-                from autotune.db.store import get_db
                 from autotune.db.fingerprint import hardware_to_db_dict
+                from autotune.db.store import get_db
+                from autotune.hardware.profiler import profile_hardware
                 hw = profile_hardware()
                 self._hw_profile = hw
                 db = get_db()
@@ -278,9 +278,11 @@ class ChatSession:
         if _IS_APPLE_SILICON:
             try:
                 from .backends.mlx_backend import (
-                    mlx_available, resolve_mlx_model_id,
-                    _load_model_sync, is_mlx_model_loaded,
+                    _load_model_sync,
+                    is_mlx_model_loaded,
                     list_cached_mlx_models,
+                    mlx_available,
+                    resolve_mlx_model_id,
                 )
                 if mlx_available():
                     mlx_id = resolve_mlx_model_id(self.model_id)
@@ -312,9 +314,10 @@ class ChatSession:
 
         # ── Ollama probe + model preload ─────────────────────────────────
         try:
-            import httpx as _httpx
             import json as _json
             import urllib.request as _ur
+
+            import httpx as _httpx
 
             running = await self.chain.ollama_running()
             if not running:
@@ -335,7 +338,7 @@ class ChatSession:
                     pass
 
                 if already_loaded:
-                    console.print(f"[dim]Model already in memory.[/dim]\n")
+                    console.print("[dim]Model already in memory.[/dim]\n")
                 else:
                     # Warm-load the model before the user's first message so
                     # they see a clear "Loading…" indicator rather than a long
@@ -384,8 +387,8 @@ class ChatSession:
         request without interrupting the current one.
         """
         try:
-            from autotune.session.monitor import MetricsCollector
             from autotune.session.advisor import AdaptiveAdvisor
+            from autotune.session.monitor import MetricsCollector
             from autotune.session.types import SessionConfig
 
             profile = get_profile(self.profile_name)
@@ -1041,7 +1044,7 @@ class ChatSession:
                 if not query:
                     console.print("[dim]Usage: /memory search <query>[/dim]")
                     return
-                with console.status(f"[dim]Searching memories…[/dim]", spinner="dots"):
+                with console.status("[dim]Searching memories…[/dim]", spinner="dots"):
                     results = await mgr.search(query, top_k=5)
                 if not results:
                     console.print(f"[dim]No memories found for: {query!r}[/dim]")
@@ -1401,8 +1404,8 @@ class ChatSession:
                             )
 
                     elif cmd == "/delete":
-                        from .ollama_pull import OllamaNotRunningError, PullError, delete_model
                         from .local_models import list_local_models
+                        from .ollama_pull import OllamaNotRunningError, PullError, delete_model
                         target = arg
                         if not target:
                             # Interactive picker: list Ollama models

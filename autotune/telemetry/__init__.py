@@ -22,8 +22,8 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from autotune.telemetry.consent import is_opted_in, prompt_opt_in, get_install_key
 from autotune.telemetry.client import get_client
+from autotune.telemetry.consent import get_install_key, is_opted_in, prompt_opt_in
 from autotune.telemetry.events import EventType
 
 __all__ = [
@@ -100,9 +100,9 @@ def register_install() -> None:
         client = get_client()
         if client is None:
             return
-        from autotune.hardware.profiler import profile_hardware
-        from autotune.db.fingerprint import hardware_to_db_dict
         import autotune
+        from autotune.db.fingerprint import hardware_to_db_dict
+        from autotune.hardware.profiler import profile_hardware
 
         hw = profile_hardware()
         hw_dict = hardware_to_db_dict(hw)

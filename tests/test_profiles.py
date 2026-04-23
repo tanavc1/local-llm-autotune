@@ -2,7 +2,7 @@
 
 import pytest
 
-from autotune.api.profiles import PROFILES, get_profile, Profile
+from autotune.api.profiles import PROFILES, Profile, get_profile
 
 
 class TestProfileDefinitions:

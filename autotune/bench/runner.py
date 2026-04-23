@@ -37,7 +37,6 @@ from autotune.db.store import get_db
 from autotune.hardware.profiler import profile_hardware
 from autotune.ttft import TTFTOptimizer
 
-
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -220,7 +219,6 @@ async def run_bench(
     t_start = time.perf_counter()
     first_token_t: Optional[float] = None
     collected: list[str] = []
-    backend_used = "?"
     error_msg: Optional[str] = None
 
     try:
@@ -235,7 +233,6 @@ async def run_bench(
             num_ctx=ollama_opts["num_ctx"],
             ollama_options=ollama_opts,
         ):
-            backend_used = chunk.backend
             if chunk.content:
                 if first_token_t is None:
                     first_token_t = time.perf_counter()
@@ -413,8 +410,9 @@ async def run_bench_ollama_only(
 
     Compare against :func:`run_raw_ollama` to isolate the autotune delta.
     """
-    import httpx
     import json as _json
+
+    import httpx
 
     profile = get_profile(profile_name)
     tuner   = get_tuner()

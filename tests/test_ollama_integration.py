@@ -22,9 +22,9 @@ What is tested (and what isn't):
 from __future__ import annotations
 
 import asyncio
-import pytest
-import httpx
 
+import httpx
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -185,8 +185,8 @@ class TestStreamRoundtrip:
     def test_stream_with_ollama_options(self, smallest_model):
         """num_ctx and other Ollama options must be accepted without error."""
         from autotune.api.backends.chain import BackendChain
-        from autotune.api.profiles import get_profile
         from autotune.api.kv_manager import build_ollama_options
+        from autotune.api.profiles import get_profile
 
         chain = BackendChain()
         messages = [{"role": "user", "content": "Count to three."}]
@@ -263,8 +263,8 @@ class TestNonStreamingCollect:
 
 class TestKVOptions:
     def test_num_ctx_is_positive(self, smallest_model):
-        from autotune.api.profiles import get_profile
         from autotune.api.kv_manager import build_ollama_options
+        from autotune.api.profiles import get_profile
 
         messages = [{"role": "user", "content": "hi"}]
         profile = get_profile("balanced")
@@ -273,8 +273,8 @@ class TestKVOptions:
 
     def test_num_ctx_grows_with_history(self, smallest_model):
         """A longer conversation must produce a larger or equal num_ctx."""
-        from autotune.api.profiles import get_profile
         from autotune.api.kv_manager import build_ollama_options
+        from autotune.api.profiles import get_profile
 
         profile = get_profile("balanced")
         short = [{"role": "user", "content": "hi"}]
@@ -287,8 +287,8 @@ class TestKVOptions:
         assert long_ctx["num_ctx"] >= short_ctx["num_ctx"]
 
     def test_fast_profile_uses_q8_kv(self):
-        from autotune.api.profiles import get_profile
         from autotune.api.kv_manager import build_ollama_options
+        from autotune.api.profiles import get_profile
 
         messages = [{"role": "user", "content": "hi"}]
         profile = get_profile("fast")
@@ -297,8 +297,8 @@ class TestKVOptions:
         assert opts.get("f16_kv") is False
 
     def test_balanced_profile_uses_f16_kv(self):
-        from autotune.api.profiles import get_profile
         from autotune.api.kv_manager import build_ollama_options
+        from autotune.api.profiles import get_profile
 
         messages = [{"role": "user", "content": "hi"}]
         profile = get_profile("balanced")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from autotune.models.registry import ModelProfile, QUANTIZATIONS
+from autotune.models.registry import QUANTIZATIONS, ModelProfile
 
 # ---------------------------------------------------------------------------
 # Tuneable constants

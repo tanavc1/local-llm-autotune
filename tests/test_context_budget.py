@@ -3,12 +3,12 @@
 import pytest
 
 from autotune.context.budget import (
-    BudgetTier,
-    BudgetState,
-    classify_budget,
-    TIER_THRESHOLDS,
-    RECENT_WINDOW,
     DROP_THRESHOLD,
+    RECENT_WINDOW,
+    TIER_THRESHOLDS,
+    BudgetState,
+    BudgetTier,
+    classify_budget,
 )
 
 
@@ -149,7 +149,7 @@ class TestContextWindow:
         assert result.tier == BudgetTier.EMERGENCY
 
     def test_built_context_has_all_fields(self):
-        from autotune.context.window import ContextWindow, BuiltContext
+        from autotune.context.window import BuiltContext, ContextWindow
         cw = ContextWindow(max_ctx_tokens=8192)
         result = cw.build([], new_user_message="Hi", reserved_for_output=512)
         assert isinstance(result, BuiltContext)

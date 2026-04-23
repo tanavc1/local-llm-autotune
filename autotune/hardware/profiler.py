@@ -9,7 +9,6 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -184,9 +183,9 @@ def _detect_apple_silicon() -> Optional[GPUInfo]:
     # On Apple Silicon total RAM == GPU addressable memory
     try:
         import psutil
-        total_gb = psutil.virtual_memory().total / 1024**3
+        psutil.virtual_memory()  # ensure psutil is importable; actual GPU info comes below
     except Exception:
-        total_gb = None
+        pass
 
     return GPUInfo(
         name=chip_name,
