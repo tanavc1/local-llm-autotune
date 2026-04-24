@@ -64,7 +64,8 @@ jobs:
 
       - name: Publish to PyPI (OIDC — no password required)
         uses: pypa/gh-action-pypi-publish@release/v1
-        # No `password:` field — OIDC trusted publishing handles auth automatically.
+        with:
+          skip_existing: true   # graceful if version already exists (e.g. local twine upload)
 
   update-homebrew-tap:
     name: Update Homebrew tap

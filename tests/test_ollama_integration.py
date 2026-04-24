@@ -22,6 +22,7 @@ What is tested (and what isn't):
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -302,7 +303,11 @@ class TestKVOptions:
 
         messages = [{"role": "user", "content": "hi"}]
         profile = get_profile("balanced")
-        opts, _ = build_ollama_options(messages, profile)
+
+        low_pressure = MagicMock()
+        low_pressure.percent = 50.0
+        with patch("autotune.api.kv_manager.psutil.virtual_memory", return_value=low_pressure):
+            opts, _ = build_ollama_options(messages, profile)
         assert opts.get("f16_kv") is True
 
 
