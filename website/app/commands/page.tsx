@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyButton } from "../components/CopyButton";
 
 export const metadata: Metadata = {
   title: "autotune commands — full reference",
@@ -17,6 +18,7 @@ function Code({ children, block = false }: { children: string; block?: boolean }
           <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
           <span className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
           <span className="ml-2 text-xs text-white/30">Terminal</span>
+          <CopyButton text={children} />
         </div>
         <pre className="overflow-x-auto p-4 text-sm font-mono text-green-300 leading-relaxed">
           <code>{children}</code>
@@ -778,9 +780,10 @@ export default function CommandsPage() {
               { cmd: "ollama --version",        desc: "Confirm Ollama is installed" },
             ].map((row) => (
               <div key={row.cmd} className="flex items-start gap-4">
-                <code className="shrink-0 rounded bg-white/6 px-2 py-1 text-xs font-mono text-green-300/80">
-                  {row.cmd}
-                </code>
+                <div className="shrink-0 flex items-center gap-1 rounded bg-white/6 px-2 py-1">
+                  <code className="text-xs font-mono text-green-300/80">{row.cmd}</code>
+                  <CopyButton text={row.cmd} />
+                </div>
                 <span className="text-white/50 text-xs pt-1">{row.desc}</span>
               </div>
             ))}

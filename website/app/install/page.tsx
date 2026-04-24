@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyButton } from "../components/CopyButton";
 
 export const metadata: Metadata = {
   title: "Install autotune — Step-by-step guide",
@@ -39,6 +40,7 @@ function Code({ children, block = false }: { children: string; block?: boolean }
           <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
           <span className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
           <span className="ml-2 text-xs text-white/30">Terminal</span>
+          <CopyButton text={children} />
         </div>
         <pre className="overflow-x-auto p-4 text-sm font-mono text-green-300 leading-relaxed">
           <code>{children}</code>
@@ -242,13 +244,16 @@ pip install "llm-autotune[mlx]"`}</Code>
                   ].map((r) => (
                     <tr key={r.ram} className="border-b border-white/5">
                       <td className="px-4 py-3 text-xs font-medium text-white/60">{r.ram}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-green-300">
-                        {r.cmd}
-                        {r.recommended && (
-                          <span className="ml-2 rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-300">
-                            recommended
-                          </span>
-                        )}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-green-300">{r.cmd}</span>
+                          {r.recommended && (
+                            <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-300">
+                              recommended
+                            </span>
+                          )}
+                          <CopyButton text={r.cmd} />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-white/40 hidden sm:table-cell">{r.size}</td>
                     </tr>

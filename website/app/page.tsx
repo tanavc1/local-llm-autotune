@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyButton } from "./components/CopyButton";
 
 export const metadata: Metadata = {
   title: "autotune — Make your local AI faster",
@@ -103,6 +104,7 @@ function CodeBlock({ code, language = "bash" }: { code: string; language?: strin
         <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/70" />
         <span className="h-2.5 w-2.5 rounded-full bg-green-500/70" />
         <span className="ml-3 text-xs text-white/30">{language}</span>
+        <CopyButton text={code} />
       </div>
       <pre className="overflow-x-auto p-5 text-sm leading-relaxed text-green-300 font-mono">
         <code>{code}</code>
@@ -657,9 +659,10 @@ export default function Home() {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold text-white mb-1">{step.title}</div>
                       <div className="text-xs text-white/50 mb-2">{step.body}</div>
-                      <code className="block rounded-lg border border-white/8 bg-black/40 px-3 py-1.5 text-xs font-mono text-green-300 overflow-x-auto">
-                        {step.code}
-                      </code>
+                      <div className="flex items-center justify-between rounded-lg border border-white/8 bg-black/40 px-3 py-1.5 gap-2">
+                        <code className="text-xs font-mono text-green-300 overflow-x-auto">{step.code}</code>
+                        <CopyButton text={step.code} />
+                      </div>
                     </div>
                   </li>
                 ))}
