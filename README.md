@@ -5,6 +5,8 @@
 [![CI](https://github.com/tanavc1/local-llm-autotune/actions/workflows/test.yml/badge.svg)](https://github.com/tanavc1/local-llm-autotune/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+**Website & install guide → [autotune-llm.vercel.app](https://autotune-llm.vercel.app)**
+
 **39% faster time-to-first-word. 3× less KV cache. Drop-in for Ollama, LM Studio, and MLX.**
 
 autotune is a middleware layer that makes your local LLMs noticeably faster and lighter — without changing your code or workflow. It computes the exact KV cache each request needs, pins your system prompt in memory, and manages context windows automatically.
