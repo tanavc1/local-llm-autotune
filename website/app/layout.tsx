@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://autotune-llm.vercel.app"),
   title: "autotune — Local LLM Inference Optimizer",
   description:
     "39% faster time-to-first-word. 3× less KV cache. Drop-in optimization for Ollama, LM Studio, and Apple Silicon MLX. Zero config changes.",
@@ -20,6 +21,13 @@ export const metadata: Metadata = {
     title: "autotune — Local LLM Inference Optimizer",
     description: "39% faster TTFT. 3× less KV cache. Drop-in for Ollama & MLX.",
     type: "website",
+    url: "https://autotune-llm.vercel.app",
+    siteName: "autotune",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "autotune — Local LLM Inference Optimizer",
+    description: "39% faster TTFT. 3× less KV cache. Drop-in for Ollama & MLX. Zero config.",
   },
 };
 
