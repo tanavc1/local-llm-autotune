@@ -334,53 +334,37 @@ def upgrade(yes: bool) -> None:
     console.print(f"\n[bold cyan]Upgrading autotune {current} → {latest}…[/bold cyan]\n")
     console.file.flush()
     sys.stdout.flush()
+    # Pin the exact version so pip cannot silently fall back to an older release
+    # when the simple index hasn't yet caught up with the JSON API.
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "llm-autotune"],
+        [sys.executable, "-m", "pip", "install", "--no-cache-dir", f"llm-autotune=={latest}"],
         stderr=subprocess.PIPE,
         check=False,
     )
     if result.returncode == 0:
-        # Read the installed version from a fresh subprocess — importlib.metadata
-        # caches dist-info directory listings in the current process so version()
-        # here would still return the pre-upgrade value.
+        # Exact-version install succeeded — we know what was installed.
+        console.print(f"\n[green]✓ autotune upgraded to v{latest}[/green]")
         try:
-            probe = subprocess.run(
-                [sys.executable, "-c",
-                 "import importlib.metadata; print(importlib.metadata.version('llm-autotune'))"],
-                capture_output=True, text=True, check=False,
-            )
-            installed = probe.stdout.strip() or latest
+            import pathlib
+            import time as _t
+            _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
+            _cp.parent.mkdir(parents=True, exist_ok=True)
+            _cp.write_text(json.dumps({"checked_at": _t.time(), "latest": latest}))
         except Exception:
-            installed = latest
-
-        if installed == latest:
-            console.print(f"\n[green]✓ autotune upgraded to v{installed}[/green]")
-            # Update the cache so the hint stops firing in the next session
-            try:
-                import pathlib
-                import time as _t
-                _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
-                _cp.parent.mkdir(parents=True, exist_ok=True)
-                _cp.write_text(json.dumps({"checked_at": _t.time(), "latest": installed}))
-            except Exception:
-                pass
-        else:
-            # pip exited 0 but didn't install the expected version — PyPI index
-            # propagation lag means the new release isn't visible to pip yet.
-            console.print(
-                f"\n[yellow]⚠ pip could not find v{latest} on the index yet "
-                f"(still on v{installed}).[/yellow]"
-            )
-            console.print(
-                "[dim]PyPI can take a few minutes to propagate a new release. "
-                "Run the upgrade again shortly.[/dim]"
-            )
-            raise SystemExit(1)
+            pass
     else:
-        console.print("\n[red]Upgrade failed.[/red] Try manually:")
-        console.print("  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]")
-        if result.stderr:
-            console.print(f"\n[dim]{result.stderr.decode(errors='replace').strip()}[/dim]")
+        stderr_text = result.stderr.decode(errors="replace")
+        if "No matching distribution" in stderr_text or "Could not find" in stderr_text:
+            console.print(
+                f"\n[yellow]⚠ v{latest} is not on the pip index yet.[/yellow]\n"
+                "[dim]PyPI can take a few minutes to propagate a new release. "
+                "Run [bold cyan]autotune upgrade[/bold cyan] again shortly.[/dim]"
+            )
+        else:
+            console.print("\n[red]Upgrade failed.[/red] Try manually:")
+            console.print(f"  [bold cyan]pip install llm-autotune=={latest}[/bold cyan]")
+            if stderr_text.strip():
+                console.print(f"\n[dim]{stderr_text.strip()}[/dim]")
         raise SystemExit(1)
 
 
