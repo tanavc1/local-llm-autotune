@@ -335,7 +335,7 @@ def upgrade(yes: bool) -> None:
     console.file.flush()
     sys.stdout.flush()
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "llm-autotune"],
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "llm-autotune"],
         stderr=subprocess.PIPE,
         check=False,
     )
@@ -352,16 +352,30 @@ def upgrade(yes: bool) -> None:
             installed = probe.stdout.strip() or latest
         except Exception:
             installed = latest
-        console.print(f"\n[green]✓ autotune upgraded to v{installed}[/green]")
-        # Update the cache so the hint stops firing in the next session
-        try:
-            import pathlib
-            import time as _t
-            _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
-            _cp.parent.mkdir(parents=True, exist_ok=True)
-            _cp.write_text(json.dumps({"checked_at": _t.time(), "latest": installed}))
-        except Exception:
-            pass
+
+        if installed == latest:
+            console.print(f"\n[green]✓ autotune upgraded to v{installed}[/green]")
+            # Update the cache so the hint stops firing in the next session
+            try:
+                import pathlib
+                import time as _t
+                _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
+                _cp.parent.mkdir(parents=True, exist_ok=True)
+                _cp.write_text(json.dumps({"checked_at": _t.time(), "latest": installed}))
+            except Exception:
+                pass
+        else:
+            # pip exited 0 but didn't install the expected version — PyPI index
+            # propagation lag means the new release isn't visible to pip yet.
+            console.print(
+                f"\n[yellow]⚠ pip could not find v{latest} on the index yet "
+                f"(still on v{installed}).[/yellow]"
+            )
+            console.print(
+                "[dim]PyPI can take a few minutes to propagate a new release. "
+                "Run the upgrade again shortly.[/dim]"
+            )
+            raise SystemExit(1)
     else:
         console.print("\n[red]Upgrade failed.[/red] Try manually:")
         console.print("  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]")

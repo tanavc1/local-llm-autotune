@@ -57,7 +57,7 @@ Programmatic API (for application developers)
 
 from __future__ import annotations
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 import shutil
 import subprocess
