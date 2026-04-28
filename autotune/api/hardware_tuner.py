@@ -44,6 +44,7 @@ _GOVERNOR_PATH = "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_governor"
 
 _OS = platform.system()
 _IS_APPLE_SILICON = (_OS == "Darwin" and platform.machine() == "arm64")
+_HAS_NICE = hasattr(os, "nice")
 
 
 class HardwareTuner:
@@ -94,7 +95,7 @@ class HardwareTuner:
 
     def _apply(self, profile_name: str) -> None:
         with self._lock:
-            self._original_nice = os.nice(0)
+            self._original_nice = os.nice(0) if _HAS_NICE else 0
             self._gc_was_enabled = gc.isenabled()
 
             if profile_name == "fast":
@@ -122,13 +123,13 @@ class HardwareTuner:
             # Snapshot memory state after inference before restoring anything
             self._log_memory_state(post=True)
 
-            try:
-                current = os.nice(0)
-                if current != self._original_nice:
-                    adj = self._original_nice - current
-                    os.nice(adj)
-            except Exception:
-                pass
+            if _HAS_NICE:
+                try:
+                    current = os.nice(0)
+                    if current != self._original_nice:
+                        os.nice(self._original_nice - current)
+                except Exception:
+                    pass
 
             if self._gc_was_enabled and not gc.isenabled():
                 gc.enable()
@@ -142,24 +143,26 @@ class HardwareTuner:
 
     def _set_high_priority(self) -> None:
         """Try to raise process priority (needs root for negative nice on Linux)."""
-        try:
-            current = os.nice(0)
-            if current > -5:
-                os.nice(-5 - current)
-        except (PermissionError, OSError) as e:
-            logger.debug("Could not set high priority: %s", e)
+        if _HAS_NICE:
+            try:
+                current = os.nice(0)
+                if current > -5:
+                    os.nice(-5 - current)
+            except (PermissionError, OSError) as e:
+                logger.debug("Could not set high priority: %s", e)
 
         # Also try to renice the Ollama process — it does the actual compute.
         # This only works on macOS/Linux without root for own-user processes.
         self._renice_ollama(-5)
 
     def _set_medium_priority(self) -> None:
-        try:
-            current = os.nice(0)
-            if current > 0:
-                os.nice(-current)   # restore to 0
-        except (PermissionError, OSError) as e:
-            logger.debug("Could not set medium priority: %s", e)
+        if _HAS_NICE:
+            try:
+                current = os.nice(0)
+                if current > 0:
+                    os.nice(-current)
+            except (PermissionError, OSError) as e:
+                logger.debug("Could not set medium priority: %s", e)
 
     def _renice_ollama(self, niceness: int) -> None:
         """Find the Ollama server process and renice it to improve scheduling."""
