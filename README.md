@@ -173,6 +173,7 @@ Raw Ollama's fixed `num_ctx=4096` hurts most inside agent loops — where tool c
 
 | Metric | Raw Ollama | autotune |
 |--------|:----------:|:--------:|
+| **Agent wall time** | **74 s** | **40 s (−46%)** |
 | Model reloads per session | 0–1 | ~0 |
 | Swap events | 1 of 3 trials | 0 |
 | Tool call errors | 1 avg | 0 |
