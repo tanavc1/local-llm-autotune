@@ -310,14 +310,7 @@ def upgrade(yes: bool) -> None:
     console.print(f"  Latest version  : [bold]{latest}[/bold]")
 
     # ── Compare ──────────────────────────────────────────────────────────
-    def _newer(v_new: str, v_cur: str) -> bool:
-        try:
-            from packaging.version import Version
-            return Version(v_new) > Version(v_cur)
-        except Exception:
-            return v_new != v_cur
-
-    if not _newer(latest, current):
+    if not _version_newer(latest, current):
         console.print("\n[green]✓ You are already on the latest version.[/green]")
         return
 
@@ -339,32 +332,41 @@ def upgrade(yes: bool) -> None:
             return
 
     console.print(f"\n[bold cyan]Upgrading autotune {current} → {latest}…[/bold cyan]\n")
+    console.file.flush()
+    sys.stdout.flush()
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", "llm-autotune"],
+        stderr=subprocess.PIPE,
         check=False,
     )
     if result.returncode == 0:
+        # Read the installed version from a fresh subprocess — importlib.metadata
+        # caches dist-info directory listings in the current process so version()
+        # here would still return the pre-upgrade value.
         try:
-            import importlib.metadata as _meta
-            _meta.packages_distributions.cache_clear() if hasattr(_meta.packages_distributions, "cache_clear") else None
-            installed = _meta.version("llm-autotune")
+            probe = subprocess.run(
+                [sys.executable, "-c",
+                 "import importlib.metadata; print(importlib.metadata.version('llm-autotune'))"],
+                capture_output=True, text=True, check=False,
+            )
+            installed = probe.stdout.strip() or latest
         except Exception:
             installed = latest
         console.print(f"\n[green]✓ autotune upgraded to v{installed}[/green]")
-        console.print("[dim]Restart your terminal for the new version to take effect.[/dim]")
         # Update the cache so the hint stops firing in the next session
         try:
-            import json as _j
             import pathlib
             import time as _t
             _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
             _cp.parent.mkdir(parents=True, exist_ok=True)
-            _cp.write_text(_j.dumps({"checked_at": _t.time(), "latest": installed}))
+            _cp.write_text(json.dumps({"checked_at": _t.time(), "latest": installed}))
         except Exception:
             pass
     else:
         console.print("\n[red]Upgrade failed.[/red] Try manually:")
         console.print("  [bold cyan]pip install --upgrade llm-autotune[/bold cyan]")
+        if result.stderr:
+            console.print(f"\n[dim]{result.stderr.decode(errors='replace').strip()}[/dim]")
         raise SystemExit(1)
 
 
