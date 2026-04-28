@@ -344,7 +344,13 @@ def upgrade(yes: bool) -> None:
         check=False,
     )
     if result.returncode == 0:
-        console.print(f"\n[green]✓ autotune upgraded to v{latest}[/green]")
+        try:
+            import importlib.metadata as _meta
+            _meta.packages_distributions.cache_clear() if hasattr(_meta.packages_distributions, "cache_clear") else None
+            installed = _meta.version("llm-autotune")
+        except Exception:
+            installed = latest
+        console.print(f"\n[green]✓ autotune upgraded to v{installed}[/green]")
         console.print("[dim]Restart your terminal for the new version to take effect.[/dim]")
         # Update the cache so the hint stops firing in the next session
         try:
@@ -353,7 +359,7 @@ def upgrade(yes: bool) -> None:
             import time as _t
             _cp = pathlib.Path.home() / ".autotune" / "version_check.json"
             _cp.parent.mkdir(parents=True, exist_ok=True)
-            _cp.write_text(_j.dumps({"checked_at": _t.time(), "latest": latest}))
+            _cp.write_text(_j.dumps({"checked_at": _t.time(), "latest": installed}))
         except Exception:
             pass
     else:

@@ -506,7 +506,7 @@ As conversation history grows toward the context limit, autotune compresses olde
 > 90%  EMERGENCY     — last 4 turns (compressed) + one-line summary
 ```
 
-Compression strategies (lightest first): strip noise → compress JSON blobs → shorten tool output (head + tail) → trim assistant messages (keep first paragraph + code blocks + last paragraph) → trim user messages (preserve intent). Code blocks are always preserved first. All cuts happen at sentence boundaries.
+Compression strategies (lightest first): strip noise → compress JSON blobs → shorten tool output (head + tail) → trim assistant messages (keep first paragraph + code blocks + last paragraph) → trim user messages (preserve intent). Low-value chatter is dropped first; code blocks and stack traces are always preserved. All cuts happen at sentence boundaries. Facts extraction is deterministic — no extra LLM call required.
 
 **14. Conversation memory & recall** — *across sessions*
 
@@ -525,21 +525,6 @@ All data is local. Nothing is sent to any server.
 - **Generation speed (tok/s):** Metal GPU-bound on Apple Silicon. autotune doesn't touch the generation loop. Benchmarks show ±2% variance — measurement noise.
 - **Output quality:** Model weights, sampling parameters, and temperature are unchanged. `prompt_eval_count` is identical — no tokens are dropped or skipped.
 - **Turn 1 in agentic sessions:** Pre-allocating a full session KV window makes turn 1 ~80% slower. From turn 2 onward, prefix-cache savings compound and total wall time comes out ~46% lower.
-
----
-
-## Context management
-
-autotune monitors `history_tokens / effective_budget` and selects a strategy automatically:
-
-```
-< 55%   FULL              — all turns verbatim
-55–75%  RECENT+FACTS      — last 8 turns + structured facts block for older turns
-75–90%  COMPRESSED        — last 6 turns (lightly compressed) + compact summary
-> 90%   EMERGENCY         — last 4 turns (compressed) + one-line summary
-```
-
-Low-value chatter is dropped first. Code blocks, stack traces, and technical content are always preserved. All cutoffs happen at sentence or paragraph boundaries. The facts block for older turns is extracted deterministically — no extra LLM call required.
 
 ---
 
