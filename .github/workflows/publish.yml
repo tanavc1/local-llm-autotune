@@ -42,6 +42,9 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: none
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -54,3 +57,4 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
+          attestations: false
