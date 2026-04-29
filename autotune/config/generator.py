@@ -341,17 +341,14 @@ def _score_candidate(
 
 
 def _deduplicate(scored: list[ScoredConfig], keep: int = 10) -> list[ScoredConfig]:
-    """
-    Keep top-K results while ensuring model variety:
-    at most 2 configs per (model_id, quant) pair so we see different options.
-    """
-    seen: dict[str, int] = {}
+    """Keep top-K results with at most one config per model (best-scoring wins)."""
+    seen: set[str] = set()
     out: list[ScoredConfig] = []
     for sc in scored:
-        key = f"{sc.candidate.model.id}:{sc.candidate.quant}"
-        if seen.get(key, 0) >= 2:
+        key = sc.candidate.model.id
+        if key in seen:
             continue
-        seen[key] = seen.get(key, 0) + 1
+        seen.add(key)
         out.append(sc)
         if len(out) >= keep:
             break
