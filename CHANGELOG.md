@@ -7,12 +7,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
-## [1.0.7] — 2026-04-29
+## [1.0.8] — 2026-04-29
 
 ### Added
 
 **Docker support — Ollama + autotune bundled**
-- `Dockerfile` — single-container image built on `ollama/ollama:latest` with Python and autotune on top. Starts Ollama in the background and autotune serve in the foreground via `docker-entrypoint.sh`.
+- `Dockerfile` — single-container image built on `ollama/ollama:latest` with Python and autotune installed from local source. Starts Ollama in the background and autotune serve in the foreground via `docker-entrypoint.sh`.
 - `Dockerfile.autotune` — lightweight Python-only image (~200 MB) for multi-container deployments where Ollama runs as a separate service.
 - `docker-compose.yml` — two profiles: `single` (bundled container) and `multi` (separate Ollama + autotune services with health checks and `depends_on`).
 - `docker-entrypoint.sh` — startup script: starts Ollama on `0.0.0.0`, waits for readiness, optionally pulls `OLLAMA_MODEL` on first boot, then starts autotune serve.
