@@ -40,6 +40,7 @@ import httpx
 import psutil
 
 from autotune._ollama import ollama_base as _ollama_base
+
 _RAW_CTX        = 4096
 _KEEP_ALIVE     = "30m"
 _MAX_TOKENS     = 120      # short generation; TTFT is what we measure
