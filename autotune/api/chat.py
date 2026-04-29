@@ -35,6 +35,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from autotune._ollama import ollama_base as _ollama_base
+
 from .backends.chain import get_chain
 from .backends.openai_compat import AuthError, BackendError, ModelNotAvailableError
 from .conversation import get_conv_manager

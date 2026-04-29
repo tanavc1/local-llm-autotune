@@ -62,6 +62,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from autotune._ollama import ollama_base as _ollama_base
+
 _DEFAULT_TIMEOUT = 300.0   # seconds
 
 

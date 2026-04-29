@@ -43,7 +43,6 @@ from rich.table import Table
 
 from autotune._ollama import ollama_base as _ollama_base
 
-
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------

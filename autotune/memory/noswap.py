@@ -76,6 +76,7 @@ import psutil
 logger = logging.getLogger(__name__)
 
 from autotune._ollama import ollama_base as _ollama_base
+
 _SAFETY_MARGIN = 1.5    # GB always kept free (macOS starts compressing ~15% headroom)
 _MIN_CTX       = 512    # never go below this
 
