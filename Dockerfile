@@ -25,7 +25,7 @@ RUN apt-get update \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --break-system-packages "llm-autotune==1.0.8"
+RUN pip3 install --no-cache-dir --break-system-packages llm-autotune
 
 # Expose autotune's API port (Ollama's 11434 is already exposed by the base image)
 EXPOSE 8765
