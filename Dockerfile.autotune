@@ -15,7 +15,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install autotune from PyPI
-RUN pip install --no-cache-dir "llm-autotune==1.0.7"
+RUN pip install --no-cache-dir "llm-autotune==1.0.8"
 
 EXPOSE 8765
 

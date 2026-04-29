@@ -275,47 +275,37 @@ AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a queued request gets 429 (default
 
 ## Docker — Ollama + autotune bundled
 
-Run autotune and Ollama together in a single container — no local Python or Ollama install required.
+Yes — autotune ships a Docker image with Ollama bundled inside. No local Python, no separate Ollama install. One command gets you a fully optimized local LLM server.
 
-### Quick start
+### New user quickstart (3 steps)
 
 ```bash
-# Build the image
-docker build -t autotune .
-
-# Run — autotune API on :8765, models persisted in a named volume
-docker run -p 8765:8765 -v ollama_models:/root/.ollama autotune
+git clone https://github.com/tanavc1/local-llm-autotune.git
+cd local-llm-autotune
+docker compose --profile single up
 ```
 
-Then point any OpenAI client at `http://localhost:8765/v1`.
+That's it. Docker builds the image (pulls Ollama, installs autotune), starts both services, and exposes the API at `http://localhost:8765/v1`. Point any OpenAI-compatible client there.
 
 ### Auto-pull a model on first boot
 
 ```bash
-docker run -p 8765:8765 \
-  -v ollama_models:/root/.ollama \
-  -e OLLAMA_MODEL=qwen3:8b \
-  autotune
+OLLAMA_MODEL=qwen3:8b docker compose --profile single up
 ```
 
 The container pulls `qwen3:8b` from Ollama's registry on first start, then begins serving. Subsequent runs skip the pull because the model is cached in the volume.
 
-### Expose Ollama directly (optional)
+### Raw Docker (without Compose)
 
 ```bash
-docker run -p 8765:8765 -p 11434:11434 \
-  -v ollama_models:/root/.ollama \
-  autotune
-```
+docker build -t autotune .
+docker run -p 8765:8765 -v ollama_models:/root/.ollama autotune
 
-### docker-compose — single bundled container
+# With a model:
+docker run -p 8765:8765 -v ollama_models:/root/.ollama -e OLLAMA_MODEL=qwen3:8b autotune
 
-```bash
-# Start (builds automatically on first run)
-docker compose --profile single up
-
-# With a specific model:
-OLLAMA_MODEL=qwen3:8b docker compose --profile single up
+# Also expose Ollama directly:
+docker run -p 8765:8765 -p 11434:11434 -v ollama_models:/root/.ollama autotune
 ```
 
 ### docker-compose — separate Ollama + autotune services

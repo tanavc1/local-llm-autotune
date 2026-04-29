@@ -57,7 +57,6 @@ services:
   # ── Option B: autotune service ───────────────────────────────────────────────
   autotune:
     profiles: ["multi"]
-    image: ghcr.io/tanavc1/llm-autotune:latest   # or: build: { context: . }
     build:
       context: .
       dockerfile: Dockerfile.autotune  # lightweight Python-only image (no Ollama)
