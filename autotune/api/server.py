@@ -943,6 +943,8 @@ async def completions(req: CompletionRequest):
                         yield f"data: {json.dumps(done)}\n\n".encode()
                         break
 
+                yield b"data: [DONE]\n\n"
+
             except _asyncio.CancelledError:
                 pass  # client disconnected — normal, no error chunk needed
             except (ModelNotAvailableError, AuthError, BackendError) as exc:
@@ -955,8 +957,6 @@ async def completions(req: CompletionRequest):
             finally:
                 tuner._restore()
                 await queue.release()
-
-            yield b"data: [DONE]\n\n"
 
         return StreamingResponse(_completions_stream(), media_type="text/event-stream")
 

@@ -7,6 +7,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.0.9] — 2026-04-29
+
+### Fixed
+
+- **`bench/quick_proof.py`** — `_OLLAMA_BASE` was a module-level constant set to `http://localhost:11434`, ignoring `AUTOTUNE_OLLAMA_URL`. Replaced with dynamic `_ollama_base()` calls so Docker and remote-Ollama users get correct benchmark results.
+- **`bench/runner.py`** — `run_raw_ollama()` and `run_bench_ollama_only()` both hardcoded `http://localhost:11434/v1/chat/completions`. Fixed to use `_ollama_base()` so all bench paths respect `AUTOTUNE_OLLAMA_URL`.
+- **`api/backends/chain.py`** — `_scan_hf_cache()` used `Path.exists()` instead of `Path.is_dir()`. If `~/.cache/huggingface/hub` is somehow a regular file, the subsequent `iterdir()` call would raise `NotADirectoryError`. Changed to `is_dir()` which returns `False` for files.
+- **`api/server.py` `/v1/completions`** — `yield b"data: [DONE]\n\n"` was positioned *after* the `try/finally` block that called `await queue.release()`, allowing the concurrency slot to free before the final SSE frame was delivered. Moved inside the `try` block so the slot is held until the full response has been sent.
+
+---
+
 ## [1.0.8] — 2026-04-29
 
 ### Added

@@ -99,7 +99,7 @@ async def _probe_lmstudio() -> list[ModelInfo]:
 
 
 def _scan_hf_cache() -> list[ModelInfo]:
-    if not _HF_CACHE.exists():
+    if not _HF_CACHE.is_dir():
         return []
     models = []
     for item in _HF_CACHE.iterdir():

@@ -39,7 +39,7 @@ from typing import Callable, Optional
 import httpx
 import psutil
 
-_OLLAMA_BASE    = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 _RAW_CTX        = 4096
 _KEEP_ALIVE     = "30m"
 _MAX_TOKENS     = 120      # short generation; TTFT is what we measure
@@ -470,7 +470,7 @@ async def _fetch_arch(model_id: str) -> _ModelArch:
     arch = _ModelArch()
     try:
         async with httpx.AsyncClient(timeout=8.0) as c:
-            r = await c.post(f"{_OLLAMA_BASE}/api/show", json={"name": model_id, "verbose": True})
+            r = await c.post(f"{_ollama_base()}/api/show", json={"name": model_id, "verbose": True})
         mi = r.json().get("model_info", {})
 
         def _find(suffix: str) -> int:
@@ -511,7 +511,7 @@ async def _call_ollama(
         "keep_alive": keep_alive,
     }
     async with httpx.AsyncClient(timeout=90.0) as c:
-        r = await c.post(f"{_OLLAMA_BASE}/api/chat", json=payload)
+        r = await c.post(f"{_ollama_base()}/api/chat", json=payload)
         r.raise_for_status()
         return r.json()
 
@@ -529,7 +529,7 @@ async def _prime_ctx(model_id: str, num_ctx: int) -> None:
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as c:
-            await c.post(f"{_OLLAMA_BASE}/api/chat", json={
+            await c.post(f"{_ollama_base()}/api/chat", json={
                 "model":      model_id,
                 "messages":   [{"role": "user", "content": "ok"}],
                 "stream":     False,

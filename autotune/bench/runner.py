@@ -27,6 +27,7 @@ from typing import Optional
 
 import psutil
 
+from autotune._ollama import ollama_base as _ollama_base
 from autotune.api.backends.chain import get_chain
 from autotune.api.ctx_utils import estimate_tokens
 from autotune.api.hardware_tuner import get_tuner
@@ -319,7 +320,7 @@ async def run_raw_ollama(
         async with httpx.AsyncClient(timeout=360.0) as client:
             async with client.stream(
                 "POST",
-                "http://localhost:11434/v1/chat/completions",
+                f"{_ollama_base()}/v1/chat/completions",
                 json={
                     "model": model_id,
                     "messages": messages,
@@ -451,7 +452,7 @@ async def run_bench_ollama_only(
         async with httpx.AsyncClient(timeout=360.0) as client:
             async with client.stream(
                 "POST",
-                "http://localhost:11434/v1/chat/completions",
+                f"{_ollama_base()}/v1/chat/completions",
                 json={
                     "model":       model_id,
                     "messages":    messages,
