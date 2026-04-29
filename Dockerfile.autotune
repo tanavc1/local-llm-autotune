@@ -1,0 +1,25 @@
+# autotune-only image — for docker-compose multi-container setup where Ollama
+# runs as a separate service.  Much smaller than the bundled image (~200 MB
+# vs ~2 GB) because it contains only Python and autotune, not the Ollama binary.
+#
+# Set AUTOTUNE_OLLAMA_URL=http://ollama:11434 in the environment so autotune
+# knows where to reach the separate Ollama container.
+#
+# Build:  docker build -f Dockerfile.autotune -t autotune-server .
+# Run:    docker run -e AUTOTUNE_OLLAMA_URL=http://ollama:11434 -p 8765:8765 autotune-server
+
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install autotune from PyPI
+RUN pip install --no-cache-dir "llm-autotune==1.0.7"
+
+EXPOSE 8765
+
+ENV AUTOTUNE_PORT=8765 \
+    AUTOTUNE_OLLAMA_URL=http://localhost:11434
+
+CMD ["sh", "-c", "autotune serve --host 0.0.0.0 --port ${AUTOTUNE_PORT}"]

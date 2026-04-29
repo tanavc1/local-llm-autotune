@@ -69,6 +69,15 @@ const benchmarks = [
 const installSnippet = `pip install llm-autotune
 autotune chat --model qwen3:8b`;
 
+const dockerSnippet = `# Build once
+docker build -t autotune .
+
+# Run — autotune on :8765, models cached in a volume
+docker run -p 8765:8765 \\
+  -v ollama_models:/root/.ollama \\
+  -e OLLAMA_MODEL=qwen3:8b \\
+  autotune`;
+
 const proofSnippet = `autotune proof -m qwen3:8b
 # Runs in ~30 seconds. Uses Ollama's own timers.
 # Saves a proof_qwen3_8b.json you can share.`;
@@ -143,7 +152,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-tight text-white">autotune</span>
             <span className="hidden rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-medium text-violet-300 sm:block">
-              v1.0.0
+              v1.0.7
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm text-white/60">
@@ -155,6 +164,9 @@ export default function Home() {
             </a>
             <a href="#quickstart" className="hidden hover:text-white transition-colors sm:block">
               Install
+            </a>
+            <a href="#docker" className="hidden hover:text-white transition-colors sm:block">
+              Docker
             </a>
             <a href="/what-we-do" className="hidden hover:text-white transition-colors sm:block">
               All we do
@@ -717,6 +729,75 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── Docker ── */}
+      <section id="docker" className="py-28 px-6 bg-white/[0.02] border-y border-white/5">
+        <div className="mx-auto max-w-5xl">
+          <SectionLabel>Docker</SectionLabel>
+          <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
+            Ollama + autotune, bundled.
+          </h2>
+          <p className="text-white/55 mb-10 max-w-2xl">
+            The Docker image bundles Ollama and autotune in a single container.
+            No local install needed — just pull the image, mount a volume for
+            model storage, and your OpenAI-compatible endpoint is ready on
+            port 8765.
+          </p>
+
+          <div className="grid gap-8 lg:grid-cols-2 items-start">
+            <div>
+              <CodeBlock code={dockerSnippet} language="bash" />
+              <p className="mt-4 text-xs text-white/40">
+                <code className="text-white/55">OLLAMA_MODEL</code> auto-pulls the
+                model on first start. Models are cached in the named volume and
+                persist across restarts.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-5">
+                <div className="text-sm font-semibold text-white mb-2">docker-compose — two options</div>
+                <div className="space-y-2 text-xs text-white/60">
+                  <div className="flex gap-2">
+                    <code className="text-violet-300 shrink-0">--profile single</code>
+                    <span>Ollama + autotune in one container. Simplest setup.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <code className="text-violet-300 shrink-0">--profile multi</code>
+                    <span>Separate services. Lighter autotune image (~200 MB). Set <code className="text-white/60">AUTOTUNE_OLLAMA_URL=http://ollama:11434</code>.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/8 bg-white/3 p-5">
+                <div className="text-sm font-semibold text-white mb-3">Environment variables</div>
+                <div className="space-y-2 text-xs font-mono">
+                  {[
+                    { key: "OLLAMA_MODEL", val: "qwen3:8b", desc: "auto-pull on first boot" },
+                    { key: "AUTOTUNE_PORT", val: "8765", desc: "autotune bind port" },
+                    { key: "AUTOTUNE_OLLAMA_URL", val: "http://ollama:11434", desc: "remote/multi-container Ollama" },
+                  ].map((v) => (
+                    <div key={v.key} className="flex flex-col gap-0.5">
+                      <div className="flex gap-2 items-baseline">
+                        <span className="text-violet-300 shrink-0">{v.key}</span>
+                        <span className="text-white/30">= {v.val}</span>
+                      </div>
+                      <div className="text-white/35 pl-0 text-[11px]">{v.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-4 text-xs text-white/55">
+                <span className="text-green-300 font-medium">GPU support:</span>{" "}
+                Built on <code className="text-white/65">ollama/ollama:latest</code> — includes CUDA
+                and ROCm layers. Add <code className="text-white/65">--gpus all</code> for NVIDIA,
+                or mount <code className="text-white/65">/dev/kfd</code> for AMD.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── What's inside ── */}
       <section id="features" className="py-28 px-6 bg-white/[0.02] border-y border-white/5">
         <div className="mx-auto max-w-5xl">
@@ -756,6 +837,11 @@ export default function Home() {
                 title: "MLX backend (Apple Silicon)",
                 icon: "🍎",
                 desc: "Routes inference to MLX-LM on M-series Macs for native Metal GPU kernels — 10–40% faster generation throughput over Ollama.",
+              },
+              {
+                title: "Docker — Ollama bundled",
+                icon: "🐳",
+                desc: "Single container with Ollama + autotune. Mount a volume for models, set OLLAMA_MODEL to auto-pull on first boot, and your OpenAI-compatible API is ready on :8765.",
               },
             ].map((f) => (
               <div
@@ -861,7 +947,7 @@ export default function Home() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.0.0 — MIT License</span>
+            <span>autotune v1.0.7 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">

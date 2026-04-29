@@ -24,6 +24,8 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional, Union
 
+from autotune._ollama import ollama_base as _ollama_base
+
 logger = logging.getLogger(__name__)
 
 from importlib.metadata import PackageNotFoundError as _PkgNFE
@@ -436,7 +438,7 @@ async def _get_model_quant(model_id: str) -> str:
             import httpx as _hx
             async with _hx.AsyncClient(timeout=2.0) as c:
                 r = await c.post(
-                    "http://localhost:11434/api/show",
+                    f"{_ollama_base()}/api/show",
                     json={"name": model_id},
                 )
                 if r.status_code == 200:
@@ -735,7 +737,7 @@ async def model_status(model_id: str):
         try:
             import httpx as _httpx
             async with _httpx.AsyncClient(timeout=2.0) as c:
-                r = await c.get("http://localhost:11434/api/tags")
+                r = await c.get(f"{_ollama_base()}/api/tags")
                 tags = r.json().get("models", [])
             for m in tags:
                 name = m.get("name", "")

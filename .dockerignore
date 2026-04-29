@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+
+# Python artefacts
+__pycache__
+*.py[cod]
+*.egg-info
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Local environment
+.env
+.env.*
+.webui_secret_key
+
+# Results and logs from benchmarks / scripts
+*.log
+*.json
+benchmark_results.json
+proof_*.json
+resource_results.json
+stress_results*.json
+agent_bench_results*.json
+agent_bench_results*.md
+output.txt
+
+# Website and Node.js
+website/
+node_modules/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude / memory
+.claude/

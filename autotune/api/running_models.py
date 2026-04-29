@@ -15,6 +15,8 @@ from typing import Optional
 
 import httpx
 
+from autotune._ollama import ollama_base as _ollama_base
+
 
 @dataclass
 class RunningModel:
@@ -66,7 +68,7 @@ def _probe_ollama() -> list[RunningModel]:
     """Query Ollama /api/ps — returns all currently loaded models."""
     try:
         with httpx.Client(timeout=3.0) as client:
-            r = client.get("http://localhost:11434/api/ps")
+            r = client.get(f"{_ollama_base()}/api/ps")
             if r.status_code != 200:
                 return []
             data = r.json()

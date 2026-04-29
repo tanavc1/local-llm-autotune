@@ -61,7 +61,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_OLLAMA_BASE = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 _DEFAULT_TIMEOUT = 300.0   # seconds
 
 
@@ -178,7 +178,7 @@ class OllamaMetricsClient:
 
     def __init__(
         self,
-        base_url: str = _OLLAMA_BASE,
+        base_url: str = _ollama_base(),
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self.base_url = base_url.rstrip("/")

@@ -65,7 +65,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_OLLAMA_BASE = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ class VRAMTracker:
     The delta represents the KV cache portion that autotune avoids allocating.
     """
 
-    def __init__(self, base_url: str = _OLLAMA_BASE) -> None:
+    def __init__(self, base_url: str = _ollama_base()) -> None:
         self.base_url = base_url.rstrip("/")
 
     async def snapshot(self, model_id: str) -> VRAMSnapshot:

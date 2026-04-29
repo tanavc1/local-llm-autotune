@@ -19,6 +19,8 @@ from typing import Optional
 
 import psutil
 
+from autotune._ollama import ollama_base as _ollama_base
+
 from .types import (
     LiveMetrics,
     LLMProcess,
@@ -248,7 +250,7 @@ def _detect_llm_processes() -> list[LLMProcess]:
 
 def _query_ollama() -> list[OllamaModel]:
     try:
-        req = urllib.request.Request("http://localhost:11434/api/ps", method="GET")
+        req = urllib.request.Request(f"{_ollama_base()}/api/ps", method="GET")
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read())
         models = []

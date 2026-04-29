@@ -273,6 +273,83 @@ AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a queued request gets 429 (default
 
 ---
 
+## Docker — Ollama + autotune bundled
+
+Run autotune and Ollama together in a single container — no local Python or Ollama install required.
+
+### Quick start
+
+```bash
+# Build the image
+docker build -t autotune .
+
+# Run — autotune API on :8765, models persisted in a named volume
+docker run -p 8765:8765 -v ollama_models:/root/.ollama autotune
+```
+
+Then point any OpenAI client at `http://localhost:8765/v1`.
+
+### Auto-pull a model on first boot
+
+```bash
+docker run -p 8765:8765 \
+  -v ollama_models:/root/.ollama \
+  -e OLLAMA_MODEL=qwen3:8b \
+  autotune
+```
+
+The container pulls `qwen3:8b` from Ollama's registry on first start, then begins serving. Subsequent runs skip the pull because the model is cached in the volume.
+
+### Expose Ollama directly (optional)
+
+```bash
+docker run -p 8765:8765 -p 11434:11434 \
+  -v ollama_models:/root/.ollama \
+  autotune
+```
+
+### docker-compose — single bundled container
+
+```bash
+# Start (builds automatically on first run)
+docker compose --profile single up
+
+# With a specific model:
+OLLAMA_MODEL=qwen3:8b docker compose --profile single up
+```
+
+### docker-compose — separate Ollama + autotune services
+
+```bash
+docker compose --profile multi up
+```
+
+In this mode, Ollama and autotune run as separate services. autotune receives `AUTOTUNE_OLLAMA_URL=http://ollama:11434` so it routes to the Ollama service by name. Use a separate `Dockerfile.autotune` that contains only Python (~200 MB vs ~2 GB for the bundled image).
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OLLAMA_MODEL` | _(empty)_ | Model to auto-pull on first container start |
+| `AUTOTUNE_PORT` | `8765` | Port autotune binds inside the container |
+| `OLLAMA_HOST` | `0.0.0.0` | Bind address passed to `ollama serve` inside the container |
+| `AUTOTUNE_OLLAMA_URL` | `http://localhost:11434` | Where autotune reaches Ollama — set to `http://ollama:11434` for multi-container mode |
+
+### GPU support
+
+The bundled image is built on `ollama/ollama:latest` which includes CUDA and ROCm layers. Mount the appropriate devices:
+
+```bash
+# NVIDIA GPU
+docker run --gpus all -p 8765:8765 -v ollama_models:/root/.ollama autotune
+
+# AMD GPU (ROCm)
+docker run --device /dev/kfd --device /dev/dri -p 8765:8765 \
+  -v ollama_models:/root/.ollama autotune
+```
+
+---
+
 ## Embedding autotune in your application
 
 ```python

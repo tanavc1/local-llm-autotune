@@ -75,7 +75,7 @@ import psutil
 
 logger = logging.getLogger(__name__)
 
-_OLLAMA_BASE   = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 _SAFETY_MARGIN = 1.5    # GB always kept free (macOS starts compressing ~15% headroom)
 _MIN_CTX       = 512    # never go below this
 
@@ -181,7 +181,7 @@ class NoSwapGuard:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 r = await client.post(
-                    f"{_OLLAMA_BASE}/api/show",
+                    f"{_ollama_base()}/api/show",
                     json={"name": model_id},
                 )
                 info = r.json().get("model_info", {})

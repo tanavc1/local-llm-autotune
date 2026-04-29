@@ -34,6 +34,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
+from autotune._ollama import ollama_base as _ollama_base
 from .backends.chain import get_chain
 from .backends.openai_compat import AuthError, BackendError, ModelNotAvailableError
 from .conversation import get_conv_manager
@@ -329,7 +330,7 @@ class ChatSession:
                 # Check whether this model is already resident in Ollama's memory.
                 already_loaded = False
                 try:
-                    ps = _httpx.get("http://localhost:11434/api/ps", timeout=2.0)
+                    ps = _httpx.get(f"{_ollama_base()}/api/ps", timeout=2.0)
                     if ps.status_code == 200:
                         names = {m.get("name", "").lower() for m in ps.json().get("models", [])}
                         target = self.model_id.lower()
@@ -357,7 +358,7 @@ class ChatSession:
                                 "keep_alive": "5m",
                             }).encode()
                             req = _ur.Request(
-                                "http://localhost:11434/api/generate",
+                                f"{_ollama_base()}/api/generate",
                                 data=body,
                                 headers={"Content-Type": "application/json"},
                             )

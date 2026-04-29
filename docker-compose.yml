@@ -1,0 +1,81 @@
+# autotune Docker Compose — two deployment options
+#
+# OPTION A — single container (simpler, Ollama bundled inside)
+# ------------------------------------------------------------
+#   docker compose --profile single up
+#
+# OPTION B — two containers (autotune + Ollama as separate services)
+# ------------------------------------------------------------------
+#   docker compose --profile multi up
+#
+# Both options expose autotune on localhost:8765 and optionally Ollama on 11434.
+# Models are persisted in a named volume so they survive container restarts.
+
+services:
+
+  # ── Option A: autotune + Ollama in one container ────────────────────────────
+  autotune-bundled:
+    profiles: ["single"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: autotune:latest
+    ports:
+      - "8765:8765"   # autotune OpenAI-compatible API
+      - "11434:11434" # Ollama direct access (optional — remove if not needed)
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      OLLAMA_MODEL: ""              # set to "llama3.2:3b" to auto-pull on first boot
+      AUTOTUNE_PORT: "8765"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ── Option B: Ollama service ─────────────────────────────────────────────────
+  ollama:
+    profiles: ["multi"]
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Option B: autotune service ───────────────────────────────────────────────
+  autotune:
+    profiles: ["multi"]
+    image: ghcr.io/tanavc1/llm-autotune:latest   # or: build: { context: . }
+    build:
+      context: .
+      dockerfile: Dockerfile.autotune  # lightweight Python-only image (no Ollama)
+    ports:
+      - "8765:8765"
+    environment:
+      AUTOTUNE_OLLAMA_URL: "http://ollama:11434"
+      AUTOTUNE_PORT: "8765"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  ollama_models:

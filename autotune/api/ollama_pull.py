@@ -41,7 +41,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-_OLLAMA_BASE = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def print_popular_models(console: Optional[Console] = None) -> None:
 def is_ollama_running() -> bool:
     """Return True if the Ollama daemon is reachable."""
     try:
-        req = urllib.request.Request(f"{_OLLAMA_BASE}/api/tags", method="GET")
+        req = urllib.request.Request(f"{_ollama_base()}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=2):
             return True
     except Exception:
@@ -186,7 +186,7 @@ def _stream_pull_events(model_id: str) -> Iterator[dict]:
     """Yield parsed JSON events from the Ollama /api/pull stream."""
     body = json.dumps({"model": model_id, "stream": True}).encode()
     req = urllib.request.Request(
-        f"{_OLLAMA_BASE}/api/pull",
+        f"{_ollama_base()}/api/pull",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -330,7 +330,7 @@ def delete_model(model_id: str, console: Optional[Console] = None) -> bool:
         )
     body = json.dumps({"model": model_id}).encode()
     req = urllib.request.Request(
-        f"{_OLLAMA_BASE}/api/delete",
+        f"{_ollama_base()}/api/delete",
         data=body,
         headers={"Content-Type": "application/json"},
         method="DELETE",

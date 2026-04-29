@@ -35,6 +35,8 @@ from typing import Optional
 import httpx
 import numpy as np
 
+from autotune._ollama import ollama_base as _ollama_base
+
 # ---------------------------------------------------------------------------
 # MemoryEmbedder
 # ---------------------------------------------------------------------------
@@ -49,8 +51,8 @@ class MemoryEmbedder:
         "snowflake-arctic-embed",
     ]
 
-    def __init__(self, base_url: str = "http://localhost:11434") -> None:
-        self._base_url: str = base_url.rstrip("/")
+    def __init__(self, base_url: Optional[str] = None) -> None:
+        self._base_url: str = (base_url or _ollama_base()).rstrip("/")
         self._model: Optional[str] = None
         self._probed: bool = False
         self._dim: Optional[int] = None

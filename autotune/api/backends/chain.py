@@ -29,6 +29,8 @@ from typing import AsyncGenerator, Optional
 
 import httpx
 
+from autotune._ollama import ollama_base as _ollama_base
+
 from .base import Backend, ChatChunk
 from .mlx_backend import (
     IS_APPLE_SILICON,
@@ -67,7 +69,7 @@ class ModelInfo:
 async def _probe_ollama() -> list[ModelInfo]:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get("http://localhost:11434/api/tags")
+            r = await client.get(f"{_ollama_base()}/api/tags")
             data = r.json()
         models = []
         for m in data.get("models", []):
@@ -140,7 +142,7 @@ def _hf_token() -> str:
 
 def _make_ollama_backend(model_id: str) -> OpenAICompatBackend:
     return OpenAICompatBackend(
-        base_url="http://localhost:11434",
+        base_url=_ollama_base(),
         api_key="ollama",
         backend_name="ollama",
     )
@@ -229,7 +231,7 @@ class BackendChain:
             return self._ollama_ok
         try:
             async with httpx.AsyncClient(timeout=1.5) as client:
-                r = await client.get("http://localhost:11434/api/tags")
+                r = await client.get(f"{_ollama_base()}/api/tags")
                 self._ollama_ok = r.status_code == 200
                 if self._ollama_ok:
                     # Parse model list from the response we already have —
@@ -454,7 +456,7 @@ async def unload_ollama_model(model_id: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(
-                "http://localhost:11434/api/generate",
+                f"{_ollama_base()}/api/generate",
                 json={"model": model_id, "keep_alive": 0},
             )
             return r.status_code == 200

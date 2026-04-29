@@ -20,7 +20,7 @@ from typing import Optional
 
 from autotune.models.quality import QualityInfo, get_quality
 
-_OLLAMA_BASE = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base
 _LMSTUDIO_BASE = "http://localhost:1234"
 
 
@@ -53,13 +53,13 @@ def _ollama_request(path: str, body: Optional[dict] = None, timeout: float = 3.0
         if body is not None:
             data = json.dumps(body).encode()
             req = urllib.request.Request(
-                f"{_OLLAMA_BASE}{path}",
+                f"{_ollama_base()}{path}",
                 data=data,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
         else:
-            req = urllib.request.Request(f"{_OLLAMA_BASE}{path}", method="GET")
+            req = urllib.request.Request(f"{_ollama_base()}{path}", method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except Exception:

@@ -7,6 +7,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.0.7] — 2026-04-29
+
+### Added
+
+**Docker support — Ollama + autotune bundled**
+- `Dockerfile` — single-container image built on `ollama/ollama:latest` with Python and autotune on top. Starts Ollama in the background and autotune serve in the foreground via `docker-entrypoint.sh`.
+- `Dockerfile.autotune` — lightweight Python-only image (~200 MB) for multi-container deployments where Ollama runs as a separate service.
+- `docker-compose.yml` — two profiles: `single` (bundled container) and `multi` (separate Ollama + autotune services with health checks and `depends_on`).
+- `docker-entrypoint.sh` — startup script: starts Ollama on `0.0.0.0`, waits for readiness, optionally pulls `OLLAMA_MODEL` on first boot, then starts autotune serve.
+- `.dockerignore` — excludes venv, .git, website, benchmark results, and local env files from the build context.
+
+**`AUTOTUNE_OLLAMA_URL` environment variable**
+- All hardcoded `http://localhost:11434` URLs in the API/runtime layer now call a shared `autotune._ollama.ollama_base()` helper that reads `AUTOTUNE_OLLAMA_URL`.
+- Default behaviour unchanged (`http://localhost:11434`).
+- Set `AUTOTUNE_OLLAMA_URL=http://ollama:11434` in docker-compose multi-container mode to route autotune to a separate Ollama service.
+- Files updated: `api/backends/chain.py`, `api/server.py`, `api/local_models.py`, `api/running_models.py`, `api/ollama_pull.py`, `api/chat.py`, `metrics/ollama_client.py`, `metrics/vram.py`, `memory/noswap.py`, `recall/embedder.py`, `session/monitor.py`.
+
+### Environment variables (new)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOTUNE_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL — override for remote/Docker setups |
+| `OLLAMA_MODEL` | _(empty)_ | Model to auto-pull on container first start |
+| `AUTOTUNE_PORT` | `8765` | Port autotune binds inside the container |
+| `OLLAMA_HOST` | `0.0.0.0` | Bind address passed to `ollama serve` inside the container |
+
+---
+
 ## [1.0.0] — 2026-04-23
 
 ### Added
