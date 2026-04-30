@@ -3652,11 +3652,12 @@ def proof(
     # ── Run ───────────────────────────────────────────────────────────────────
     from autotune.bench.quick_proof import print_proof_result, run_quick_proof
 
-    _eta = "~45s" if not speed else "~2 min"
+    _eta = "~45s" if not speed else "~3 min"
+    _speed_note = "  ·  [bold]+speed[/bold]  [dim](Q8 KV + 2048-ctx + 1024-batch — all gains stacked)[/dim]" if speed else ""
     _console.print(
         f"\n[bold]autotune proof[/bold]  ·  [cyan]{model}[/cyan]  ·  "
         f"{runs} run{'s' if runs != 1 else ''} per condition  ·  profile: {profile}"
-        + ("  ·  [bold]+speed[/bold]" if speed else "")
+        + _speed_note
     )
     _console.print(f"[dim]Using Ollama's internal Go nanosecond timers — not estimated.  ETA: {_eta}[/dim]\n")
 
