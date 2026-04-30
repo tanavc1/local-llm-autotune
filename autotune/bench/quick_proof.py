@@ -1154,34 +1154,24 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
     if result.raw_kv_mb > 0 and result.kv_saved_mb >= 1:
         kv_saved_mb = result.kv_saved_mb
         kv_saved_gb = kv_saved_mb / 1024
-
-        if kv_saved_gb >= 0.5:
-            freed_str = f"[bold green]{kv_saved_gb:.2f} GB freed[/bold green]"
-        else:
-            freed_str = f"[bold green]{kv_saved_mb:.0f} MB freed[/bold green]"
+        freed_str   = f"[bold green]{kv_saved_gb:.2f} GB ({kv_saved_mb:.0f} MB) freed[/bold green]"
 
         ram_lines = [
-            f"  RAM freed per request: {freed_str}  "
-            f"[dim](without autotune: {result.raw_kv_mb:.0f} MB  →  with autotune: {result.tuned_kv_mb:.0f} MB,"
-            f" −{result.kv_pct:.0f}%)[/dim]",
+            f"  {freed_str} less RAM held by the AI — for your entire session",
             "",
-            "  [dim]Before answering, Ollama reserves a block of RAM for the AI's working memory.[/dim]",
-            "  [dim]Without autotune it always reserves the same large block, even for short messages.[/dim]",
-            "  [dim]autotune measures your prompt and reserves only what's actually needed —[/dim]",
-            "  [dim]the rest goes back to Chrome, VS Code, Slack, and your OS. Every request.[/dim]",
+            "  [dim]Ollama keeps the model loaded between your messages so it can respond instantly.[/dim]",
+            "  [dim]While it waits, it holds a block of RAM called the KV cache locked and[/dim]",
+            "  [dim]unavailable to the rest of your Mac — not just during inference, but the[/dim]",
+            "  [dim]whole time the model is idle (up to 30 minutes between messages).[/dim]",
+            "",
+            f"  [dim]Without autotune:  always holds a fixed [bold]{result.raw_kv_mb:.0f} MB[/bold] block, even for a one-liner.[/dim]",
+            f"  [dim]With autotune:     measures your actual prompt, holds only [bold]{result.tuned_kv_mb:.0f} MB[/bold].[/dim]",
+            "",
+            f"  [dim]Chrome, VS Code, and Slack get back {kv_saved_gb:.2f} GB ({kv_saved_mb:.0f} MB) — not just[/dim]",
+            f"  [dim]while the AI responds, but for the entire session. On a loaded Mac this is[/dim]",
+            f"  [dim]what prevents the spinning beach balls caused by macOS paging out your[/dim]",
+            f"  [dim]other apps to make room for the AI.[/dim]",
         ]
-        if result.headroom_gained_gb >= 0.05:
-            ram_lines.append(
-                f"\n  RAM free while model runs: "
-                f"[green]+{result.headroom_gained_gb:.2f} GB more[/green]  "
-                f"[dim](with autotune: {result.tuned_free_gb:.1f} GB free "
-                f"vs without: {result.raw_free_gb:.1f} GB)[/dim]"
-            )
-        elif result.tuned_free_gb > 0:
-            ram_lines.append(
-                f"\n  [dim]System RAM free while model runs: {result.tuned_free_gb:.1f} GB "
-                f"(your machine has plenty of RAM — savings mainly help your other apps)[/dim]"
-            )
 
         console.print(Panel(
             "\n".join(ram_lines),
@@ -1424,17 +1414,19 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
 
     # — RAM freed (most reliable, always show) —
     if result.raw_kv_mb > 0 and result.kv_pct >= 10:
-        kv_saved = result.kv_saved_mb
-        label = f"{kv_saved / 1024:.2f} GB" if kv_saved >= 512 else f"{kv_saved:.0f} MB"
+        kv_saved    = result.kv_saved_mb
+        kv_gb_label = f"{kv_saved / 1024:.2f} GB ({kv_saved:.0f} MB)"
         wins.append(
-            f"[green]✅  {label} of RAM freed on every request[/green]  "
+            f"[green]✅  {kv_gb_label} less RAM held by the AI — whole session[/green]  "
             f"[dim](without: {result.raw_kv_mb:.0f} MB → with autotune: {result.tuned_kv_mb:.0f} MB,"
             f" −{result.kv_pct:.0f}%)\n"
-            f"     Goes back to Chrome, VS Code, Slack — every single time.[/dim]"
+            f"     Chrome, VS Code, Slack keep this RAM while the model is loaded.[/dim]"
         )
     elif result.raw_kv_mb > 0 and result.kv_pct >= 3:
+        kv_saved    = result.kv_saved_mb
+        kv_gb_label = f"{kv_saved / 1024:.2f} GB ({kv_saved:.0f} MB)"
         wins.append(
-            f"[green]✅  {result.kv_saved_mb:.0f} MB of RAM freed per request[/green]  "
+            f"[green]✅  {kv_gb_label} less RAM held by the AI per session[/green]  "
             f"[dim](−{result.kv_pct:.0f}%)[/dim]"
         )
 
@@ -1489,14 +1481,6 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
                 f"     On older hardware or under load, autotune's smaller memory block prevents\n"
                 f"     slowdowns that can add 0.5–5 seconds to every new chat.[/dim]"
             )
-
-    # — RAM headroom —
-    if result.headroom_gained_gb >= 0.1:
-        wins.append(
-            f"[green]✅  +{result.headroom_gained_gb:.2f} GB of RAM free while AI runs[/green]  "
-            f"[dim](with autotune: {result.tuned_free_gb:.1f} GB free "
-            f"vs without: {result.raw_free_gb:.1f} GB)[/dim]"
-        )
 
     # — Swap —
     if result.raw_swap_events > 0 and result.tuned_swap_events == 0:
