@@ -1150,14 +1150,27 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
         icon = "✅" if (pct > 0) == better_is_lower else "⚠️"
         return f"{sign}{abs(pct):.0f}% {icon}"
 
-    # ── RAM savings banner ────────────────────────────────────────────────────
+    # ── Top banner — RAM savings (always) + TTFT (if it improved) ────────────
     if result.raw_kv_mb > 0 and result.kv_saved_mb >= 1:
         kv_saved_mb = result.kv_saved_mb
         kv_saved_gb = kv_saved_mb / 1024
         freed_str   = f"[bold green]{kv_saved_gb:.2f} GB ({kv_saved_mb:.0f} MB) freed[/bold green]"
 
-        ram_lines = [
+        ss_pct         = result.ss_ttft_improvement_pct if result.has_ss_test else 0.0
+        show_ttft      = result.has_ss_test and ss_pct >= 5
+        panel_title    = "[bold green]autotune Results[/bold green]" if show_ttft else "[bold green]RAM Savings[/bold green]"
+
+        headline_lines = [
             f"  {freed_str} less RAM held by the AI — for your entire session",
+        ]
+        if show_ttft:
+            headline_lines.append(
+                f"  [bold green]{ss_pct:.0f}% faster first response[/bold green]  "
+                f"[dim]({result.ss_raw_ttft_ms:.0f} ms → {result.ss_tuned_ttft_ms:.0f} ms — "
+                "smaller memory block sets up faster)[/dim]"
+            )
+
+        ram_lines = headline_lines + [
             "",
             "  [dim]Ollama keeps the model loaded between your messages so it can respond instantly.[/dim]",
             "  [dim]While it waits, it holds a block of RAM called the KV cache locked and[/dim]",
@@ -1168,14 +1181,14 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
             f"  [dim]With autotune:     measures your actual prompt, holds only [bold]{result.tuned_kv_mb:.0f} MB[/bold].[/dim]",
             "",
             f"  [dim]Chrome, VS Code, and Slack get back {kv_saved_gb:.2f} GB ({kv_saved_mb:.0f} MB) — not just[/dim]",
-            f"  [dim]while the AI responds, but for the entire session. On a loaded Mac this is[/dim]",
-            f"  [dim]what prevents the spinning beach balls caused by macOS paging out your[/dim]",
-            f"  [dim]other apps to make room for the AI.[/dim]",
+            "  [dim]while the AI responds, but for the entire session. On a loaded Mac this is[/dim]",
+            "  [dim]what prevents the spinning beach balls caused by macOS paging out your[/dim]",
+            "  [dim]other apps to make room for the AI.[/dim]",
         ]
 
         console.print(Panel(
             "\n".join(ram_lines),
-            title="[bold green]RAM Savings[/bold green]",
+            title=panel_title,
             border_style="green",
             padding=(0, 1),
         ))
@@ -1434,10 +1447,6 @@ def print_proof_result(result: QuickProofResult, console, output_path: Optional[
     if result.has_speed_test:
         spd_pref_pct = result.spd_prefill_improvement_pct
         spd_ttft_pct = result.spd_ttft_improvement_pct
-        spd_kv_pct_v = (
-            (result.spd_raw_kv_mb - result.spd_tuned_kv_mb) / max(result.spd_raw_kv_mb, 1) * 100
-            if result.spd_raw_kv_mb > 0 else 0.0
-        )
         spd_kv_ratio_v = result.spd_raw_kv_mb / max(result.spd_tuned_kv_mb, 1) if result.spd_tuned_kv_mb > 0 else 0.0
 
         if spd_ttft_pct >= 10 or spd_pref_pct >= 10:
