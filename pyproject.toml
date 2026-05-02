@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llm-autotune"
-version = "1.0.10"
+version = "1.0.15"
 description = "39% faster TTFT, 67% less KV cache, zero config — autotune optimises local LLMs on Ollama, LM Studio, and MLX"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
     { name = "Tanav Chinthapatla", email = "tanavc1@users.noreply.github.com" },
@@ -28,6 +28,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -121,7 +122,7 @@ exclude_lines = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -135,7 +136,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.9"
 ignore_missing_imports = true
 warn_unused_ignores = false
 no_error_summary = true

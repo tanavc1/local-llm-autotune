@@ -447,26 +447,22 @@ def models(registry: bool) -> None:
     from rich.table import Table
     from rich.text import Text
 
-    from autotune.api.local_models import is_ollama_running, list_local_models
+    from autotune.api.local_models import list_local_models
+    from autotune.api.ollama_pull import ensure_ollama_running
     from autotune.models.quality import tier_badge, tier_markup
+
+    ensure_ollama_running(console)
 
     with console.status("[cyan]Scanning for local models…[/cyan]", spinner="dots"):
         local = list_local_models()
 
     if not local:
-        if not is_ollama_running():
-            console.print(
-                "[yellow]No models found.[/yellow]\n"
-                "Pull a model and autotune will start Ollama automatically:\n"
-                "  [bold]autotune pull qwen3:8b[/bold]"
-            )
-        else:
-            console.print(
-                "[yellow]No models found.[/yellow]\n"
-                "Pull one to get started:\n"
-                "  [bold]autotune pull[/bold]  (browse popular models)\n"
-                "  [bold]autotune pull qwen3:8b[/bold]"
-            )
+        console.print(
+            "[yellow]No models found.[/yellow]\n"
+            "Pull one to get started:\n"
+            "  [bold]autotune pull[/bold]  (browse popular models)\n"
+            "  [bold]autotune pull qwen3:8b[/bold]"
+        )
         return
 
     # Group by source
@@ -3734,11 +3730,8 @@ def proof_suite(
       autotune proof-suite -m qwen3:8b --runs 5 --output results.json
     """
     import argparse as _argparse
-    import sys as _sys
-    from pathlib import Path as _Path
 
-    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
-    from proof_suite import main as _suite_main  # type: ignore
+    from autotune.bench.proof_suite import main as _suite_main
 
     # Patch sys.argv so proof_suite's argparse picks up our values
     _argv = ["proof_suite"]
@@ -3750,6 +3743,7 @@ def proof_suite(
     if list_models:
         _argv += ["--list-models"]
 
+    import sys as _sys
     _sys.argv = _argv
     _suite_main()
 
@@ -3764,15 +3758,15 @@ def proof_suite(
     help=(
         "Ollama model IDs to benchmark.  Repeat for multiple: "
         "-m llama3.2:3b -m qwen3:8b.  "
-        "Defaults to llama3.2:3b gemma4:e2b qwen3:8b."
+        "Defaults to the first locally installed model."
     ),
 )
 @click.option("--trials", "-n", type=int, default=5, show_default=True,
-              help="Trials per condition per task.  Min 3 recommended for statistics.")
+              help="Trials per condition per task.  Overrides mode default.")
 @click.option(
     "--tasks", "-t", default="", metavar="TASK_IDS",
     help=(
-        "Comma-separated task IDs to run.  Default: all five tasks.  "
+        "Comma-separated task IDs to run.  "
         "Options: code_debugger,research_synth,step_planner,"
         "adversarial_context,extended_session"
     ),
@@ -3783,8 +3777,8 @@ def proof_suite(
     default="balanced", show_default=True,
     help="autotune profile to benchmark against raw Ollama defaults.",
 )
-@click.option("--quick", "-q", is_flag=True,
-              help="Quick mode: 3 tasks, 2 trials (~20-30 min).")
+@click.option("--full", is_flag=True,
+              help="Full mode: all 5 tasks, 5 trials (~60-120 min).  Default is 2 tasks, 2 trials (~10 min).")
 @click.option("--output", "-o", default=None, metavar="PATH",
               help="Save full results JSON to this path.")
 def agent_bench(
@@ -3792,34 +3786,32 @@ def agent_bench(
     trials: int,
     tasks: str,
     profile: str,
-    quick: bool,
+    full: bool,
     output: Optional[str],
 ) -> None:
-    """Agentic multi-turn benchmark: raw Ollama vs autotune.
+    """Agentic multi-turn benchmark: raw Ollama vs autotune (~10 min).
 
-    Runs 5 realistic agentic tasks (code debugging, research synthesis,
-    step planning, adversarial context, extended session) through both
-    raw Ollama defaults and autotune.  Measures per-turn TTFT, RAM,
-    KV cache size, tool-call reliability, and task success rate.
+    Runs realistic tool-calling agent tasks through both raw Ollama and
+    autotune, capturing per-turn TTFT and RAM at every step.
 
-    The TTFT growth curves reveal the core story: in raw Ollama, TTFT grows
-    linearly with context because the full 4096-token KV cache is filled on
-    every prefill step.  autotune's dynamic num_ctx keeps TTFT flat by
-    sizing the context window to actual usage.
+    The key story: raw Ollama TTFT grows with context (4096-token KV buffer
+    allocated regardless of prompt size, filled on every prefill step).
+    autotune keeps TTFT flat — dynamic num_ctx + Q8 KV + prefix caching.
+
+    Default: 2 tasks (code_debugger + extended_session), 2 trials — ~10 min.
+    Use --full for all 5 tasks with statistical rigour (~60-120 min).
 
     \b
     Examples:
-      autotune agent-bench
-      autotune agent-bench -m llama3.2:3b -m qwen3:8b -n 3
-      autotune agent-bench --tasks code_debugger,extended_session --quick
+      autotune agent-bench                          # ~10 min, one local model
+      autotune agent-bench -m llama3.2:3b           # pick the model
+      autotune agent-bench -m qwen3:8b --full       # full 5-task suite
+      autotune agent-bench --tasks code_debugger    # single task
     """
-    import sys as _sys
-    from pathlib import Path as _Path
-
-    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
     import argparse as _argparse
+    import asyncio as _asyncio
 
-    import agent_bench as _ab  # type: ignore
+    from autotune.bench import agent_bench as _ab
 
     # Build a Namespace that matches agent_bench's argparse schema
     ns = _argparse.Namespace(
@@ -3827,11 +3819,11 @@ def agent_bench(
         trials=trials,
         tasks=tasks,
         profile=profile,
-        quick=quick,
+        quick=False,
+        full=full,
         output=output,
     )
 
-    import asyncio as _asyncio
     rc = _asyncio.run(_ab._async_main(ns))
     raise SystemExit(rc)
 
@@ -3895,21 +3887,19 @@ def user_bench(
       autotune user-bench -m qwen3:8b --background
       autotune user-bench --all-models --runs 2
     """
+    import argparse as _argparse
     import asyncio as _asyncio
     import os as _os
     import platform as _platform
     import sys as _sys
     from pathlib import Path as _Path
 
-    _sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
-    import argparse as _argparse
-
-    from user_bench import (  # type: ignore
+    from autotune.bench.user_bench import (
         _build_parser,
         _check_ollama_sync,
         _notify,
     )
-    from user_bench import (
+    from autotune.bench.user_bench import (
         main as _ub_main,
     )
 
