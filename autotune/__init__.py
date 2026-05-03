@@ -57,7 +57,11 @@ Programmatic API (for application developers)
 
 from __future__ import annotations
 
-__version__ = "1.0.10"
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("llm-autotune")
+except Exception:
+    __version__ = "unknown"
 
 import shutil
 import subprocess
