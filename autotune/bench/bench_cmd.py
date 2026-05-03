@@ -189,8 +189,9 @@ class ConcurrencyResult:
     mean_ttft_ms: float
     mean_tps: float
     peak_ram_gb: float
-    swap_occurred: bool
-    errors: int
+    ram_per_slot_gb: float = 0.0   # (peak - baseline) / concurrency
+    swap_occurred: bool = False
+    errors: int = 0
 
 
 @dataclass
@@ -199,10 +200,26 @@ class ServerBenchResult:
     model_id: str
     condition: str             # "raw" | "autotune"
     serial_latency: Optional[LatencyStats] = None
+    serial_tps: Optional[LatencyStats] = None           # tok/s distribution
     concurrency_results: list[ConcurrencyResult] = field(default_factory=list)
     sustained_tps: float = 0.0
     peak_ram_gb: float = 0.0
+    baseline_ram_gb: float = 0.0                        # RAM before any inference
+    mean_num_ctx: float = 0.0                           # avg KV window actually used
+    cost_per_1m_tokens: float = 0.0                     # USD estimate at reference GPU rate
+    tps_cv: float = 0.0                                 # coefficient of variation (stability)
     error: Optional[str] = None
+
+
+# Reference GPU costs (USD/hour) — used for cost/1M-token estimate.
+# Source: AWS on-demand, 2025 Q2.  Update as needed.
+_GPU_COST_PER_HR = {
+    "T4 (g4dn.xlarge)":   0.526,
+    "A10G (g5.xlarge)":   1.006,
+    "A100 40GB (p3.2xl)": 3.060,
+    "H100 (p4de est.)":   8.500,
+}
+_DEFAULT_GPU_KEY = "A10G (g5.xlarge)"
 
 
 # ---------------------------------------------------------------------------
@@ -602,8 +619,13 @@ async def run_server_bench(
 
     client = OllamaMetricsClient(timeout=180.0)
 
+    # ── Baseline RAM (before any inference) ─────────────────────────────
+    baseline_ram_gb = psutil.virtual_memory().used / 1024**3
+    raw_result.baseline_ram_gb   = baseline_ram_gb
+    tuned_result.baseline_ram_gb = baseline_ram_gb
+
     # ── Warmup: ensure model is loaded ───────────────────────────────────
-    con.print("[dim]  Warming up model…[/dim]")
+    con.print("[dim]  Warming up model (2 runs discarded)…[/dim]")
     for _ in range(_WARMUP_RUNS):
         await client.run_with_stats(model, messages, options=opts_tuned,
                                     keep_alive="-1", max_tokens=64)
@@ -612,23 +634,38 @@ async def run_server_bench(
     con.print(f"[dim]  Serial latency — raw Ollama ({serial_runs} runs)…[/dim]")
     raw_serial: list[float] = []
     raw_tps_serial: list[float] = []
-    for i in range(serial_runs):
+    raw_num_ctx_list: list[float] = []
+    for _i in range(serial_runs):
         stat = await client.run_with_stats(
             model, messages, options=opts_raw, keep_alive="-1", max_tokens=256,
         )
         if not stat.error:
             raw_serial.append(stat.ttft_proxy_ms)
             raw_tps_serial.append(stat.eval_tps)
+            raw_num_ctx_list.append(float(opts_raw.get("num_ctx", 4096)))
         await asyncio.sleep(0.3)
 
     raw_result.serial_latency = LatencyStats(raw_serial)
-    raw_result.peak_ram_gb = psutil.virtual_memory().used / 1024**3
+    raw_result.serial_tps     = LatencyStats(raw_tps_serial)
+    raw_result.peak_ram_gb    = psutil.virtual_memory().used / 1024**3
+    raw_result.mean_num_ctx   = (statistics.mean(raw_num_ctx_list)
+                                 if raw_num_ctx_list else 4096.0)
+    # Coefficient of variation: lower = more stable throughput
+    raw_result.tps_cv = (statistics.stdev(raw_tps_serial) / statistics.mean(raw_tps_serial)
+                         if len(raw_tps_serial) >= 2 and statistics.mean(raw_tps_serial) > 0
+                         else 0.0)
+    # Cost per million tokens at reference GPU price
+    if raw_result.serial_tps and raw_result.serial_tps.mean > 0:
+        tps_mean = raw_result.serial_tps.mean
+        cost_hr  = _GPU_COST_PER_HR[_DEFAULT_GPU_KEY]
+        raw_result.cost_per_1m_tokens = (cost_hr / (tps_mean * 3600.0)) * 1_000_000
 
     # ── Serial latency (autotune) ────────────────────────────────────────
     con.print(f"[dim]  Serial latency — autotune ({serial_runs} runs)…[/dim]")
     tuned_serial: list[float] = []
     tuned_tps_serial: list[float] = []
-    for i in range(serial_runs):
+    tuned_num_ctx_list: list[float] = []
+    for _i in range(serial_runs):
         opts_fresh, _ = build_ollama_options(messages, profile)
         stat = await client.run_with_stats(
             model, messages, options=opts_fresh, keep_alive="-1", max_tokens=256,
@@ -636,18 +673,31 @@ async def run_server_bench(
         if not stat.error:
             tuned_serial.append(stat.ttft_proxy_ms)
             tuned_tps_serial.append(stat.eval_tps)
+            tuned_num_ctx_list.append(float(opts_fresh.get("num_ctx", 4096)))
         await asyncio.sleep(0.3)
 
     tuned_result.serial_latency = LatencyStats(tuned_serial)
-    tuned_result.peak_ram_gb = psutil.virtual_memory().used / 1024**3
+    tuned_result.serial_tps     = LatencyStats(tuned_tps_serial)
+    tuned_result.peak_ram_gb    = psutil.virtual_memory().used / 1024**3
+    tuned_result.mean_num_ctx   = (statistics.mean(tuned_num_ctx_list)
+                                   if tuned_num_ctx_list else 0.0)
+    tuned_result.tps_cv = (statistics.stdev(tuned_tps_serial) / statistics.mean(tuned_tps_serial)
+                           if len(tuned_tps_serial) >= 2 and statistics.mean(tuned_tps_serial) > 0
+                           else 0.0)
+    if tuned_result.serial_tps and tuned_result.serial_tps.mean > 0:
+        tps_mean = tuned_result.serial_tps.mean
+        cost_hr  = _GPU_COST_PER_HR[_DEFAULT_GPU_KEY]
+        tuned_result.cost_per_1m_tokens = (cost_hr / (tps_mean * 3600.0)) * 1_000_000
 
     # ── Concurrent throughput ────────────────────────────────────────────
     for c in concurrency_levels:
         con.print(f"[dim]  Concurrent throughput — raw Ollama (concurrency={c})…[/dim]")
-        raw_c  = await _run_concurrent_bench(model, messages, opts_raw,  c, client)
+        raw_c  = await _run_concurrent_bench(model, messages, opts_raw,  c, client,
+                                             baseline_ram_gb=baseline_ram_gb)
         await asyncio.sleep(_COOLDOWN_SEC)
         con.print(f"[dim]  Concurrent throughput — autotune (concurrency={c})…[/dim]")
-        tune_c = await _run_concurrent_bench(model, messages, opts_tuned, c, client)
+        tune_c = await _run_concurrent_bench(model, messages, opts_tuned, c, client,
+                                             baseline_ram_gb=baseline_ram_gb)
         await asyncio.sleep(_COOLDOWN_SEC)
         raw_result.concurrency_results.append(raw_c)
         tuned_result.concurrency_results.append(tune_c)
@@ -662,10 +712,11 @@ async def _run_concurrent_bench(
     concurrency: int,
     client: OllamaMetricsClient,
     requests_total: int = 8,
+    baseline_ram_gb: float = 0.0,
 ) -> ConcurrencyResult:
     """
     Send ``requests_total`` requests with ``concurrency`` in-flight at once.
-    Returns aggregate metrics.
+    Returns aggregate metrics including memory efficiency per slot.
     """
     ttfts: list[float]  = []
     tps_list: list[float] = []
@@ -699,6 +750,9 @@ async def _run_concurrent_bench(
 
     swap_after = psutil.swap_memory().used / 1024**3
 
+    peak_ram = max(ram_samples) if ram_samples else 0.0
+    ram_per_slot = max(0.0, (peak_ram - baseline_ram_gb) / max(concurrency, 1))
+
     stats = LatencyStats(ttfts) if ttfts else LatencyStats([0.0])
     return ConcurrencyResult(
         concurrency=concurrency,
@@ -708,7 +762,8 @@ async def _run_concurrent_bench(
         p99_ms=stats.p99,
         mean_ttft_ms=stats.mean,
         mean_tps=sum(tps_list) / max(len(tps_list), 1),
-        peak_ram_gb=max(ram_samples) if ram_samples else 0.0,
+        peak_ram_gb=peak_ram,
+        ram_per_slot_gb=ram_per_slot,
         swap_occurred=(swap_after - swap_before) > 0.03,
         errors=errors_ref[0],
     )
@@ -760,6 +815,44 @@ def print_server_bench_results(
         _row("Min TTFT",    r.min_val, u.min_val)
         _row("Max TTFT",    r.max_val, u.max_val)
 
+        # Throughput rows (higher is better — invert logic)
+        def _tps_row(label: str, a: float, b: float) -> None:
+            if a == 0 and b == 0:
+                return
+            pct = (b - a) / abs(a) * 100 if a != 0 else 0
+            color = "green" if pct > 1 else ("red" if pct < -1 else "dim")
+            t.add_row(label, f"{a:.1f} tok/s", f"{b:.1f} tok/s",
+                      f"[{color}]{pct:+.1f}%[/{color}]")
+
+        if raw.serial_tps and tuned.serial_tps:
+            t.add_section()
+            _tps_row("Mean throughput", raw.serial_tps.mean, tuned.serial_tps.mean)
+            _tps_row("P50 throughput",  raw.serial_tps.p50,  tuned.serial_tps.p50)
+
+        # KV window sizing
+        if raw.mean_num_ctx > 0 and tuned.mean_num_ctx > 0:
+            t.add_section()
+            ctx_saved_pct = (raw.mean_num_ctx - tuned.mean_num_ctx) / raw.mean_num_ctx * 100
+            ctx_color = "green" if ctx_saved_pct > 1 else "dim"
+            t.add_row(
+                "Mean num_ctx",
+                f"{raw.mean_num_ctx:.0f} tokens",
+                f"{tuned.mean_num_ctx:.0f} tokens",
+                f"[{ctx_color}]{ctx_saved_pct:+.1f}% KV saved[/{ctx_color}]",
+            )
+
+        # Throughput stability (coefficient of variation)
+        if raw.tps_cv > 0 or tuned.tps_cv > 0:
+            t.add_section()
+            cv_improvement = raw.tps_cv - tuned.tps_cv
+            cv_color = "green" if cv_improvement > 0.02 else "dim"
+            t.add_row(
+                "TPS stability (CV↓)",
+                f"{raw.tps_cv:.3f}",
+                f"{tuned.tps_cv:.3f}",
+                f"[{cv_color}]{'-' if cv_improvement > 0 else '+'}{abs(cv_improvement):.3f}[/{cv_color}]",
+            )
+
         con.print(t)
         con.print()
 
@@ -769,12 +862,13 @@ def print_server_bench_results(
             title="Throughput Under Concurrency",
             box=box.ROUNDED, header_style="bold",
         )
-        ct.add_column("Concurrency",    style="bold", justify="center")
+        ct.add_column("Workers",        style="bold", justify="center")
         ct.add_column("Condition",      style="bold")
         ct.add_column("Req/sec",        justify="right", style="white")
         ct.add_column("Mean TTFT",      justify="right")
         ct.add_column("P95 TTFT",       justify="right")
-        ct.add_column("Peak RAM",       justify="right")
+        ct.add_column("RAM/slot",       justify="right")
+        ct.add_column("Swap",           justify="center")
         ct.add_column("Errors",         justify="right")
 
         raw_by_c  = {r.concurrency: r for r in raw.concurrency_results}
@@ -788,7 +882,8 @@ def print_server_bench_results(
                     f"{rr.rps:.2f}",
                     f"[yellow]{rr.mean_ttft_ms:.0f} ms[/yellow]",
                     f"[yellow]{rr.p95_ms:.0f} ms[/yellow]",
-                    f"[yellow]{rr.peak_ram_gb:.2f} GB[/yellow]",
+                    f"[yellow]{rr.ram_per_slot_gb:.2f} GB[/yellow]",
+                    "[red]YES[/red]" if rr.swap_occurred else "[dim]no[/dim]",
                     f"[red]{rr.errors}[/red]" if rr.errors else "[dim]0[/dim]",
                 )
             if tr:
@@ -797,7 +892,8 @@ def print_server_bench_results(
                     f"{tr.rps:.2f}",
                     f"[cyan]{tr.mean_ttft_ms:.0f} ms[/cyan]",
                     f"[cyan]{tr.p95_ms:.0f} ms[/cyan]",
-                    f"[cyan]{tr.peak_ram_gb:.2f} GB[/cyan]",
+                    f"[cyan]{tr.ram_per_slot_gb:.2f} GB[/cyan]",
+                    "[red]YES[/red]" if tr.swap_occurred else "[dim]no[/dim]",
                     f"[red]{tr.errors}[/red]" if tr.errors else "[dim]0[/dim]",
                 )
             ct.add_section()
@@ -805,19 +901,54 @@ def print_server_bench_results(
         con.print(ct)
         con.print()
 
-    # ── Cost estimate ────────────────────────────────────────────────────
+    # ── Cost estimate ───────────────────────────────���────────────────────
     if raw.serial_latency and tuned.serial_latency:
         raw_mean = raw.serial_latency.mean
         tun_mean = tuned.serial_latency.mean
+        lines: list[str] = []
+
         if raw_mean > 0 and tun_mean > 0:
-            ttft_savings_pct = (raw_mean - tun_mean) / raw_mean * 100
+            ttft_pct = (raw_mean - tun_mean) / raw_mean * 100
+            ttft_color = "green" if ttft_pct > 0 else "red"
+            lines.append(
+                f"TTFT (mean):  [{ttft_color}]{ttft_pct:+.1f}%[/{ttft_color}]  "
+                f"({raw_mean:.0f} ms → {tun_mean:.0f} ms)"
+            )
+
+        if raw.cost_per_1m_tokens > 0 and tuned.cost_per_1m_tokens > 0:
+            cost_pct = (raw.cost_per_1m_tokens - tuned.cost_per_1m_tokens) / raw.cost_per_1m_tokens * 100
+            cost_color = "green" if cost_pct > 0 else "red"
+            lines.append(
+                f"Cost/1M tokens [{_DEFAULT_GPU_KEY}]:  "
+                f"[yellow]${raw.cost_per_1m_tokens:.3f}[/yellow] → "
+                f"[cyan]${tuned.cost_per_1m_tokens:.3f}[/cyan]  "
+                f"([{cost_color}]{cost_pct:+.1f}%[/{cost_color}])"
+            )
+
+        # Concurrent slot capacity: how many more slots fit with autotune's smaller KV footprint?
+        if raw.concurrency_results and tuned.concurrency_results:
+            raw_c1  = next((r for r in raw.concurrency_results  if r.concurrency == 1), None)
+            tune_c1 = next((r for r in tuned.concurrency_results if r.concurrency == 1), None)
+            if raw_c1 and tune_c1 and raw_c1.ram_per_slot_gb > 0 and tune_c1.ram_per_slot_gb > 0:
+                slot_savings_pct = (raw_c1.ram_per_slot_gb - tune_c1.ram_per_slot_gb) / raw_c1.ram_per_slot_gb * 100
+                if abs(slot_savings_pct) > 1:
+                    slot_color = "green" if slot_savings_pct > 0 else "red"
+                    lines.append(
+                        f"RAM/slot (concurrency=1):  "
+                        f"[yellow]{raw_c1.ram_per_slot_gb:.2f} GB[/yellow] → "
+                        f"[cyan]{tune_c1.ram_per_slot_gb:.2f} GB[/cyan]  "
+                        f"([{slot_color}]{slot_savings_pct:+.1f}%[/{slot_color}])"
+                    )
+
+        if lines:
+            lines.extend([
+                "",
+                f"[dim]Cost estimate uses {_DEFAULT_GPU_KEY} reference price "
+                f"(${_GPU_COST_PER_HR[_DEFAULT_GPU_KEY]:.3f}/hr).[/dim]",
+                "[dim]Lower RAM/slot = more concurrent users on the same GPU budget.[/dim]",
+            ])
             con.print(Panel(
-                f"[bold]Cost reduction estimate[/bold]\n"
-                f"TTFT improvement: [green]{ttft_savings_pct:.1f}%[/green] faster first token\n"
-                f"At 10,000 requests/day: "
-                f"[green]{ttft_savings_pct:.0f}% less TTFT wait per user[/green]\n"
-                f"Fewer tokens allocated per request → "
-                f"lower GPU-seconds per inference → [green]lower cost per million tokens[/green]",
+                "\n".join(lines),
                 title="[bold]Production Impact[/bold]",
                 border_style="green",
             ))

@@ -155,6 +155,53 @@ autotune ls        # every locally installed model scored against your hardware
 
 ---
 
+## API server (OpenAI-compatible)
+
+```bash
+autotune serve
+# → Listening at http://127.0.0.1:8765/v1
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8765/v1", api_key="local")
+response = client.chat.completions.create(
+    model="qwen3:8b",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+### Per-request headers
+
+```
+X-Autotune-Profile: fast          # override profile for this request
+X-Conversation-Id: a3f92c1b       # attach to a persistent conversation
+```
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/chat/completions` | OpenAI-compatible, streaming or non-streaming |
+| `GET /v1/models` | All available models across all backends |
+| `GET /health` | Server status, queue depth, memory pressure |
+| `GET /api/hardware` | Live hardware snapshot |
+| `GET /api/profiles` | Profile definitions |
+| `GET /api/running_models` | Models in memory with RAM, context, quant, age |
+| `POST/GET/DELETE /api/conversations` | Persistent conversation CRUD |
+| `GET /api/conversations/{id}/export` | Export as Markdown |
+
+### Concurrency
+
+```bash
+AUTOTUNE_MAX_CONCURRENT=1    # parallel inference slots (default: 1)
+AUTOTUNE_MAX_QUEUED=8        # max requests waiting (default: 8)
+AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a queued request gets 429 (default: 120)
+```
+
+---
+
 ## Model recommendations by hardware
 
 | RAM | Recommended model | Pull command | Why |
@@ -249,53 +296,6 @@ autotune mlx list                 # show locally cached MLX models
 ```
 
 MLX activates automatically on Apple Silicon — no configuration needed. Use Ollama-backed models when you need structured tool calls in agentic workflows.
-
----
-
-## API server (OpenAI-compatible)
-
-```bash
-autotune serve
-# → Listening at http://127.0.0.1:8765/v1
-```
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:8765/v1", api_key="local")
-response = client.chat.completions.create(
-    model="qwen3:8b",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-```
-
-### Per-request headers
-
-```
-X-Autotune-Profile: fast          # override profile for this request
-X-Conversation-Id: a3f92c1b       # attach to a persistent conversation
-```
-
-### Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/chat/completions` | OpenAI-compatible, streaming or non-streaming |
-| `GET /v1/models` | All available models across all backends |
-| `GET /health` | Server status, queue depth, memory pressure |
-| `GET /api/hardware` | Live hardware snapshot |
-| `GET /api/profiles` | Profile definitions |
-| `GET /api/running_models` | Models in memory with RAM, context, quant, age |
-| `POST/GET/DELETE /api/conversations` | Persistent conversation CRUD |
-| `GET /api/conversations/{id}/export` | Export as Markdown |
-
-### Concurrency
-
-```bash
-AUTOTUNE_MAX_CONCURRENT=1    # parallel inference slots (default: 1)
-AUTOTUNE_MAX_QUEUED=8        # max requests waiting (default: 8)
-AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a queued request gets 429 (default: 120)
-```
 
 ---
 

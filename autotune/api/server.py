@@ -109,6 +109,11 @@ class Message(BaseModel):
         return str(v)
 
 
+class StreamOptions(BaseModel):
+    """OpenAI stream_options — controls streaming response extras."""
+    include_usage: bool = False
+
+
 class ChatRequest(BaseModel):
     model: str
     messages: list[Message]
@@ -131,6 +136,7 @@ class ChatRequest(BaseModel):
     response_format: Optional[dict] = None
     tools: Optional[list] = None
     tool_choice: Optional[Union[str, dict]] = None
+    stream_options: Optional[StreamOptions] = None
     # ── autotune extensions ──────────────────────────────────────────────────
     profile: str = "balanced"
     conversation_id: Optional[str] = None
@@ -1310,6 +1316,30 @@ async def _chat_completions_inner(
                     prompt_tokens=prompt_tokens_s,
                     comp_tokens=comp_tokens,
                 )
+
+        # Emit a usage chunk before [DONE] when stream_options.include_usage=True.
+        # This matches the OpenAI spec: a final chunk with empty choices + usage.
+        include_usage = (
+            req.stream_options is not None and req.stream_options.include_usage
+        )
+        if include_usage:
+            _p_toks = estimate_tokens(
+                "".join(m.get("content", "") for m in messages)
+            )
+            _c_toks = estimate_tokens(_think_filt.collected_text())
+            usage_payload = json.dumps({
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": req.model,
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": _p_toks,
+                    "completion_tokens": _c_toks,
+                    "total_tokens": _p_toks + _c_toks,
+                },
+            })
+            yield f"data: {usage_payload}\n\n".encode()
 
         yield b"data: [DONE]\n\n"
 

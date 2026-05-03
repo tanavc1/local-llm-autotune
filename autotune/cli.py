@@ -1149,442 +1149,817 @@ def log_run(
 
 
 # ---------------------------------------------------------------------------
-# `autotune bench`
+# `autotune bench`  — unified benchmark suite (Click group)
+# ---------------------------------------------------------------------------
+#
+# Subcommands:
+#   quick    60-second proof using Ollama native nanosecond timers
+#   duel     5-prompt 1-vs-1: raw Ollama vs autotune, side-by-side stats
+#   suite    Full 11-KPI statistical benchmark (Wilcoxon, Cohen's d)
+#   agent    Multi-turn agentic workloads
+#   ux       User-experience KPIs (swap events, RAM headroom, TTFT consistency)
+#   os       OS-level isolation (isolate each optimization's contribution)
+#   server   Cloud/server throughput (RPS, P99 latency, cost/million tokens)
+#   all      Run quick + duel + ux and print a combined improvement report
 # ---------------------------------------------------------------------------
 
-INTENSIVE_PROMPT = """\
-You are a senior systems engineer and performance optimization expert.
-
-I need a COMPLETE multi-part answer — do not truncate or summarize. Work through every part.
-
-**Scenario**: A Python web service receives 1,000 concurrent requests per second. \
-The service parses JSON, queries a PostgreSQL database with ORM calls, processes \
-results with nested loops, caches nothing, and re-instantiates DB connections per \
-request. It runs on a 16 GB unified-memory Apple Silicon machine also running \
-an LLM inference server.
-
-**PART 1 — Bottleneck Analysis**
-Identify and rank the top 5 performance bottlenecks in order of severity. \
-For each: explain the root cause, the memory access pattern it creates, \
-and how it interacts with Apple Silicon's unified memory architecture.
-
-**PART 2 — Optimized Python Rewrite**
-Write fully working Python code that fixes bottlenecks #1 and #2. \
-Include: async I/O, connection pooling, and an LRU cache layer. \
-Add inline comments explaining each optimization choice.
-
-**PART 3 — Complexity Analysis**
-For each function you wrote: state its time complexity O(n), space complexity O(n), \
-and explain why those bounds hold.
-
-**PART 4 — Memory Pressure on Apple Silicon**
-Explain how running this service alongside an LLM (e.g., a 14B parameter Q4_K_M \
-quantized model) affects both workloads on a 16 GB unified-memory system. \
-What happens at 80% RAM utilization? At 94%? How does the memory compressor behave?
-
-**PART 5 — Concrete Recommendations**
-Give 3 specific, actionable configuration changes (with exact values) to run \
-both the web service and LLM inference on this machine without OOM-killing either.
-
-Be thorough and precise. This is a real production system."""
+def _bench_autoselect(preferred: Optional[str] = None) -> Optional[str]:
+    """Return preferred model if set; else smallest installed Ollama model."""
+    if preferred:
+        return preferred
+    try:
+        import httpx as _hx
+        with _hx.Client(timeout=4.0) as c:
+            r = c.get("http://localhost:11434/api/tags")
+            models = r.json().get("models", [])
+        if not models:
+            return None
+        return sorted(models, key=lambda m: m.get("size", float("inf")))[0]["name"]
+    except Exception:
+        return None
 
 
-@cli.command("bench")
-@click.option("--model", "-m", default="qwen3:8b", show_default=True,
-              help="Model to benchmark.")
+@cli.group("bench", invoke_without_command=True)
+@click.pass_context
+def bench_group(ctx: click.Context) -> None:
+    """Unified benchmark suite — prove autotune is faster and leaner.
+
+    \b
+    From fastest to most thorough:
+      quick    ~60s  — 3 tests, Ollama native nanosecond timers (start here)
+      duel     ~20m  — 5-prompt 1-vs-1 comparison with summary stats
+      suite    ~45m  — full 11-KPI statistical benchmark (Wilcoxon, Cohen's d)
+      agent    ~60m  — multi-turn agentic; proves TTFT stays flat under load
+      ux       ~30m  — user-experience KPIs (swap events, RAM headroom)
+      os       ~15m  — isolate each OS-level optimization's contribution
+      server   ~20m  — cloud/server throughput, P99, cost per million tokens
+      all      ~45m  — run quick + duel + ux; print combined report
+
+    \b
+    Examples:
+      autotune bench quick                        # start here — 60 seconds
+      autotune bench duel -m qwen3:8b             # 1-vs-1 on all 5 prompts
+      autotune bench suite -m qwen3:8b            # full statistical proof
+      autotune bench server -m qwen3:8b           # cloud-scale throughput test
+      autotune bench all -m qwen3:8b              # run everything (~45 min)
+    """
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+# ── bench quick ──────────────────────────────────────────────────────────────
+
+@bench_group.command("quick")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to test. Auto-selects smallest installed model if omitted.")
 @click.option(
     "--profile", "-p",
     type=click.Choice(["fast", "balanced", "quality"]),
     default="balanced", show_default=True,
-    help="autotune optimization profile to use.",
+    help="autotune optimization profile.",
 )
-@click.option("--tag", default=None, metavar="NAME",
-              help="Label this run (auto-generated if omitted).")
-@click.option("--prompt-file", default=None, type=click.Path(exists=True),
-              help="Use a custom prompt from a file instead of the built-in intensive prompt.")
-@click.option("--no-hw-tuning", is_flag=True, default=False,
-              help="Skip OS-level hardware optimizations (for comparison runs).")
-@click.option("--raw", is_flag=True, default=False,
-              help="Run ONLY raw Ollama defaults — no autotune. "
-                   "Good for establishing a baseline before comparing.")
-@click.option("--duel", is_flag=True, default=False,
-              help="Run BOTH raw Ollama AND autotune back-to-back on the same prompt, "
-                   "then show an immediate side-by-side comparison. "
-                   "This is the recommended way to see the full before/after picture.")
-@click.option("--save/--no-save", default=True,
-              help="Save result to DB (default: save).")
-@click.option("--compare", default=None, metavar="TAG_A,TAG_B",
-              help="Compare two previously saved bench tags and show delta table.")
-def bench(
-    model: str,
-    profile: str,
-    tag: Optional[str],
-    prompt_file: Optional[str],
-    no_hw_tuning: bool,
-    raw: bool,
-    duel: bool,
-    save: bool,
-    compare: Optional[str],
-) -> None:
-    """Run an intensive benchmark and measure hardware strain.
+@click.option("--runs", "-r", type=int, default=2, show_default=True,
+              help="Runs per condition. 2 = ~45s; 3 = ~70s.")
+@click.option("--speed", is_flag=True,
+              help="Add a stacked-optimization speed test (~+1 min).")
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save JSON results to this path.")
+def bench_quick(model: Optional[str], profile: str, runs: int, speed: bool, output: Optional[str]) -> None:
+    """~60-second proof — 3 tests, Ollama native nanosecond timers.
 
-    There are three ways to use this command:
-
+    Proves autotune's two core benefits on your exact hardware:
     \b
-    1. AUTOTUNE ONLY (default) — run autotune with the chosen profile:
-         autotune bench --model qwen3:8b --profile balanced
-
+    Test 1 — RAM freed per request (always measurable):
+      autotune allocates only the KV buffer the prompt actually needs.
+      Raw Ollama always reserves the full 4096-token default block.
     \b
-    2. RAW OLLAMA ONLY — run pure Ollama defaults, no autotune:
-         autotune bench --model qwen3:8b --raw
-
+    Test 2 — TTFT on session start (both conditions start fresh):
+      Smaller KV allocation = less to initialize = faster first token.
     \b
-    3. DUEL (recommended) — run both raw and autotune, show comparison:
-         autotune bench --model qwen3:8b --duel
-         autotune bench --model qwen3:8b --duel --profile fast
-
+    Test 3 — Stacked speed test (--speed only):
+      Q8 KV + 2048-ctx + 1024-batch all applied simultaneously.
     \b
-    4. COMPARE SAVED RUNS — diff two previously saved tags:
-         autotune bench --compare baseline,fast_optimized
-
-    \b
-    Save a run to a named tag and compare later:
-      autotune bench --model qwen3:8b --raw --tag my_baseline
-      autotune bench --model qwen3:8b --profile fast --tag my_fast
-      autotune bench --compare my_baseline,my_fast
+    Examples:
+      autotune bench quick                    # auto-select model
+      autotune bench quick -m qwen3:8b        # specific model
+      autotune bench quick -m qwen3:8b --speed
+      autotune bench quick -m qwen3:8b -r 3 --output proof.json
     """
-    import asyncio
+    import asyncio as _asyncio
+    from pathlib import Path as _Path
 
-    import psutil as _psutil
+    from autotune.bench.quick_proof import print_proof_result, run_quick_proof
 
-    from autotune.bench.runner import run_bench, run_bench_ollama_only, run_raw_ollama, save_result
-
-    # ── Compare mode ─────────────────────────────────────────────────────
-    if compare:
-        from rich import box
-        from rich.table import Table
-
-        from autotune.db.store import get_db
-
-        parts = compare.split(",")
-        if len(parts) != 2:
-            console.print("[red]--compare requires exactly two tags: TAG_A,TAG_B[/red]")
-            raise SystemExit(1)
-
-        db = get_db()
-        result = db.compare_runs(parts[0].strip(), parts[1].strip())
-
-        if "error" in result:
-            console.print(f"[red]{result['error']}[/red]")
-            raise SystemExit(1)
-
-        console.print(f"\n[bold]Comparing[/bold]  [cyan]{result['tag_a']}[/cyan]  vs  [green]{result['tag_b']}[/green]")
-        console.print(f"[dim]{result['runs_a']} run(s) vs {result['runs_b']} run(s)[/dim]\n")
-
-        t = Table(box=box.ROUNDED)
-        t.add_column("Metric", style="bold")
-        t.add_column(result["tag_a"], justify="right", style="cyan")
-        t.add_column(result["tag_b"], justify="right", style="green")
-        t.add_column("Δ (%)", justify="right")
-
-        metric_labels = {
-            "tokens_per_sec": "Throughput (tok/s)  ↑ better",
-            "ttft_ms":         "TTFT (ms)           ↓ better",
-            "peak_ram_gb":     "Peak RAM (GB)       ↓ better",
-            "peak_vram_gb":    "Peak VRAM/UMem (GB) ↓ better",
-        }
-        improvement_direction = {
-            "tokens_per_sec": +1,   # higher = better
-            "ttft_ms": -1,          # lower = better
-            "peak_ram_gb": -1,
-            "peak_vram_gb": -1,
-        }
-        for key, label in metric_labels.items():
-            if key not in result["deltas"]:
-                continue
-            d = result["deltas"][key]
-            pct = d["delta_pct"]
-            direction = improvement_direction[key]
-            improved = (pct * direction) > 0
-            pct_str = f"[green]{pct:+.1f}%[/green]" if improved else f"[red]{pct:+.1f}%[/red]"
-            t.add_row(label, str(d["a"]), str(d["b"]), pct_str)
-
-        console.print(t)
-        return
-
-    # ── Build prompt ──────────────────────────────────────────────────────
-    if prompt_file:
-        with open(prompt_file) as f:
-            prompt_text = f.read()
-    else:
-        prompt_text = INTENSIVE_PROMPT
-
-    messages = [
-        {"role": "system", "content": "You are a senior systems engineer and performance expert. Answer thoroughly and completely. Do not truncate."},
-        {"role": "user",   "content": prompt_text},
-    ]
-    prompt_tokens_est = sum(len(m["content"]) // 4 for m in messages)
-
-    ts = int(time.time())
-    vm_before = _psutil.virtual_memory()
-    sw_before = _psutil.swap_memory()
-
-    # ── DUEL MODE — run both raw and autotune, then show comparison ────────
-    if duel:
-        from rich import box
-        from rich.panel import Panel
-        from rich.rule import Rule
-        from rich.table import Table
-
-        raw_tag   = tag + "_raw"   if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_raw_{ts}"
-        tuned_tag = tag + "_tuned" if tag else f"{model.replace(':', '_').replace('/', '_')}_duel_{profile}_{ts}"
-
-        console.print()
-        console.print(Panel(
-            f"[bold]DUEL MODE[/bold]  [cyan]{model}[/cyan]  ·  autotune/{profile} vs. raw Ollama\n"
-            f"[dim]Running the same intensive prompt through both configurations.\n"
-            f"Prompt: ~{prompt_tokens_est} tokens  ·  "
-            f"RAM before: {vm_before.used/1024**3:.2f} GB / {vm_before.total/1024**3:.1f} GB[/dim]",
-            border_style="cyan",
-        ))
-        console.print()
-
-        # ── Round 1: Raw Ollama ──────────────────────────────────────────
-        console.print("[bold]Round 1 of 2[/bold]  [red]Raw Ollama[/red]  (zero autotune — factory defaults)")
-        console.print("  [dim]num_ctx=4096, temp=0.8, keep_alive=5m, no HW tuning, no prefix cache[/dim]")
-        with console.status("  [dim]Running raw Ollama inference… (measuring TTFT, tok/s, RAM, CPU…)[/dim]", spinner="dots"):
-            raw_result = asyncio.run(run_raw_ollama(
-                model_id=model,
-                messages=messages,
-                tag=raw_tag,
-            ))
-        if raw_result.error:
-            console.print(f"  [red]✗  Raw Ollama failed:[/red] {raw_result.error}")
-            raise SystemExit(1)
+    selected = _bench_autoselect(model)
+    if not selected:
         console.print(
-            f"  [green]✓[/green]  Done in {raw_result.elapsed_sec:.1f}s — "
-            f"TTFT [yellow]{raw_result.ttft_ms:.0f} ms[/yellow]  "
-            f"tok/s [yellow]{raw_result.tokens_per_sec:.1f}[/yellow]  "
-            f"peak RAM [yellow]{raw_result.ram_peak_gb:.2f} GB[/yellow]  "
-            f"CPU [yellow]{raw_result.cpu_avg_pct:.0f}%[/yellow]"
+            "[red]No Ollama models installed.[/red]\n"
+            "Pull a model first: [bold]autotune pull qwen3:8b[/bold]"
         )
-        if save:
-            save_result(raw_result)
-            console.print(f"  [dim]Saved to DB as tag: {raw_tag}[/dim]")
-
-        console.print()
-        console.print("[dim]Cooling down 5 seconds to let RAM settle…[/dim]")
-        time.sleep(5)
-        console.print()
-
-        # ── Round 2: Autotune ────────────────────────────────────────────
-        console.print(f"[bold]Round 2 of 2[/bold]  [cyan]autotune/{profile}[/cyan]  (full optimizer stack)")
-        console.print(
-            f"  [dim]Dynamic num_ctx, prefix caching (num_keep), keep_alive=-1, "
-            f"repeat_penalty, QoS={profile.upper()}, GC suspend[/dim]"
-        )
-        with console.status(f"  [dim]Running autotune/{profile} inference…[/dim]", spinner="dots"):
-            tuned_result = asyncio.run(run_bench_ollama_only(
-                model_id=model,
-                messages=messages,
-                profile_name=profile,
-                tag=tuned_tag,
-                apply_hw_tuning=not no_hw_tuning,
-            ))
-        if tuned_result.error:
-            console.print(f"  [red]✗  autotune/{profile} failed:[/red] {tuned_result.error}")
-            raise SystemExit(1)
-        console.print(
-            f"  [green]✓[/green]  Done in {tuned_result.elapsed_sec:.1f}s — "
-            f"TTFT [cyan]{tuned_result.ttft_ms:.0f} ms[/cyan]  "
-            f"tok/s [cyan]{tuned_result.tokens_per_sec:.1f}[/cyan]  "
-            f"peak RAM [cyan]{tuned_result.ram_peak_gb:.2f} GB[/cyan]  "
-            f"CPU [cyan]{tuned_result.cpu_avg_pct:.0f}%[/cyan]"
-        )
-        if save:
-            save_result(tuned_result)
-            console.print(f"  [dim]Saved to DB as tag: {tuned_tag}[/dim]")
-
-        # ── Duel comparison table ────────────────────────────────────────
-        console.print()
-        console.print(Rule("[bold]Duel Results[/bold]", style="dim"))
-        console.print()
-
-        def _pct_change(raw_val: float, tuned_val: float, higher_better: bool) -> str:
-            if raw_val == 0:
-                return "[dim]—[/dim]"
-            pct = (tuned_val - raw_val) / abs(raw_val) * 100
-            improved = (pct > 1 and higher_better) or (pct < -1 and not higher_better)
-            degraded = (pct < -1 and higher_better) or (pct > 1 and not higher_better)
-            sign = "+" if pct >= 0 else ""
-            if improved:
-                return f"[bold green]{sign}{pct:.1f}%[/bold green]"
-            elif degraded:
-                return f"[bold red]{sign}{pct:.1f}%[/bold red]"
-            return f"[dim]{sign}{pct:.1f}%[/dim]"
-
-        t = Table(box=box.ROUNDED, show_header=True, header_style="bold", expand=False)
-        t.add_column("Metric",           style="bold", min_width=26)
-        t.add_column("Raw Ollama",        justify="right", style="yellow")
-        t.add_column(f"autotune/{profile}", justify="right", style="cyan")
-        t.add_column("Change",            justify="right")
-        t.add_column("Better?",           justify="center")
-
-        metrics_cfg = [
-            ("TTFT (ms)       ↓ lower=better",  raw_result.ttft_ms,       tuned_result.ttft_ms,       False, ".0f"),
-            ("Throughput (tok/s)  ↑ higher=better", raw_result.tokens_per_sec, tuned_result.tokens_per_sec, True, ".1f"),
-            ("Total time (s)",                  raw_result.elapsed_sec,   tuned_result.elapsed_sec,   False, ".2f"),
-            ("Peak RAM (GB)   ↓ lower=better",  raw_result.ram_peak_gb,   tuned_result.ram_peak_gb,   False, ".3f"),
-            ("RAM delta (GB)  ↓ lower=better",  raw_result.delta_ram_gb,  tuned_result.delta_ram_gb,  False, "+.3f"),
-            ("Swap peak (GB)  ↓ lower=better",  raw_result.swap_peak_gb,  tuned_result.swap_peak_gb,  False, ".3f"),
-            ("CPU avg (%)     ↓ lower=better",  raw_result.cpu_avg_pct,   tuned_result.cpu_avg_pct,   False, ".1f"),
-            ("num_ctx used",                    float(raw_result.num_ctx_used or 4096),
-                                                float(tuned_result.num_ctx_used or 0),               False, ".0f"),
-        ]
-
-        for label, rv, tv, hb, fmt in metrics_cfg:
-            if rv == 0 and tv == 0:
-                continue
-            rv_str = f"{rv:{fmt}}"
-            tv_str = f"{tv:{fmt}}" if tv != 0 else "—"
-            delta  = _pct_change(rv, tv, hb)
-            if rv == 0:
-                better = "[dim]—[/dim]"
-            else:
-                pct = (tv - rv) / abs(rv) * 100
-                improved = (pct > 1 and hb) or (pct < -1 and not hb)
-                degraded = (pct < -1 and hb) or (pct > 1 and not hb)
-                better = "[green]✓ better[/green]" if improved else "[red]✗ worse[/red]" if degraded else "[dim]≈ same[/dim]"
-            t.add_row(label, rv_str, tv_str, delta, better)
-
-        console.print(t)
-
-        # KV settings used by autotune
-        if tuned_result.num_ctx_used and tuned_result.num_keep_used is not None:
-            console.print(
-                f"\n[dim]autotune used: num_ctx={tuned_result.num_ctx_used:,}  "
-                f"num_keep={tuned_result.num_keep_used}  "
-                f"f16_kv={'yes' if tuned_result.f16_kv_used else 'no (Q8)'}[/dim]"
-            )
-        if save:
-            console.print(
-                f"\n[dim]Both runs saved. Compare later with:\n"
-                f"  autotune bench --compare {raw_tag},{tuned_tag}[/dim]"
-            )
-        return
-
-    # ── SINGLE MODE — run either raw or autotune ──────────────────────────
-    mode_label = "raw_ollama" if raw else profile
-    auto_tag = tag or f"{model.replace(':', '_').replace('/', '_')}_{mode_label}_{ts}"
-
-    console.print()
-    if raw:
-        console.print(
-            f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  "
-            f"profile=[red]RAW OLLAMA (no autotune)[/red]  tag=[dim]{auto_tag}[/dim]"
-        )
-        console.print(
-            "[dim]Running with Ollama factory defaults: num_ctx=4096, temp=0.8, "
-            "keep_alive=5m, no HW tuning, no prefix cache[/dim]"
-        )
-    else:
-        console.print(
-            f"[bold]autotune bench[/bold]  [cyan]{model}[/cyan]  "
-            f"profile=[yellow]{profile}[/yellow]  tag=[dim]{auto_tag}[/dim]"
-        )
-        console.print(
-            f"[dim]Running autotune/{profile}: dynamic num_ctx, prefix caching, keep_alive=-1, "
-            f"repeat_penalty, QoS tuning  ·  Prompt: ~{prompt_tokens_est} tokens  "
-            f"·  HW tuning: {'off (--no-hw-tuning)' if no_hw_tuning else 'on'}[/dim]"
-        )
-    console.print()
-
-    console.print(
-        f"[dim]RAM before: {vm_before.used/1024**3:.2f} GB / {vm_before.total/1024**3:.1f} GB  "
-        f"·  Swap: {sw_before.used/1024**3:.2f} GB[/dim]\n"
-    )
-    console.print("[dim]Running inference (measuring TTFT, tok/s, RAM, CPU every 250ms)…[/dim]")
-
-    with console.status("[bold cyan]Inference in progress…[/bold cyan]", spinner="dots"):
-        if raw:
-            result = asyncio.run(run_raw_ollama(
-                model_id=model,
-                messages=messages,
-                tag=auto_tag,
-            ))
-        else:
-            result = asyncio.run(run_bench_ollama_only(
-                model_id=model,
-                messages=messages,
-                profile_name=profile,
-                tag=auto_tag,
-                apply_hw_tuning=not no_hw_tuning,
-            ))
-
-    if result.error:
-        console.print(f"[red]Error:[/red] {result.error}")
         raise SystemExit(1)
 
-    # ── Single-run results table ─────────────────────────────────────────
-    from rich import box
-    from rich.panel import Panel
-    from rich.table import Table
+    _safe = selected.replace(":", "_").replace("/", "_")
+    out_path = _Path(output) if output else _Path(f"bench_quick_{_safe}.json")
+    eta = "~45s" if not speed else "~3 min"
+    speed_note = " · [bold]+speed[/bold] [dim](Q8 KV + 2048-ctx + 1024-batch stacked)[/dim]" if speed else ""
+    console.print(
+        f"\n[bold]autotune bench quick[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"{runs} run{'s' if runs != 1 else ''}/condition  ·  profile={profile}"
+        + speed_note
+    )
+    console.print(f"[dim]Timings from Ollama's Go nanosecond timers — not estimated.  ETA: {eta}[/dim]\n")
 
-    console.print(f"[bold green]✓ Done[/bold green]  {result.elapsed_sec:.1f}s total\n")
+    def _step(msg: str) -> None:
+        console.print(f"  [dim]{msg}[/dim]")
 
-    t = Table(box=box.ROUNDED, show_header=True, header_style="bold")
-    t.add_column("Metric", style="bold")
-    t.add_column("Value", justify="right")
+    try:
+        result = _asyncio.run(
+            run_quick_proof(
+                model_id=selected,
+                profile_name=profile,
+                n_runs=runs,
+                output_path=out_path,
+                on_step=_step,
+                speed=speed,
+            )
+        )
+    except RuntimeError as exc:
+        console.print(f"\n[red]✗ {exc}[/red]\n")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/dim]\n")
+        raise SystemExit(0)
 
-    t.add_row("Model", result.model_id)
-    t.add_row("Profile", result.profile_name)
-    t.add_row("num_ctx (KV window)", f"{result.num_ctx_used:,} tokens")
-    t.add_row("Prompt tokens (est)", f"{result.prompt_tokens:,}")
-    t.add_row("Completion tokens", f"{result.completion_tokens:,}")
-    t.add_section()
-    t.add_row("[yellow]TTFT[/yellow]",            f"[yellow]{result.ttft_ms:.0f} ms[/yellow]")
-    t.add_row("[yellow]Throughput[/yellow]",       f"[yellow]{result.tokens_per_sec:.1f} tok/s[/yellow]")
-    t.add_row("[yellow]Total time[/yellow]",       f"[yellow]{result.elapsed_sec:.2f} s[/yellow]")
-    t.add_section()
+    print_proof_result(result, console, output_path=out_path)
 
-    ram_color = "green" if result.ram_peak_gb < 12 else ("yellow" if result.ram_peak_gb < 14 else "red")
-    swap_color = "green" if result.swap_peak_gb < 1 else ("yellow" if result.swap_peak_gb < 3 else "red")
 
-    t.add_row("RAM before",  f"{result.ram_before_gb:.3f} GB")
-    t.add_row("RAM peak",    f"[{ram_color}]{result.ram_peak_gb:.3f} GB[/{ram_color}]")
-    t.add_row("RAM after",   f"{result.ram_after_gb:.3f} GB")
-    t.add_row("RAM delta",   (f"[red]+{result.delta_ram_gb:.3f} GB[/red]"
-                              if result.delta_ram_gb > 0.1 else
-                              f"[green]{result.delta_ram_gb:+.3f} GB[/green]"))
-    t.add_section()
-    t.add_row("Swap before", f"{result.swap_before_gb:.3f} GB")
-    t.add_row("Swap peak",   f"[{swap_color}]{result.swap_peak_gb:.3f} GB[/{swap_color}]")
-    t.add_row("Swap after",  f"{result.swap_after_gb:.3f} GB")
-    t.add_row("Swap delta",  (f"[red]+{result.delta_swap_gb:.3f} GB[/red]"
-                              if result.delta_swap_gb > 0.05 else
-                              f"[green]{result.delta_swap_gb:+.3f} GB[/green]"))
-    t.add_section()
-    t.add_row("CPU avg",     f"{result.cpu_avg_pct:.1f}%")
-    t.add_row("CPU peak",    f"{result.cpu_peak_pct:.1f}%")
+# ── bench duel ───────────────────────────────────────────────────────────────
 
-    console.print(t)
+@bench_group.command("duel")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to test. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile for the 'optimized' condition.",
+)
+@click.option("--runs", "-r", type=int, default=2, show_default=True,
+              help="Runs per prompt per condition. 2 is fast; 3+ gives tighter statistics.")
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save JSON results to this path.")
+def bench_duel(model: Optional[str], profile: str, runs: int, output: Optional[str]) -> None:
+    """~20-min 1-vs-1 comparison: raw Ollama vs autotune on 5 prompts.
 
-    # Show first 600 chars of response
+    Runs the same 5 curated prompts through raw Ollama defaults and autotune,
+    then reports per-prompt and aggregate TTFT, tok/s, RAM, and swap metrics.
+    All results saved to the local DB with tags for later comparison.
+
+    \b
+    Prompts cover 5 domains: factual Q&A, code generation, math reasoning,
+    analysis, and long-context retrieval — so the results represent real use.
+
+    \b
+    Examples:
+      autotune bench duel                        # auto-select model, 2 runs
+      autotune bench duel -m qwen3:8b            # specific model
+      autotune bench duel -m qwen3:8b -r 3      # 3 runs/prompt (tighter stats)
+    """
+    import asyncio as _asyncio
+
+    from autotune.bench.compare import CompareReport, print_report, run_comparison
+
+    selected = _bench_autoselect(model)
+    if not selected:
+        console.print(
+            "[red]No Ollama models installed.[/red]\n"
+            "Pull a model first: [bold]autotune pull qwen3:8b[/bold]"
+        )
+        raise SystemExit(1)
+
+    n_prompts = 5
+    eta_min = n_prompts * runs * 2 * 15 // 60 + 1   # rough 15s per run
+    console.print(
+        f"\n[bold]autotune bench duel[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"profile={profile}  ·  {runs} run{'s' if runs != 1 else ''}/prompt  ·  "
+        f"ETA ~{eta_min} min\n"
+    )
+
+    try:
+        report: CompareReport = _asyncio.run(
+            run_comparison(
+                model_id=selected,
+                n_runs=runs,
+                profile_name=profile,
+                console=console,
+                save_db=True,
+            )
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/dim]\n")
+        raise SystemExit(0)
+    except Exception as exc:
+        console.print(f"\n[red]Duel benchmark failed: {exc}[/red]\n")
+        raise SystemExit(1)
+
+    print_report(report, console)
+
+    if output:
+        import json as _json
+        from pathlib import Path as _Path
+        try:
+            from autotune.bench.compare import export_json
+            export_json(report, _Path(output))
+            console.print(f"[dim]Results saved to {output}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Could not save JSON: {exc}[/yellow]")
+
+
+# ── bench suite ──────────────────────────────────────────────────────────────
+
+@bench_group.command("suite")
+@click.option(
+    "--models", "-m", multiple=True, metavar="MODEL",
+    help=(
+        "Ollama model IDs to benchmark (repeat for multiple: -m llama3.2:3b -m qwen3:8b). "
+        "Defaults to the first installed model."
+    ),
+)
+@click.option("--runs", "-n", type=int, default=3, show_default=True,
+              help="Inference runs per condition per prompt. Minimum 3 for statistical tests.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to benchmark against raw Ollama.",
+)
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save JSON results to this path.")
+def bench_suite(models: tuple, runs: int, profile: str, output: Optional[str]) -> None:
+    """~45-min full 11-KPI statistical benchmark with Wilcoxon and Cohen's d.
+
+    Runs the complete proof suite: 11 KPIs across 5 prompts × N runs,
+    with Wilcoxon signed-rank p-values and Cohen's d effect sizes.
+
+    \b
+    KPIs measured: TTFT, tok/s, RAM reserved, RAM freed, peak RAM,
+    swap events, KV bytes saved, prefix cache reuse, CPU load, context
+    efficiency, and an overall improvement score.
+
+    \b
+    Examples:
+      autotune bench suite                          # auto-select model
+      autotune bench suite -m qwen3:8b              # specific model
+      autotune bench suite -m qwen3:8b -n 5         # 5 runs (tighter p-values)
+      autotune bench suite -m llama3.2:3b -m qwen3:8b  # compare two models
+    """
+    import argparse as _argparse
+    import asyncio as _asyncio
+    import sys as _sys
+
+    from autotune.bench.proof_suite import main as _ps_main
+
+    model_list = list(models) if models else None
+    if not model_list:
+        sel = _bench_autoselect(None)
+        if not sel:
+            console.print(
+                "[red]No Ollama models installed.[/red]\n"
+                "Pull a model first: [bold]autotune pull qwen3:8b[/bold]"
+            )
+            raise SystemExit(1)
+        model_list = [sel]
+
+    # proof_suite.main() reads from sys.argv via argparse — patch argv before calling
+    _argv = ["proof_suite"]
+    if model_list:
+        _argv += ["--models"] + model_list
+    _argv += ["--runs", str(runs), "--profile", profile]
+    if output:
+        _argv += ["--output", output]
+    _sys.argv = _argv
+    try:
+        _ps_main()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/dim]\n")
+        raise SystemExit(0)
+
+
+# ── bench agent ──────────────────────────────────────────────────────────────
+
+@bench_group.command("agent")
+@click.option("--models", "-m", multiple=True, metavar="MODEL",
+              help="Ollama model IDs to benchmark. Repeat for multiple. Auto-selects if omitted.")
+@click.option("--trials", "-t", type=int, default=2, show_default=True,
+              help="Trials per condition per task. 2 is fast (~10 min); 5 for full stats.")
+@click.option("--tasks", default="", metavar="TASK_IDS",
+              help="Comma-separated task IDs: code_debugger,research_synth,step_planner,"
+                   "adversarial_context,extended_session. Default: code_debugger,extended_session.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to benchmark against raw Ollama.",
+)
+@click.option("--full", is_flag=True,
+              help="Full mode: all 5 tasks × 5 trials (~60-120 min).")
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save full results JSON to this path.")
+def bench_agent(
+    models: tuple,
+    trials: int,
+    tasks: str,
+    profile: str,
+    full: bool,
+    output: Optional[str],
+) -> None:
+    """~10-min multi-turn agentic workload benchmark.
+
+    Runs realistic tool-calling agent tasks through raw Ollama and autotune,
+    capturing per-turn TTFT and RAM at every step.
+
+    \b
+    The key insight: raw Ollama TTFT grows linearly with context because
+    Ollama always allocates a 4096-token KV buffer (filled on every prefill).
+    autotune keeps TTFT flat — dynamic num_ctx + Q8 KV + prefix caching.
+    This matters critically for long agent sessions.
+
+    \b
+    Tasks available:
+      code_debugger       — multi-file tool calls; context grows with code/errors
+      research_synth      — 5-doc corpus; each read adds ~400 tokens to context
+      step_planner        — many short tool calls; tests KV prefix reuse
+      adversarial_context — large irrelevant tool output injected; tests trimmer
+      extended_session    — 18-turn goal; raw Ollama reloads mid-task
+
+    \b
+    Examples:
+      autotune bench agent                          # ~10 min (2 tasks, auto model)
+      autotune bench agent -m qwen3:8b              # specific model
+      autotune bench agent --full                   # all 5 tasks, 5 trials (~60-120 min)
+      autotune bench agent --tasks code_debugger    # single task
+    """
+    import argparse as _argparse
+    import asyncio as _asyncio
+
+    from autotune.bench import agent_bench as _ab
+
+    model_list = list(models) if models else None
+    if not model_list:
+        sel = _bench_autoselect(None)
+        if sel:
+            model_list = [sel]
+
+    ns = _argparse.Namespace(
+        models=model_list,
+        trials=trials,
+        tasks=tasks,
+        profile=profile,
+        quick=False,
+        full=full,
+        output=output,
+    )
+    try:
+        rc = _asyncio.run(_ab._async_main(ns))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/dim]\n")
+        rc = 0
+    raise SystemExit(rc)
+
+
+# ── bench ux ─────────────────────────────────────────────────────────────────
+
+@bench_group.command("ux")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile.",
+)
+@click.option("--runs", "-r", type=int, default=3, show_default=True,
+              help="Runs per scenario per condition.")
+@click.option("--quick", "-q", "quick_mode", is_flag=True,
+              help="Quick mode: 2 scenarios instead of 4 (~10-15 min).")
+@click.option("--output", "-o", default=None, metavar="DIR",
+              help="Directory for result JSON files (default: current directory).")
+def bench_ux(model: Optional[str], profile: str, runs: int, quick_mode: bool, output: Optional[str]) -> None:
+    """~30-min user-experience benchmark — what users actually feel.
+
+    Measures how autotune affects the everyday experience of running a local
+    LLM: does Chrome slow down? Do fans spin? Does RAM come back after each
+    call? Tested across realistic laptop scenarios.
+
+    \b
+    The 7 UX KPIs:
+      swap_events          — "My machine never choked" (goal: 0)
+      ram_headroom_gb      — "Chrome/Slack/VS Code still had memory"
+      ttft_ms              — "Responses felt fast"
+      ttft_consistency_pct — "Response times were predictable"
+      cpu_spike_events     — "Fans didn't spin up"
+      memory_recovery_sec  — "RAM came back after each call"
+      background_impact    — Composite 0-100 score
+
+    \b
+    Examples:
+      autotune bench ux                       # auto-select model
+      autotune bench ux -m qwen3:8b           # specific model
+      autotune bench ux -m qwen3:8b -q        # quick mode (~10-15 min)
+    """
+    import argparse as _argparse
+    import asyncio as _asyncio
+
+    from autotune.bench.user_bench import main as _ub_main
+
+    selected = _bench_autoselect(model)
+    if not selected:
+        console.print(
+            "[red]No Ollama models installed.[/red]\n"
+            "Pull a model first: [bold]autotune pull qwen3:8b[/bold]"
+        )
+        raise SystemExit(1)
+
+    ns = _argparse.Namespace(
+        model=selected,
+        profile=profile,
+        runs=runs,
+        quick=quick_mode,
+        all_models=False,
+        background=False,
+        output_dir=output or ".",
+    )
+    try:
+        _asyncio.run(_ub_main(ns))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/dim]\n")
+        raise SystemExit(0)
+
+
+# ── bench os ─────────────────────────────────────────────────────────────────
+
+@bench_group.command("os")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to use for the 'optimized' condition.",
+)
+@click.option("--runs", "-r", type=int, default=5, show_default=True,
+              help="Inference runs per condition per test (minimum 3 for stable means).")
+def bench_os(model: Optional[str], profile: str, runs: int) -> None:
+    """~15-min OS-level optimization isolation test.
+
+    Runs 5 A/B tests to isolate exactly how much each individual OS-level
+    optimization contributes to TTFT and tok/s.
+
+    \b
+    The 5 tests:
+      1. Python GC suspend during inference
+      2. macOS QOS_CLASS_USER_INTERACTIVE thread scheduling
+      3. Flash attention (Ollama flash_attn flag)
+      4. keep_alive=-1 (warm model) vs 0 expiry (cold reload)
+      5. Dynamic num_ctx (autotune) vs fixed 4096 (Ollama default)
+
+    \b
+    Examples:
+      autotune bench os                         # auto-select model, 5 runs each
+      autotune bench os -m qwen3:8b             # specific model
+      autotune bench os -m llama3.2:3b -r 3    # quicker (3 runs per test)
+    """
+    import asyncio as _asyncio
+
+    from autotune.bench.bench_cmd import _autoselect_model, print_os_bench_results, run_os_bench
+
+    selected = _bench_autoselect(model)
+    if not selected:
+        console.print("[red]No Ollama model found. Pull one: [bold]ollama pull llama3.2:3b[/bold][/red]")
+        raise SystemExit(1)
+
+    console.print(
+        f"\n[bold]autotune bench os[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"profile={profile}  ·  {runs} runs/condition\n"
+    )
+    results = _asyncio.run(run_os_bench(selected, profile_name=profile, runs=runs, console=console))
+    print_os_bench_results(results, console=console)
+
+
+# ── bench server ─────────────────────────────────────────────────────────────
+
+@bench_group.command("server")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile for the 'optimized' condition.",
+)
+@click.option("--runs", "-r", type=int, default=10, show_default=True,
+              help="Serial inference runs for P50/P95/P99 latency distribution.")
+@click.option("--concurrency", "-c", default="1,2,4", show_default=True, metavar="LEVELS",
+              help="Comma-separated concurrency levels (e.g. 1,2,4,8).")
+@click.option("--output", "-o", default=None, metavar="PATH",
+              help="Save JSON results to this path.")
+def bench_server(
+    model: Optional[str],
+    profile: str,
+    runs: int,
+    concurrency: str,
+    output: Optional[str],
+) -> None:
+    """~20-min cloud/server throughput benchmark.
+
+    Measures raw Ollama vs autotune under real concurrent load: serial
+    P50/P95/P99 TTFT, requests-per-second at multiple concurrency levels,
+    peak RAM, swap events, and a cost-per-million-tokens estimate.
+
+    \b
+    The cloud/server value proposition for autotune:
+      Dynamic num_ctx  — each request allocates only the KV RAM it needs,
+                         not a fixed 4096-token block. More concurrent slots
+                         fit in the same GPU/unified memory budget.
+      Q8 KV cache      — halves KV memory bandwidth on prefill → faster TTFT
+                         at scale, directly reducing cost per request.
+      Prefix caching   — shared system prompt KV across users = fewer GPU
+                         cycles per request = lower cost per million tokens.
+
+    \b
+    Examples:
+      autotune bench server                              # auto-select, c=1,2,4
+      autotune bench server -m qwen3:8b                  # specific model
+      autotune bench server -m llama3.2:3b -c 1,2,4,8   # higher concurrency
+      autotune bench server -m qwen3:8b -r 20            # tighter P99 (20 runs)
+      autotune bench server -m qwen3:8b --output srv.json
+    """
+    import asyncio as _asyncio
+    import json as _json
+    from pathlib import Path as _Path
+
+    from autotune.bench.bench_cmd import print_server_bench_results, run_server_bench
+
+    selected = _bench_autoselect(model)
+    if not selected:
+        console.print("[red]No Ollama model found. Pull one: [bold]ollama pull llama3.2:3b[/bold][/red]")
+        raise SystemExit(1)
+
+    try:
+        c_levels = [int(x.strip()) for x in concurrency.split(",") if x.strip()]
+    except ValueError:
+        console.print(f"[red]Invalid --concurrency: {concurrency!r}. Use comma-separated ints, e.g. 1,2,4[/red]")
+        raise SystemExit(1)
+    if not c_levels:
+        c_levels = [1, 2, 4]
+
+    console.print(
+        f"\n[bold]autotune bench server[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"profile={profile}  ·  {runs} serial runs  ·  concurrency={c_levels}\n"
+    )
+    raw, tuned = _asyncio.run(
+        run_server_bench(
+            selected,
+            profile_name=profile,
+            concurrency_levels=c_levels,
+            serial_runs=runs,
+            console=console,
+        )
+    )
+    print_server_bench_results(raw, tuned, console=console)
+
+    if output:
+        try:
+            from dataclasses import asdict
+            data = {
+                "model": selected, "profile": profile,
+                "raw": asdict(raw), "tuned": asdict(tuned),
+            }
+            _Path(output).write_text(_json.dumps(data, indent=2, default=str))
+            console.print(f"[dim]Results saved to {output}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Could not save JSON: {exc}[/yellow]")
+
+
+# ── bench all ────────────────────────────────────────────────────────────────
+
+@bench_group.command("all")
+@click.option("--model", "-m", default=None, metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to benchmark against raw Ollama.",
+)
+@click.option("--quick", "-q", "quick_mode", is_flag=True,
+              help="Quick mode: fewer runs per benchmark (~20 min total instead of ~45 min).")
+@click.option("--output", "-o", default=None, metavar="DIR",
+              help="Directory to save per-benchmark JSON results.")
+def bench_all(model: Optional[str], profile: str, quick_mode: bool, output: Optional[str]) -> None:
+    """~45-min combined benchmark — runs quick + duel + ux and prints a summary.
+
+    The most comprehensive single-command proof that autotune is better.
+    Runs three complementary benchmarks and summarises the improvements:
+    \b
+      1. quick  — raw performance proof (60 sec)
+      2. duel   — 5-prompt 1-vs-1 comparison (~20 min)
+      3. ux     — user-experience impact (~20 min)
+
+    Use --quick to cut total time to ~20 min with reduced run counts.
+
+    \b
+    Examples:
+      autotune bench all                    # auto-select model, full runs
+      autotune bench all -m qwen3:8b        # specific model
+      autotune bench all -m qwen3:8b -q    # quick mode (~20 min)
+    """
+    import argparse as _argparse
+    import asyncio as _asyncio
+    import os as _os
+    from pathlib import Path as _Path
+
+    from rich.panel import Panel as _Panel
+    from rich.rule import Rule as _Rule
+
+    from autotune.bench.compare import print_report, run_comparison
+    from autotune.bench.quick_proof import print_proof_result, run_quick_proof
+
+    selected = _bench_autoselect(model)
+    if not selected:
+        console.print(
+            "[red]No Ollama models installed.[/red]\n"
+            "Pull a model first: [bold]autotune pull qwen3:8b[/bold]"
+        )
+        raise SystemExit(1)
+
+    out_dir = _Path(output) if output else _Path(".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    runs_quick = 2
+    runs_duel  = 1 if quick_mode else 2
+    runs_ux    = 1 if quick_mode else 3
+    eta = "~20 min" if quick_mode else "~45 min"
+
     console.print()
-    preview = result.response_text[:800].strip()
-    if len(result.response_text) > 800:
-        preview += f"\n[dim]... ({result.completion_tokens} tokens total)[/dim]"
-    console.print(Panel(
-        preview,
-        title=f"[bold]Model response[/bold]  [dim](tag: {auto_tag})[/dim]",
-        border_style="dim",
+    console.print(_Panel(
+        f"[bold]autotune bench all[/bold]  ·  [cyan]{selected}[/cyan]  ·  profile={profile}\n"
+        f"[dim]Running: quick + duel + ux  ·  ETA {eta}[/dim]",
+        border_style="cyan",
     ))
+    console.print()
 
-    if save:
-        row_id = save_result(result)
-        console.print(f"\n[dim]✓ Saved to DB as run #{row_id}  (tag: {auto_tag})[/dim]")
-    else:
-        console.print("\n[dim]Not saved (--no-save)[/dim]")
+    # ── Phase 1: quick proof ────────────────────────────────────────────────
+    console.print(_Rule("[bold]Phase 1 of 3  —  bench quick[/bold]", style="cyan"))
+    console.print()
+    quick_result = None
+    try:
+        safe = selected.replace(":", "_").replace("/", "_")
+        quick_out = out_dir / f"bench_quick_{safe}.json"
+        quick_result = _asyncio.run(
+            run_quick_proof(
+                model_id=selected,
+                profile_name=profile,
+                n_runs=runs_quick,
+                output_path=quick_out,
+                on_step=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+                speed=False,
+            )
+        )
+        print_proof_result(quick_result, console, output_path=quick_out)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted during quick phase.[/dim]")
+        raise SystemExit(0)
+    except Exception as exc:
+        console.print(f"[yellow]Quick phase failed: {exc}[/yellow]")
+
+    console.print()
+
+    # ── Phase 2: duel ───────────────────────────────────────────────────────
+    console.print(_Rule("[bold]Phase 2 of 3  —  bench duel[/bold]", style="cyan"))
+    console.print()
+    duel_report = None
+    try:
+        duel_report = _asyncio.run(
+            run_comparison(
+                model_id=selected,
+                n_runs=runs_duel,
+                profile_name=profile,
+                console=console,
+                save_db=True,
+            )
+        )
+        print_report(duel_report, console)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted during duel phase.[/dim]")
+        raise SystemExit(0)
+    except Exception as exc:
+        console.print(f"[yellow]Duel phase failed: {exc}[/yellow]")
+
+    console.print()
+
+    # ── Phase 3: ux ─────────────────────────────────────────────────────────
+    console.print(_Rule("[bold]Phase 3 of 3  —  bench ux[/bold]", style="cyan"))
+    console.print()
+    try:
+        from autotune.bench.user_bench import main as _ub_main
+        ux_ns = _argparse.Namespace(
+            model=selected,
+            profile=profile,
+            runs=runs_ux,
+            quick=quick_mode,
+            all_models=False,
+            background=False,
+            output_dir=str(out_dir),
+        )
+        _asyncio.run(_ub_main(ux_ns))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted during ux phase.[/dim]")
+        raise SystemExit(0)
+    except Exception as exc:
+        console.print(f"[yellow]UX phase failed: {exc}[/yellow]")
+
+    console.print()
+
+    # ── Combined summary ─────────────────────────────────────────────────────
+    console.print(_Rule("[bold]Combined Summary[/bold]", style="bold cyan"))
+    console.print()
+
+    summary_lines: list[str] = [
+        f"[bold]Model:[/bold]   [cyan]{selected}[/cyan]",
+        f"[bold]Profile:[/bold] {profile}",
+        "",
+    ]
+
+    # Pull headline numbers from quick_result if available
+    if quick_result is not None:
+        try:
+            t1 = quick_result.test1
+            if t1 and t1.raw_kv_mb > 0:
+                kv_saved_pct = (t1.raw_kv_mb - t1.tuned_kv_mb) / t1.raw_kv_mb * 100
+                summary_lines.append(
+                    f"[green]✓[/green] RAM freed per request: [bold]{kv_saved_pct:.0f}%[/bold] less KV cache"
+                )
+            t2 = quick_result.test2
+            if t2 and t2.raw_ttft_ms > 0 and t2.tuned_ttft_ms > 0:
+                ttft_pct = (t2.raw_ttft_ms - t2.tuned_ttft_ms) / t2.raw_ttft_ms * 100
+                if ttft_pct > 2:
+                    summary_lines.append(
+                        f"[green]✓[/green] TTFT improvement:    [bold]{ttft_pct:.0f}%[/bold] faster first token"
+                    )
+        except Exception:
+            pass
+
+    # Pull headline numbers from duel_report if available
+    if duel_report is not None:
+        try:
+            _comps = duel_report.comparisons
+            if _comps:
+                _raw_ttft  = sum(c.raw.mean_ttft_ms  for c in _comps) / len(_comps)
+                _tuned_ttft = sum(c.tuned.mean_ttft_ms for c in _comps) / len(_comps)
+                _raw_tps   = sum(c.raw.mean_tps       for c in _comps) / len(_comps)
+                _tuned_tps  = sum(c.tuned.mean_tps    for c in _comps) / len(_comps)
+                ttft_improvement_pct = (
+                    (_raw_ttft - _tuned_ttft) / _raw_ttft * 100 if _raw_ttft > 0 else 0.0
+                )
+                tps_improvement_pct = (
+                    (_tuned_tps - _raw_tps) / _raw_tps * 100 if _raw_tps > 0 else 0.0
+                )
+                if abs(ttft_improvement_pct) > 1:
+                    sign = "faster" if ttft_improvement_pct > 0 else "slower"
+                    color = "green" if ttft_improvement_pct > 0 else "red"
+                    summary_lines.append(
+                        f"[{color}]{'✓' if ttft_improvement_pct > 0 else '✗'}[/{color}] "
+                        f"TTFT (5-prompt avg): [bold]{abs(ttft_improvement_pct):.0f}%[/bold] {sign}"
+                    )
+                if abs(tps_improvement_pct) > 1:
+                    sign = "higher" if tps_improvement_pct > 0 else "lower"
+                    color = "green" if tps_improvement_pct > 0 else "red"
+                    summary_lines.append(
+                        f"[{color}]{'✓' if tps_improvement_pct > 0 else '✗'}[/{color}] "
+                        f"Throughput:         [bold]{abs(tps_improvement_pct):.0f}%[/bold] {sign}"
+                    )
+        except Exception:
+            pass
+
+    if len(summary_lines) <= 3:
+        summary_lines.append("[dim]See individual phase results above for details.[/dim]")
+
+    summary_lines.extend([
+        "",
+        "[dim]Run individual subcommands for deeper analysis:[/dim]",
+        "[dim]  autotune bench suite    — full statistical proof (Wilcoxon, Cohen's d)[/dim]",
+        "[dim]  autotune bench agent    — multi-turn agentic TTFT growth proof[/dim]",
+        "[dim]  autotune bench server   — cloud/server cost-per-million-tokens[/dim]",
+        "[dim]  autotune bench os       — isolate each optimization's contribution[/dim]",
+    ])
+
+    console.print(_Panel(
+        "\n".join(summary_lines),
+        title="[bold]autotune bench all — Results[/bold]",
+        border_style="green",
+    ))
+    console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -3826,115 +4201,6 @@ def agent_bench(
 
     rc = _asyncio.run(_ab._async_main(ns))
     raise SystemExit(rc)
-
-
-# ---------------------------------------------------------------------------
-# `autotune bench-os`  — OS-level optimization isolation benchmark
-# ---------------------------------------------------------------------------
-
-@cli.command("bench-os")
-@click.option("--model", "-m", default="", metavar="MODEL",
-              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
-@click.option(
-    "--profile", "-p",
-    type=click.Choice(["fast", "balanced", "quality"]),
-    default="balanced", show_default=True,
-    help="autotune profile to use for the 'optimized' condition.",
-)
-@click.option("--runs", "-r", type=int, default=5, show_default=True,
-              help="Inference runs per condition per test.")
-def bench_os(model: str, profile: str, runs: int) -> None:
-    """Measure the isolated contribution of each OS-level optimization.
-
-    Runs 5 A/B tests to isolate exactly how much each autotune optimization
-    contributes to TTFT and tok/s: GC suspend, macOS QOS thread priority,
-    flash attention, keep_alive warm vs cold reload, and dynamic num_ctx.
-
-    \b
-    Examples:
-      autotune bench-os                         # auto-select model, 5 runs each
-      autotune bench-os -m qwen3:8b             # specific model
-      autotune bench-os -m llama3.2:3b -r 3    # quicker (3 runs per test)
-    """
-    import asyncio
-
-    from autotune.bench.bench_cmd import _autoselect_model, print_os_bench_results, run_os_bench
-
-    selected = _autoselect_model(model or None)
-    if not selected:
-        console.print("[red]No Ollama model found. Pull one with: ollama pull llama3.2:3b[/red]")
-        raise SystemExit(1)
-
-    console.print(
-        f"\n[bold]autotune bench-os[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
-        f"profile=[cyan]{profile}[/cyan]  ·  {runs} runs/condition\n"
-    )
-    results = asyncio.run(run_os_bench(selected, profile_name=profile, runs=runs, console=console))
-    print_os_bench_results(results, console=console)
-
-
-# ---------------------------------------------------------------------------
-# `autotune bench-server`  — Server/cloud throughput benchmark
-# ---------------------------------------------------------------------------
-
-@cli.command("bench-server")
-@click.option("--model", "-m", default="", metavar="MODEL",
-              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
-@click.option(
-    "--profile", "-p",
-    type=click.Choice(["fast", "balanced", "quality"]),
-    default="balanced", show_default=True,
-    help="autotune profile for the 'optimized' condition.",
-)
-@click.option("--runs", "-r", type=int, default=10, show_default=True,
-              help="Serial inference runs for P50/P95/P99 latency distribution.")
-@click.option("--concurrency", "-c", default="1,2,4", show_default=True, metavar="LEVELS",
-              help="Comma-separated concurrency levels to test (e.g. 1,2,4,8).")
-def bench_server(model: str, profile: str, runs: int, concurrency: str) -> None:
-    """Measure server/cloud throughput: raw Ollama vs autotune.
-
-    Runs serial P50/P95/P99 TTFT measurements and concurrent throughput tests
-    at multiple concurrency levels. Shows RPS, latency distributions, peak RAM,
-    and a cost-per-million-tokens estimate.
-
-    \b
-    Examples:
-      autotune bench-server                            # auto-select, concurrency 1/2/4
-      autotune bench-server -m qwen3:8b                # specific model
-      autotune bench-server -m llama3.2:3b -c 1,2,4,8 # higher concurrency tiers
-      autotune bench-server -m qwen3:8b -r 20          # more serial runs (tighter P99)
-    """
-    import asyncio
-
-    from autotune.bench.bench_cmd import (
-        _autoselect_model,
-        print_server_bench_results,
-        run_server_bench,
-    )
-
-    selected = _autoselect_model(model or None)
-    if not selected:
-        console.print("[red]No Ollama model found. Pull one with: ollama pull llama3.2:3b[/red]")
-        raise SystemExit(1)
-
-    try:
-        c_levels = [int(x.strip()) for x in concurrency.split(",") if x.strip()]
-    except ValueError:
-        console.print(f"[red]Invalid --concurrency value: {concurrency!r}. Use comma-separated ints, e.g. 1,2,4[/red]")
-        raise SystemExit(1)
-
-    console.print(
-        f"\n[bold]autotune bench-server[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
-        f"profile=[cyan]{profile}[/cyan]  ·  {runs} serial runs  ·  "
-        f"concurrency={c_levels}\n"
-    )
-    raw, tuned = asyncio.run(
-        run_server_bench(selected, profile_name=profile,
-                         concurrency_levels=c_levels, serial_runs=runs,
-                         console=console)
-    )
-    print_server_bench_results(raw, tuned, console=console)
-
 
 # ---------------------------------------------------------------------------
 # `autotune user-bench`  — Real-world user experience benchmark
