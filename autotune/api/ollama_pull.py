@@ -138,19 +138,93 @@ def is_ollama_running() -> bool:
         return False
 
 
-def ensure_ollama_running(console: Optional[Console] = None) -> bool:
-    """Start Ollama in the background if not running. Returns True when ready."""
+def _install_ollama(con: Console) -> bool:
+    """Attempt to install Ollama for the current platform. Returns True on success."""
+    import platform as _platform
+    os_name = _platform.system()
+
+    if os_name == "Darwin":
+        # macOS — prefer Homebrew if available, otherwise guide to the app
+        if shutil.which("brew"):
+            con.print("[dim]Installing Ollama via Homebrew…[/dim]")
+            try:
+                result = subprocess.run(
+                    ["brew", "install", "ollama"],
+                    check=True,
+                    capture_output=False,
+                )
+                return result.returncode == 0
+            except Exception as exc:
+                con.print(f"[red]brew install failed:[/red] {exc}")
+                return False
+        else:
+            con.print(
+                "[yellow]Homebrew not found.[/yellow] "
+                "Download the Ollama macOS app from [bold cyan]https://ollama.ai/download[/bold cyan] "
+                "and re-run autotune."
+            )
+            return False
+
+    elif os_name == "Linux":
+        con.print("[dim]Installing Ollama via official install script…[/dim]")
+        try:
+            result = subprocess.run(
+                "curl -fsSL https://ollama.com/install.sh | sh",
+                shell=True,
+                check=True,
+            )
+            return result.returncode == 0
+        except Exception as exc:
+            con.print(f"[red]Install script failed:[/red] {exc}")
+            return False
+
+    else:
+        con.print(
+            "[yellow]Automatic install is not supported on Windows.[/yellow] "
+            "Download Ollama from [bold cyan]https://ollama.ai/download[/bold cyan] "
+            "and re-run autotune."
+        )
+        return False
+
+
+def ensure_ollama_running(console: Optional[Console] = None, prompt_install: bool = True) -> bool:
+    """Start Ollama in the background if not running. Returns True when ready.
+
+    If Ollama is not installed and ``prompt_install`` is True, offers a y/n
+    prompt to install it automatically for the current platform.
+    """
     if is_ollama_running():
         return True
 
     con = console or Console()
 
     if not shutil.which("ollama"):
-        con.print(
-            "[red]Ollama is not installed.[/red] "
-            "Download it from [bold]https://ollama.ai[/bold] and re-run."
-        )
-        return False
+        if prompt_install:
+            con.print(
+                "\n[yellow]Ollama is not installed.[/yellow]  "
+                "autotune needs Ollama to run local models.\n"
+            )
+            try:
+                answer = input("  Install Ollama now? [y/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer in ("y", "yes"):
+                if _install_ollama(con):
+                    con.print("[green]✓[/green]  Ollama installed.")
+                    # Fall through to start it
+                else:
+                    return False
+            else:
+                con.print(
+                    "  Install manually: [bold cyan]https://ollama.ai/download[/bold cyan]"
+                )
+                return False
+        else:
+            con.print(
+                "[red]Ollama is not installed.[/red] "
+                "Download it from [bold]https://ollama.ai[/bold] and re-run."
+            )
+            return False
 
     con.print("[dim]Ollama is not running — starting it in the background…[/dim]")
     try:

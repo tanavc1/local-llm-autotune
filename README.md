@@ -12,8 +12,9 @@
 autotune is a middleware layer that makes your local LLMs noticeably faster and lighter — without changing your code or workflow. It computes the exact KV cache each request needs, pins your system prompt in memory, and manages context windows automatically.
 
 ```bash
-pip install llm-autotune
-autotune chat --model qwen3:8b   # that's it
+pip install llm-autotune          # macOS / Windows
+pipx install llm-autotune         # Linux (recommended — see install notes below)
+autotune chat --model qwen3:8b    # that's it
 ```
 
 Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of the box.
@@ -86,11 +87,36 @@ Not sure which model to use? Run `autotune recommend` after installing and it wi
 
 ### 2. Install autotune
 
+**macOS / Windows**
 ```bash
 pip install llm-autotune
 ```
 
-**Requirements:** Python 3.10+, Ollama running locally.
+**Linux**
+
+Modern Linux distros (Ubuntu 23.04+, Debian 12+, Fedora 38+) block `pip install` to the system Python by default (PEP 668). Use `pipx` — it's the correct tool for CLI apps and keeps autotune isolated from your system packages:
+
+```bash
+# 1. Install pipx if you don't have it
+sudo apt install pipx          # Debian / Ubuntu
+sudo dnf install pipx          # Fedora
+# or without sudo: pip install --user pipx
+
+# 2. Install autotune
+pipx install llm-autotune
+
+# 3. Add ~/.local/bin to PATH (only needed once)
+pipx ensurepath
+
+# 4. Reload your shell — no need to open a new terminal
+exec $SHELL
+```
+
+> **"`autotune: command not found`" right after installing?** This means `~/.local/bin` wasn't in your PATH before. Steps 3 and 4 above fix it — `exec $SHELL` reloads your shell in place without opening a new window.
+
+> If you'd rather not use `pipx`: `pip install llm-autotune --break-system-packages` works but may conflict with your distro's system packages. Not recommended.
+
+**Requirements:** Python 3.9+, Ollama running locally.
 
 ```bash
 # Apple Silicon acceleration (native Metal GPU kernels):
@@ -634,6 +660,21 @@ The Supabase anon key embedded in the package is a public client token (INSERT-o
 ---
 
 ## Troubleshooting
+
+**"error: externally-managed-environment" (Linux)**
+→ Your Linux distro blocks `pip install` to the system Python (PEP 668). Install via `pipx` instead:
+```bash
+sudo apt install pipx          # Debian/Ubuntu — or: pip install --user pipx
+pipx install llm-autotune
+pipx ensurepath && exec $SHELL
+```
+
+**"`autotune: command not found`" after `pipx install`**
+→ `~/.local/bin` was just added to your PATH but the current shell session doesn't know yet. No need to open a new terminal — just run:
+```bash
+exec $SHELL
+```
+If that doesn't work, run `pipx ensurepath` first, then `exec $SHELL`.
 
 **"Ollama is not running."**
 → autotune starts Ollama automatically. If it still fails, install Ollama:

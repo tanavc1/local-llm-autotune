@@ -154,6 +154,11 @@ def print_recommendations(
     if modes is None:
         modes = list(recs.keys())
 
+    # Cross-mode dedup: each model ID appears in at most one mode's output.
+    # Primary picks are never skipped (they're mode-specific bests).
+    # Alternatives that duplicate a model already shown are silently dropped.
+    shown_model_ids: set[str] = set()
+
     for mode in modes:
         if mode not in recs:
             console.print(f"[red]No recommendations generated for mode: {mode}[/red]")
@@ -161,12 +166,20 @@ def print_recommendations(
 
         rec = recs[mode]
         console.rule(f"[bold]{MODE_META.get(mode, (mode,''))[0]} Mode[/bold]")
+        shown_model_ids.add(rec.primary.candidate.model.id)
         console.print(_config_panel(rec.primary, rank=0, mode=mode))
 
         if rec.alternatives:
-            console.print("[dim]Alternatives:[/dim]")
-            for i, alt in enumerate(rec.alternatives, start=1):
-                console.print(_config_panel(alt, rank=i, mode=mode))
+            unique_alts = [
+                alt for alt in rec.alternatives
+                if alt.candidate.model.id not in shown_model_ids
+            ]
+            for alt in unique_alts:
+                shown_model_ids.add(alt.candidate.model.id)
+            if unique_alts:
+                console.print("[dim]Alternatives:[/dim]")
+                for i, alt in enumerate(unique_alts, start=1):
+                    console.print(_config_panel(alt, rank=i, mode=mode))
 
         console.print()
 

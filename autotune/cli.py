@@ -3829,6 +3829,114 @@ def agent_bench(
 
 
 # ---------------------------------------------------------------------------
+# `autotune bench-os`  — OS-level optimization isolation benchmark
+# ---------------------------------------------------------------------------
+
+@cli.command("bench-os")
+@click.option("--model", "-m", default="", metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile to use for the 'optimized' condition.",
+)
+@click.option("--runs", "-r", type=int, default=5, show_default=True,
+              help="Inference runs per condition per test.")
+def bench_os(model: str, profile: str, runs: int) -> None:
+    """Measure the isolated contribution of each OS-level optimization.
+
+    Runs 5 A/B tests to isolate exactly how much each autotune optimization
+    contributes to TTFT and tok/s: GC suspend, macOS QOS thread priority,
+    flash attention, keep_alive warm vs cold reload, and dynamic num_ctx.
+
+    \b
+    Examples:
+      autotune bench-os                         # auto-select model, 5 runs each
+      autotune bench-os -m qwen3:8b             # specific model
+      autotune bench-os -m llama3.2:3b -r 3    # quicker (3 runs per test)
+    """
+    import asyncio
+
+    from autotune.bench.bench_cmd import _autoselect_model, print_os_bench_results, run_os_bench
+
+    selected = _autoselect_model(model or None)
+    if not selected:
+        console.print("[red]No Ollama model found. Pull one with: ollama pull llama3.2:3b[/red]")
+        raise SystemExit(1)
+
+    console.print(
+        f"\n[bold]autotune bench-os[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"profile=[cyan]{profile}[/cyan]  ·  {runs} runs/condition\n"
+    )
+    results = asyncio.run(run_os_bench(selected, profile_name=profile, runs=runs, console=console))
+    print_os_bench_results(results, console=console)
+
+
+# ---------------------------------------------------------------------------
+# `autotune bench-server`  — Server/cloud throughput benchmark
+# ---------------------------------------------------------------------------
+
+@cli.command("bench-server")
+@click.option("--model", "-m", default="", metavar="MODEL",
+              help="Ollama model to benchmark. Auto-selects smallest installed model if omitted.")
+@click.option(
+    "--profile", "-p",
+    type=click.Choice(["fast", "balanced", "quality"]),
+    default="balanced", show_default=True,
+    help="autotune profile for the 'optimized' condition.",
+)
+@click.option("--runs", "-r", type=int, default=10, show_default=True,
+              help="Serial inference runs for P50/P95/P99 latency distribution.")
+@click.option("--concurrency", "-c", default="1,2,4", show_default=True, metavar="LEVELS",
+              help="Comma-separated concurrency levels to test (e.g. 1,2,4,8).")
+def bench_server(model: str, profile: str, runs: int, concurrency: str) -> None:
+    """Measure server/cloud throughput: raw Ollama vs autotune.
+
+    Runs serial P50/P95/P99 TTFT measurements and concurrent throughput tests
+    at multiple concurrency levels. Shows RPS, latency distributions, peak RAM,
+    and a cost-per-million-tokens estimate.
+
+    \b
+    Examples:
+      autotune bench-server                            # auto-select, concurrency 1/2/4
+      autotune bench-server -m qwen3:8b                # specific model
+      autotune bench-server -m llama3.2:3b -c 1,2,4,8 # higher concurrency tiers
+      autotune bench-server -m qwen3:8b -r 20          # more serial runs (tighter P99)
+    """
+    import asyncio
+
+    from autotune.bench.bench_cmd import (
+        _autoselect_model,
+        print_server_bench_results,
+        run_server_bench,
+    )
+
+    selected = _autoselect_model(model or None)
+    if not selected:
+        console.print("[red]No Ollama model found. Pull one with: ollama pull llama3.2:3b[/red]")
+        raise SystemExit(1)
+
+    try:
+        c_levels = [int(x.strip()) for x in concurrency.split(",") if x.strip()]
+    except ValueError:
+        console.print(f"[red]Invalid --concurrency value: {concurrency!r}. Use comma-separated ints, e.g. 1,2,4[/red]")
+        raise SystemExit(1)
+
+    console.print(
+        f"\n[bold]autotune bench-server[/bold]  ·  [cyan]{selected}[/cyan]  ·  "
+        f"profile=[cyan]{profile}[/cyan]  ·  {runs} serial runs  ·  "
+        f"concurrency={c_levels}\n"
+    )
+    raw, tuned = asyncio.run(
+        run_server_bench(selected, profile_name=profile,
+                         concurrency_levels=c_levels, serial_runs=runs,
+                         console=console)
+    )
+    print_server_bench_results(raw, tuned, console=console)
+
+
+# ---------------------------------------------------------------------------
 # `autotune user-bench`  — Real-world user experience benchmark
 # ---------------------------------------------------------------------------
 
