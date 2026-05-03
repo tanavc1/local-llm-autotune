@@ -686,7 +686,7 @@ def delete(model: Optional[str], yes: bool) -> None:
 # `autotune benchmark`
 # ---------------------------------------------------------------------------
 
-@cli.command("benchmark")
+@cli.command("benchmark", hidden=True)
 @click.argument("model")
 @click.option(
     "--runs", "-n",
@@ -758,7 +758,7 @@ def benchmark(model: str, runs: int, profile: str, output: Optional[str], no_sav
 # `autotune session`
 # ---------------------------------------------------------------------------
 
-@cli.command()
+@cli.command(hidden=True)
 @click.option("--model", "model_id", default=None, metavar="HF_MODEL_ID",
               help="Specific model to optimize for (HF repo ID, must be in DB).")
 @click.option("--mode", "-m",
@@ -798,7 +798,7 @@ def session(
 # `autotune fetch`
 # ---------------------------------------------------------------------------
 
-@cli.command()
+@cli.command(hidden=True)
 @click.argument("model_id")
 @click.option("--force", is_flag=True, default=False, help="Re-fetch even if already cached.")
 def fetch(model_id: str, force: bool) -> None:
@@ -950,7 +950,7 @@ CURATED_MODELS: list[str] = [
 ]
 
 
-@cli.command("fetch-many")
+@cli.command("fetch-many", hidden=True)
 @click.option("--force", is_flag=True, default=False, help="Re-fetch even if already cached.")
 @click.option(
     "--filter", "name_filter", default=None, metavar="SUBSTR",
@@ -1003,7 +1003,7 @@ def fetch_many(force: bool, name_filter: Optional[str]) -> None:
 # `autotune db`
 # ---------------------------------------------------------------------------
 
-@cli.command("db")
+@cli.command("db", hidden=True)
 def db_stats() -> None:
     """Show local database statistics."""
     from rich import box
@@ -1029,7 +1029,7 @@ def db_stats() -> None:
 # `autotune db-models`
 # ---------------------------------------------------------------------------
 
-@cli.command("db-models")
+@cli.command("db-models", hidden=True)
 @click.option("--family", default=None, help="Filter by model family.")
 @click.option("--max-params", default=None, type=float, metavar="B", help="Max active params (billions).")
 def db_models(family: Optional[str], max_params: Optional[float]) -> None:
@@ -1083,7 +1083,7 @@ def db_models(family: Optional[str], max_params: Optional[float]) -> None:
 # `autotune log-run`
 # ---------------------------------------------------------------------------
 
-@cli.command("log-run")
+@cli.command("log-run", hidden=True)
 @click.option("--model", "model_id", required=True, help="HF model ID (must be in DB).")
 @click.option("--quant", required=True, help="Quantization used e.g. Q4_K_M.")
 @click.option("--context", "context_len", required=True, type=int)
@@ -4063,7 +4063,7 @@ def proof(
 # `autotune proof-suite`
 # ---------------------------------------------------------------------------
 
-@cli.command("proof-suite")
+@cli.command("proof-suite", hidden=True)
 @click.option(
     "--models", "-m", multiple=True, metavar="MODEL",
     help=(
@@ -4127,7 +4127,7 @@ def proof_suite(
 # `autotune agent-bench`  — Agentic multi-turn benchmark
 # ---------------------------------------------------------------------------
 
-@cli.command("agent-bench")
+@cli.command("agent-bench", hidden=True)
 @click.option(
     "--models", "-m", multiple=True, metavar="MODEL",
     help=(
@@ -4206,7 +4206,7 @@ def agent_bench(
 # `autotune user-bench`  — Real-world user experience benchmark
 # ---------------------------------------------------------------------------
 
-@cli.command("user-bench")
+@cli.command("user-bench", hidden=True)
 @click.option("--model", "-m", default="", metavar="MODEL",
               help="Ollama model to benchmark. Auto-selects first installed model if omitted.")
 @click.option(
