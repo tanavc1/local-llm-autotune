@@ -118,10 +118,61 @@ def _show_upgrade_hint() -> None:
 # CLI group
 # ---------------------------------------------------------------------------
 
-@click.group()
+def _is_initialized() -> bool:
+    """Return True if the user has completed first-run setup."""
+    import pathlib
+    return (pathlib.Path.home() / ".autotune" / "initialized").exists()
+
+
+def _mark_initialized(model: str) -> None:
+    """Write the initialized sentinel so the wizard doesn't run again."""
+    import json
+    import pathlib
+    sentinel = pathlib.Path.home() / ".autotune" / "initialized"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(json.dumps({"model": model, "ts": time.time()}))
+
+
+@click.group(invoke_without_command=True)
 @click.version_option(package_name="llm-autotune")
-def cli() -> None:
+@click.pass_context
+def cli(ctx: click.Context) -> None:
     """Local-LLM autotune – recommends the best inference config for your hardware."""
+    if ctx.invoked_subcommand is None:
+        _no_subcommand(ctx)
+
+
+def _no_subcommand(ctx: click.Context) -> None:
+    """Called when autotune is invoked with no subcommand."""
+    import importlib.metadata
+
+    from rich.panel import Panel
+
+    try:
+        version = importlib.metadata.version("llm-autotune")
+    except Exception:
+        version = "dev"
+
+    if not _is_initialized():
+        console.print()
+        console.print(Panel(
+            f"[bold]Welcome to autotune[/bold]  [dim]v{version}[/dim]\n\n"
+            "Run [bold cyan]autotune init[/bold cyan] for a 2-minute guided setup:\n"
+            "  [dim]• verifies Ollama is running[/dim]\n"
+            "  [dim]• picks the best model for your hardware[/dim]\n"
+            "  [dim]• pulls it and proves autotune is working[/dim]\n\n"
+            "[dim]Or jump straight in:[/dim]\n"
+            "  [dim]autotune pull qwen3:8b           # download a model[/dim]\n"
+            "  [dim]autotune chat --model qwen3:8b   # start chatting[/dim]\n"
+            "  [dim]autotune proof --model qwen3:8b  # verify improvements[/dim]\n"
+            "  [dim]autotune --help                  # all 23 commands[/dim]",
+            title="[bold cyan]autotune[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        ))
+        console.print()
+    else:
+        click.echo(ctx.get_help())
 
 
 @cli.result_callback()
@@ -366,6 +417,293 @@ def upgrade(yes: bool) -> None:
             if stderr_text.strip():
                 console.print(f"\n[dim]{stderr_text.strip()}[/dim]")
         raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# `autotune init`  — first-run guided setup wizard
+# ---------------------------------------------------------------------------
+
+@cli.command("init")
+@click.option(
+    "--model", "-m", default=None, metavar="MODEL",
+    help="Model to pull and test. Auto-selects the best fit for your hardware if omitted.",
+)
+@click.option(
+    "--skip-proof", is_flag=True, default=False,
+    help="Skip the proof step — useful if you just want model setup.",
+)
+@click.option(
+    "--force", is_flag=True, default=False,
+    help="Re-run the wizard even if already initialized.",
+)
+def init(model: Optional[str], skip_proof: bool, force: bool) -> None:
+    """Guided first-run setup: checks Ollama, picks and pulls a model, runs proof.
+
+    Takes about 2 minutes on a 16 GB machine with qwen3:4b.
+    Safe to re-run with --force.
+
+    \b
+    Examples:
+      autotune init                       # guided auto-setup
+      autotune init --model qwen3:8b      # force a specific model
+      autotune init --force               # redo setup
+      autotune init --skip-proof          # skip the proof step
+    """
+    import asyncio as _asyncio
+    import importlib.metadata
+
+    from rich.panel import Panel
+    from rich.rule import Rule
+
+    # ── Already initialized? ─────────────────────────────────────────────────
+    if _is_initialized() and not force:
+        console.print()
+        console.print(
+            "[green]✓[/green]  autotune is already set up.\n"
+            "[dim]  Run [bold]autotune init --force[/bold] to redo setup, "
+            "or [bold]autotune --help[/bold] to see all commands.[/dim]"
+        )
+        console.print()
+        return
+
+    # ── Welcome banner ───────────────────────────────────────────────────────
+    try:
+        version = importlib.metadata.version("llm-autotune")
+    except Exception:
+        version = "dev"
+
+    console.print()
+    console.print(Panel(
+        f"[bold cyan]autotune[/bold cyan]  [dim]v{version}[/dim]  —  "
+        "[dim]Faster local LLMs, provably.[/dim]",
+        border_style="cyan",
+        padding=(0, 2),
+    ))
+    console.print()
+
+    # ── Step 1: Ollama check ─────────────────────────────────────────────────
+    console.print(Rule("[bold]Step 1 of 3  —  Checking Ollama[/bold]", style="cyan"))
+    console.print()
+    from autotune.api.ollama_pull import (
+        OllamaNotRunningError,
+        PullError,
+        ensure_ollama_running,
+        pull_model,
+    )
+
+    ok = ensure_ollama_running(console)
+    if not ok:
+        console.print(
+            "\n[red]✗  Ollama could not be started.[/red]\n\n"
+            "[dim]Install it from:[/dim] [bold]https://ollama.com/download[/bold]\n"
+            "[dim]Then re-run:[/dim]     [bold]autotune init[/bold]"
+        )
+        raise SystemExit(1)
+    console.print()
+
+    # ── Step 2: Hardware + model selection ───────────────────────────────────
+    console.print(Rule("[bold]Step 2 of 3  —  Selecting a model[/bold]", style="cyan"))
+    console.print()
+
+    from autotune.hardware.profiler import profile_hardware
+
+    with console.status("[cyan]Profiling your hardware…[/cyan]", spinner="dots"):
+        hw = profile_hardware()
+
+    gpu_str = hw.gpu.name if hw.gpu else "CPU-only"
+    console.print(
+        f"  [green]✓[/green]  [bold]{hw.cpu.brand[:40]}[/bold]  ·  "
+        f"{hw.memory.total_gb:.0f} GB RAM  ·  {gpu_str}\n"
+        f"  [dim]Effective memory budget: {hw.effective_memory_gb:.1f} GB[/dim]"
+    )
+    console.print()
+
+    # Check what's already installed in Ollama
+    import httpx as _hx
+    installed: list[dict] = []
+    try:
+        _r = _hx.get("http://localhost:11434/api/tags", timeout=4.0)
+        installed = _r.json().get("models", [])
+    except Exception:
+        pass
+    installed_names = {m["name"] for m in installed}
+
+    # Resolve which model to use
+    target_model: str
+    if model:
+        target_model = model
+    else:
+        # Try to pick the best recommendation; fall back to smallest installed
+        from autotune.config.generator import generate_recommendations
+        try:
+            with console.status(
+                "[cyan]Scoring models for your hardware…[/cyan]", spinner="dots"
+            ):
+                recs = generate_recommendations(hw, modes=["balanced"], top_n=1)
+            rec = recs.get("balanced", None)
+            if rec and rec.primary:
+                tag = rec.primary.candidate.model.ollama_tag
+                target_model = tag if tag else rec.primary.candidate.model.id
+            else:
+                target_model = ""
+        except Exception:
+            target_model = ""
+
+        if not target_model:
+            # Fall back to smallest already-installed model
+            if installed:
+                target_model = sorted(installed, key=lambda m: m.get("size", float("inf")))[0]["name"]
+            else:
+                target_model = "qwen3:4b"  # safe default for <8 GB machines
+
+    console.print(
+        f"  [bold]Recommended model:[/bold]  [cyan]{target_model}[/cyan]"
+    )
+
+    # Pull if not already installed
+    if target_model in installed_names:
+        console.print(
+            f"  [green]✓[/green]  [cyan]{target_model}[/cyan] is already installed — skipping pull."
+        )
+        console.print()
+    else:
+        # Estimate size from recommendation if available
+        try:
+            size_gb = rec.primary.memory.weights_gb if (rec and rec.primary) else 0.0  # type: ignore[possibly-undefined]
+            size_hint = f"  [dim]~{size_gb:.1f} GB download[/dim]" if size_gb > 0 else ""
+        except Exception:
+            size_hint = ""
+
+        console.print(f"  {size_hint}")
+        console.print()
+
+        try:
+            ans = input(
+                f"  Pull [bold]{target_model}[/bold] now? [Y/n]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+
+        if ans in ("", "y", "yes"):
+            console.print()
+            try:
+                pull_model(target_model, console)
+                console.print(
+                    f"\n  [green]✓[/green]  [cyan]{target_model}[/cyan] downloaded and ready."
+                )
+            except OllamaNotRunningError as exc:
+                console.print(f"\n  [red]✗  Ollama stopped:[/red] {exc}")
+                raise SystemExit(1)
+            except PullError as exc:
+                console.print(
+                    f"\n  [yellow]⚠  Pull failed:[/yellow] {exc}\n"
+                    f"  [dim]You can pull manually later: "
+                    f"[bold]autotune pull {target_model}[/bold][/dim]"
+                )
+                skip_proof = True  # can't proof without a model
+            except KeyboardInterrupt:
+                console.print("\n  [yellow]Pull cancelled.[/yellow]")
+                skip_proof = True
+        else:
+            console.print(
+                f"\n  [dim]Skipped — pull later with: "
+                f"[bold]autotune pull {target_model}[/bold][/dim]"
+            )
+            skip_proof = True
+
+    console.print()
+
+    # ── Step 3: Quick proof ───────────────────────────────────────────────────
+    if not skip_proof:
+        console.print(
+            Rule("[bold]Step 3 of 3  —  Verifying autotune improves inference[/bold]",
+                 style="cyan")
+        )
+        console.print(
+            f"\n  [dim]Running 2 quick tests on [cyan]{target_model}[/cyan]…  "
+            f"~30 s[/dim]\n"
+        )
+
+        from autotune.bench.quick_proof import QuickProofResult, run_quick_proof
+
+        steps_shown: list[str] = []
+
+        def _on_step(msg: str) -> None:
+            clean = msg.strip()
+            if clean and clean not in steps_shown:
+                steps_shown.append(clean)
+                console.print(f"  [dim]{clean}[/dim]")
+
+        try:
+            result: QuickProofResult = _asyncio.run(
+                run_quick_proof(
+                    model_id=target_model,
+                    profile_name="balanced",
+                    n_runs=2,
+                    on_step=_on_step,
+                )
+            )
+            console.print()
+
+            # Show headline numbers from QuickProofResult properties
+            ttft_pct = result.ttft_improvement_pct
+            kv_ratio = (
+                result.raw_kv_mb / result.tuned_kv_mb
+                if result.tuned_kv_mb > 0 else 1.0
+            )
+            if ttft_pct > 5:
+                console.print(
+                    f"  [green]✓[/green]  TTFT improvement:   "
+                    f"[bold]{ttft_pct:.0f}%[/bold] faster first token"
+                )
+            if kv_ratio > 1.1:
+                console.print(
+                    f"  [green]✓[/green]  KV cache reduction: "
+                    f"[bold]{kv_ratio:.1f}×[/bold] smaller"
+                )
+            if ttft_pct <= 5 and kv_ratio <= 1.1:
+                console.print("  [green]✓[/green]  Proof completed (see output above for details).")
+
+        except KeyboardInterrupt:
+            console.print("\n  [dim]Proof skipped (Ctrl-C).[/dim]")
+        except Exception as exc:
+            console.print(
+                f"\n  [yellow]⚠  Proof could not run:[/yellow] {exc}\n"
+                f"  [dim]Run manually later: [bold]autotune proof --model {target_model}[/bold][/dim]"
+            )
+    else:
+        console.print(
+            Rule("[bold]Step 3 of 3  —  Verifying autotune[/bold]", style="cyan")
+        )
+        console.print(
+            f"\n  [dim]Skipped.  Run later:[/dim]  "
+            f"[bold]autotune proof --model {target_model}[/bold]\n"
+        )
+
+    # ── Done — cheat sheet ────────────────────────────────────────────────────
+    _mark_initialized(target_model)
+
+    console.print()
+    console.print(Panel(
+        f"[bold green]✓  Setup complete![/bold green]\n\n"
+        f"[bold]Key commands[/bold]  (model: [cyan]{target_model}[/cyan])\n\n"
+        f"  [bold cyan]autotune chat --model {target_model}[/bold cyan]\n"
+        f"  [dim]  Start an optimized chat session[/dim]\n\n"
+        f"  [bold cyan]autotune proof --model {target_model}[/bold cyan]\n"
+        f"  [dim]  60-second proof: TTFT and KV cache improvement[/dim]\n\n"
+        f"  [bold cyan]autotune bench quick --model {target_model}[/bold cyan]\n"
+        f"  [dim]  Full 3-test benchmark with Ollama native timers[/dim]\n\n"
+        f"  [bold cyan]autotune serve[/bold cyan]\n"
+        f"  [dim]  OpenAI-compatible API at http://localhost:8765/v1[/dim]\n\n"
+        f"  [bold cyan]autotune recommend[/bold cyan]\n"
+        f"  [dim]  Re-score all models for your hardware[/dim]\n\n"
+        f"  [bold cyan]autotune --help[/bold cyan]\n"
+        f"  [dim]  All 23 commands[/dim]",
+        title="[bold]autotune ready[/bold]",
+        border_style="green",
+        padding=(1, 2),
+    ))
+    console.print()
 
 
 # ---------------------------------------------------------------------------
