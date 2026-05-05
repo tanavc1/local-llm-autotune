@@ -231,6 +231,21 @@ export default function Home() {
               Prove it on your machine
             </a>
           </div>
+
+          <div className="animate-fade-up delay-400">
+            <a
+              href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
+                width="250"
+                height="54"
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
+              />
+            </a>
+          </div>
         </div>
 
         {/* Stats row */}
@@ -246,89 +261,156 @@ export default function Home() {
         <div className="mx-auto max-w-5xl">
           <SectionLabel>How it works</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
-            Automatic optimizations, applied to every request.
+            Every request, sized exactly right.
           </h2>
           <p className="text-white/55 mb-12 max-w-2xl">
-            autotune sits between your code and Ollama as a transparent proxy. Every request
-            passes through multiple layers of optimization — none require config, none change your
-            prompt or output quality.
+            autotune sits between your code and Ollama as a transparent proxy. Before each
+            request reaches Ollama, autotune calculates the exact memory it needs, watches
+            live RAM usage from your other apps, and adjusts automatically. No config. No
+            changes to your code or output quality.
           </p>
 
-          {/* Optimization cards */}
-          <div className="grid gap-5 sm:grid-cols-2">
-
-            {/* 1 — Dynamic KV sizing */}
-            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/20 text-xs font-bold text-violet-300">1</span>
-                <span className="text-sm font-semibold text-white">Dynamic KV buffer sizing</span>
-              </div>
-              <p className="text-sm text-white/60 mb-4">
-                Ollama always reserves a fixed 4,096-token KV buffer — regardless of how long
-                your message is. For a typical 340-token message, that&apos;s 3× more memory
-                than needed. autotune computes the exact minimum and allocates only that.
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
-                  <div className="text-white/40 mb-0.5">Raw Ollama</div>
-                  <div className="font-mono text-white/70">448 MB reserved</div>
-                  <div className="text-white/35">for 4,096 tokens</div>
+          {/* 1 — Precise KV cache allocation */}
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6 mb-5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/20 text-xs font-bold text-violet-300">1</span>
+              <span className="text-sm font-semibold text-white">Precise KV cache allocation — every single request</span>
+            </div>
+            <p className="text-sm text-white/60 mb-5">
+              Every time Ollama runs your prompt, it must first allocate a block of RAM called
+              the KV cache — it&apos;s where it stores the attention state for every token in the
+              context window. By default, Ollama always allocates for 4,096 tokens. For a typical
+              50-word message, that&apos;s allocating 12× more RAM than the message actually needs.
+              autotune measures the real token count, adds a safe headroom buffer, and tells Ollama
+              the exact minimum. That freed RAM goes back to your browser, your apps, your system.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-3 mb-4">
+              <div className="rounded-xl border border-white/8 bg-black/20 p-4 text-xs">
+                <div className="text-white/35 text-[10px] uppercase tracking-wider mb-2">Formula autotune uses</div>
+                <div className="font-mono text-violet-300 leading-relaxed">
+                  ctx = input_tokens<br />
+                  &nbsp;&nbsp;&nbsp;&nbsp;+ max_reply<br />
+                  &nbsp;&nbsp;&nbsp;&nbsp;+ 256 (buffer)<br />
+                  <span className="text-white/35">→ rounded to nearest bucket</span>
                 </div>
-                <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
-                  <div className="text-white/40 mb-0.5">autotune</div>
-                  <div className="font-mono text-green-300">155 MB reserved</div>
-                  <div className="text-white/35">293 MB freed</div>
+              </div>
+              <div className="rounded-xl border border-red-500/15 bg-red-500/5 p-4 text-xs">
+                <div className="text-white/35 text-[10px] uppercase tracking-wider mb-2">Raw Ollama — qwen3:8b</div>
+                <div className="font-mono text-white/60 text-sm font-bold">576 MB</div>
+                <div className="text-white/40 mt-1">always allocated, every request</div>
+                <div className="text-white/30 mt-0.5">for 4,096 tokens</div>
+              </div>
+              <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-4 text-xs">
+                <div className="text-white/35 text-[10px] uppercase tracking-wider mb-2">autotune — qwen3:8b</div>
+                <div className="font-mono text-green-300 text-sm font-bold">195 MB</div>
+                <div className="text-white/40 mt-1">381 MB returned to your system</div>
+                <div className="text-white/30 mt-0.5">per typical chat request</div>
+              </div>
+            </div>
+            <p className="text-xs text-white/35">
+              Buckets (512, 768, 1024, 1536, 2048…) prevent Ollama from reallocating the Metal
+              buffer on every call — requests with similar lengths reuse the same pre-allocated
+              buffer, eliminating 100–300 ms of KV thrashing overhead per request.
+            </p>
+          </div>
+
+          {/* 2 — Live memory pressure management */}
+          <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-6 mb-5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">2</span>
+              <span className="text-sm font-semibold text-white">Live pressure management — adapts as your apps change RAM usage</span>
+            </div>
+            <p className="text-sm text-white/60 mb-5">
+              Right-sizing the KV cache at request time is the foundation. But RAM usage on your
+              machine is dynamic: Chrome opens a tab, Xcode compiles, a background process wakes
+              up. autotune reads your system&apos;s actual RAM usage before every single request
+              and applies two independent levers — context window size and KV precision — to
+              ensure the model never pushes your system into disk swap, even as conditions change.
+            </p>
+
+            {/* RAM pressure visualization */}
+            <div className="rounded-xl border border-white/8 bg-black/25 p-4 mb-4">
+              <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-4">
+                Live RAM thresholds — checked before every request
+              </div>
+              <div className="space-y-2.5">
+                <div className="flex items-stretch gap-3">
+                  <div className="flex items-center">
+                    <div className="h-full w-1 rounded-full bg-green-500/50 min-h-[36px]" />
+                  </div>
+                  <div className="flex-1 rounded-lg border border-green-500/15 bg-green-500/5 px-4 py-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div className="font-mono text-green-300 font-semibold">RAM &lt; 80%</div>
+                      <div className="text-white/50">Full context window · KV at profile default (F16 or Q8)</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-stretch gap-3">
+                  <div className="flex items-center">
+                    <div className="h-full w-1 rounded-full bg-yellow-500/50 min-h-[36px]" />
+                  </div>
+                  <div className="flex-1 rounded-lg border border-yellow-500/15 bg-yellow-500/5 px-4 py-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div className="font-mono text-yellow-300 font-semibold">RAM 80–88%</div>
+                      <div className="text-white/50">Context trimmed −10% · KV precision unchanged</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-stretch gap-3">
+                  <div className="flex items-center">
+                    <div className="h-full w-1 rounded-full bg-orange-500/50 min-h-[36px]" />
+                  </div>
+                  <div className="flex-1 rounded-lg border border-orange-500/15 bg-orange-500/5 px-4 py-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div className="font-mono text-orange-300 font-semibold">RAM 88–93%</div>
+                      <div className="text-white/50">Context −25% · KV switches F16 → Q8 (halves KV memory)</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-stretch gap-3">
+                  <div className="flex items-center">
+                    <div className="h-full w-1 rounded-full bg-red-500/50 min-h-[36px]" />
+                  </div>
+                  <div className="flex-1 rounded-lg border border-red-500/15 bg-red-500/5 px-4 py-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div className="font-mono text-red-300 font-semibold">RAM &gt; 93%</div>
+                      <div className="text-white/50">Context halved · KV forced Q8 · prevents disk swap</div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+            <p className="text-xs text-white/40">
+              KV precision switching (F16 → Q8) cuts the KV cache&apos;s RAM footprint in half
+              instantly — with no meaningful quality impact. Q8 stores each attention value in 1
+              byte instead of 2; the difference in model output is undetectable in practice.
+              These adjustments happen automatically — you see a brief note in the chat UI when one fires.
+            </p>
+          </div>
 
-            {/* 2 — System prompt caching */}
+          {/* 3 & 4 side by side */}
+          <div className="grid gap-5 sm:grid-cols-2">
+
+            {/* 3 — System prompt caching */}
             <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6">
               <div className="flex items-center gap-2 mb-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-300">2</span>
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-300">3</span>
                 <span className="text-sm font-semibold text-white">System prompt prefix caching</span>
               </div>
               <p className="text-sm text-white/60 mb-4">
-                Every multi-turn conversation has a system prompt that Ollama re-processes
-                from scratch on each message. autotune pins those tokens in the KV cache via{" "}
-                <code className="text-white/70">num_keep</code> — they&apos;re evaluated once
-                and reused forever, cutting prefill time on every follow-up turn.
+                In any multi-turn chat, Ollama re-processes your entire system prompt from scratch
+                on every message. autotune pins those tokens in the KV cache so they&apos;re
+                only ever evaluated once — at the start. Every follow-up turn gets faster because
+                fewer tokens need processing. The savings compound with every turn.
               </p>
-              <div className="rounded-lg border border-blue-500/15 bg-blue-500/5 px-3 py-2 text-xs">
-                <div className="text-white/40 mb-1">Impact per follow-up message</div>
-                <div className="text-blue-300 font-mono">System prompt tokens: never re-evaluated</div>
-                <div className="text-white/35 mt-0.5">Pure latency win — zero quality impact</div>
-              </div>
-            </div>
-
-            {/* 3 — Adaptive memory management (KV precision + context cutting) */}
-            <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">3</span>
-                <span className="text-sm font-semibold text-white">KV precision + adaptive context</span>
-              </div>
-              <p className="text-sm text-white/60 mb-4">
-                Two distinct mechanisms working together. <strong className="text-white/80">KV precision</strong>{" "}
-                is set appropriately per profile — F16 for quality, Q8 (half the footprint) for speed or tight machines.
-                Separately, the <strong className="text-white/80">context window is cut intelligently</strong>{" "}
-                as RAM pressure builds — not all at once, but in graduated steps so you keep as much context as possible.
-              </p>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="text-white/40 w-20 shrink-0">fast profile</span>
-                  <span className="text-orange-300">always Q8 KV — lowest latency</span>
+              <div className="space-y-1.5 text-xs font-mono">
+                <div className="flex gap-2 items-baseline">
+                  <span className="text-red-300/70 w-14 shrink-0">Turn 1</span>
+                  <span className="text-white/40">system prompt + message evaluated</span>
                 </div>
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 80%</span>
-                  <span className="text-orange-300/80">context −10% (KV stays F16)</span>
-                </div>
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 88%</span>
-                  <span className="text-orange-300">context −25%, KV: F16 → Q8</span>
-                </div>
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="text-white/40 w-20 shrink-0">RAM &gt; 93%</span>
-                  <span className="text-red-300">context halved, KV forced Q8</span>
+                <div className="flex gap-2 items-baseline">
+                  <span className="text-blue-300 w-14 shrink-0">Turn 2+</span>
+                  <span className="text-blue-300/80">system prompt skipped — new tokens only</span>
                 </div>
               </div>
             </div>
@@ -340,16 +422,16 @@ export default function Home() {
                 <span className="text-sm font-semibold text-white">Model keep-alive</span>
               </div>
               <p className="text-sm text-white/60 mb-4">
-                Raw Ollama unloads the model after 5 minutes of idle. Every time you come
-                back, you pay a 1–3 second reload cost before your first token. autotune
-                keeps the model loaded in unified memory between sessions and manages
-                eviction gracefully when RAM is needed elsewhere.
+                Ollama unloads the model after 5 minutes idle — a 1–4 second reload every time
+                you come back to it. autotune keeps the model resident in memory between sessions.
+                The weights were already using that RAM; keeping them there costs nothing extra
+                and eliminates the cold-start delay entirely.
               </p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
-                  <div className="text-white/40 mb-0.5">Raw Ollama (idle 5 min)</div>
-                  <div className="font-mono text-white/70">1–3s cold reload</div>
-                  <div className="text-white/35">every new session</div>
+                  <div className="text-white/40 mb-0.5">Raw Ollama</div>
+                  <div className="font-mono text-white/70">1–4s reload</div>
+                  <div className="text-white/35">after 5 min idle</div>
                 </div>
                 <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
                   <div className="text-white/40 mb-0.5">autotune</div>
@@ -360,30 +442,12 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Context management callout */}
-          <div className="mt-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
-            <div className="flex items-start gap-3">
-              <span className="text-xl mt-0.5">🗜️</span>
-              <div>
-                <div className="text-sm font-semibold text-white mb-1">Intelligent context management</div>
-                <p className="text-sm text-white/60">
-                  As conversations grow, autotune compresses older messages in four progressive tiers —
-                  keeping all recent turns verbatim and summarising older ones — so you never hit
-                  a hard context wall. Every conversation is also saved to a local SQLite database
-                  and semantically searched at the start of each new session, so relevant past
-                  context is automatically available without you re-explaining it.
-                  <strong className="text-white/80"> All data stays on your machine.</strong>
-                </p>
-              </div>
-            </div>
-          </div>
-
           <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4">
             <p className="text-xs text-white/35 max-w-xl">
-              Numbers above use llama3.2:3b on Apple M2. KV size scales with model architecture —
-              larger models free more RAM in absolute terms.
-              Generation quality is identical: autotune changes buffer sizes and precision,
-              not model weights or sampling.
+              Benchmark numbers use qwen3:8b / llama3.2:3b on Apple M2 16 GB.
+              KV savings scale with model size — larger models free more RAM in absolute terms.
+              Generation speed and output quality are unchanged: autotune touches only buffer
+              sizes, precision, and scheduling — never model weights or sampling.
             </p>
             <a
               href="/what-we-do"
@@ -938,6 +1002,21 @@ export default function Home() {
               className="rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-sm font-medium text-white/80 backdrop-blur transition hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-white"
             >
               PyPI page
+            </a>
+          </div>
+
+          <div className="mt-2">
+            <a
+              href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
+                width="250"
+                height="54"
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
+              />
             </a>
           </div>
         </div>

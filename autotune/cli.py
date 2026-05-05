@@ -50,7 +50,12 @@ def _version_newer(v_new: str, v_cur: str) -> bool:
         from packaging.version import Version
         return Version(v_new) > Version(v_cur)
     except Exception:
-        return v_new != v_cur
+        try:
+            def _t(v: str) -> tuple:
+                return tuple(int(x) for x in v.split(".")[:3])
+            return _t(v_new) > _t(v_cur)
+        except Exception:
+            return False
 
 
 def _show_upgrade_hint() -> None:
@@ -520,9 +525,10 @@ def init(model: Optional[str], skip_proof: bool, force: bool) -> None:
 
     # Check what's already installed in Ollama
     import httpx as _hx
+    from autotune._ollama import ollama_base as _ollama_base_init
     installed: list[dict] = []
     try:
-        _r = _hx.get("http://localhost:11434/api/tags", timeout=4.0)
+        _r = _hx.get(f"{_ollama_base_init()}/api/tags", timeout=4.0)
         installed = _r.json().get("models", [])
     except Exception:
         pass
@@ -753,10 +759,13 @@ def ps() -> None:
     from autotune.api.running_models import get_running_models
     from autotune.output.formatter import print_running_models
 
-    with console.status("[cyan]Querying backends…[/cyan]", spinner="dots"):
-        models = get_running_models()
-
-    print_running_models(models)
+    try:
+        with console.status("[cyan]Querying backends…[/cyan]", spinner="dots"):
+            models = get_running_models()
+        print_running_models(models)
+    except Exception as exc:
+        console.print(f"[red]Could not query backends:[/red] {exc}")
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -1507,8 +1516,9 @@ def _bench_autoselect(preferred: Optional[str] = None) -> Optional[str]:
         return preferred
     try:
         import httpx as _hx
+        from autotune._ollama import ollama_base as _ob
         with _hx.Client(timeout=4.0) as c:
-            r = c.get("http://localhost:11434/api/tags")
+            r = c.get(f"{_ob()}/api/tags")
             models = r.json().get("models", [])
         if not models:
             return None
@@ -2328,8 +2338,10 @@ def ls(as_json: bool) -> None:
     if not _ensure_ollama(console):
         raise SystemExit(1)
 
+    from autotune._ollama import ollama_base as _ollama_base_ls
+    _ollama_url_ls = _ollama_base_ls()
     try:
-        tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+        tags_resp = httpx.get(f"{_ollama_url_ls}/api/tags", timeout=3.0)
         tags_resp.raise_for_status()
         ollama_models = tags_resp.json().get("models", [])
     except Exception:
@@ -2355,7 +2367,7 @@ def ls(as_json: bool) -> None:
     def _show(model_name: str) -> dict:
         try:
             r = httpx.post(
-                "http://localhost:11434/api/show",
+                f"{_ollama_url_ls}/api/show",
                 json={"name": model_name},
                 timeout=5.0,
             )
@@ -2615,11 +2627,13 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
     modelinfo: dict           = {}
 
     console.print("  [dim]Querying Ollama for model info…[/dim]")
+    from autotune._ollama import ollama_base as _ollama_base_run
     from autotune.api.ollama_pull import ensure_ollama_running as _ensure_ollama_run
     if not _ensure_ollama_run(console):
         raise SystemExit(1)
+    _ollama_url_run = _ollama_base_run()
     try:
-        tags_resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+        tags_resp = httpx.get(f"{_ollama_url_run}/api/tags", timeout=3.0)
         for m in tags_resp.json().get("models", []):
             if m.get("name", "").lower() == model_name.lower():
                 size_gb = m.get("size", 0) / 1024**3
@@ -2630,7 +2644,7 @@ def run(model_name: str, profile: str, system: Optional[str], force: bool, recal
 
     try:
         show_resp = httpx.post(
-            "http://localhost:11434/api/show",
+            f"{_ollama_url_run}/api/show",
             json={"name": model_name},
             timeout=5.0,
         )
@@ -4315,12 +4329,15 @@ def proof(
     import httpx as _httpx
     from rich.console import Console as _Console
 
+    from autotune._ollama import ollama_base as _ollama_base
+
     _console = _Console()
+    _ollama_url = _ollama_base()
 
     # ── List models shortcut ──────────────────────────────────────────────────
     if list_models:
         try:
-            r = _httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+            r = _httpx.get(f"{_ollama_url}/api/tags", timeout=3.0)
             names = [m["name"] for m in r.json().get("models", [])]
             if names:
                 _console.print("\n[bold]Installed Ollama models:[/bold]")
@@ -4329,14 +4346,14 @@ def proof(
             else:
                 _console.print("[yellow]No models installed.[/yellow] Pull one: [bold]autotune pull qwen3:8b[/bold]")
         except Exception:
-            _console.print("[red]Could not connect to Ollama.[/red] Try: [bold]autotune pull qwen3:8b[/bold]")
+            _console.print("[red]Could not connect to Ollama.[/red] Is Ollama running? Try: [bold]autotune pull qwen3:8b[/bold]")
         return
 
     # ── Resolve model ─────────────────────────────────────────────────────────
     _PREFERENCE = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
     if not model:
         try:
-            r = _httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+            r = _httpx.get(f"{_ollama_url}/api/tags", timeout=3.0)
             installed = [m["name"] for m in r.json().get("models", [])]
             for _pref in _PREFERENCE:
                 if _pref in installed:
@@ -4344,8 +4361,9 @@ def proof(
                     break
             if not model and installed:
                 model = installed[0]
-        except Exception:
-            pass
+        except Exception as _e:
+            _console.print(f"[red]Could not connect to Ollama:[/red] {_e}\nIs Ollama running?  Try: [bold]autotune pull qwen3:8b[/bold]")
+            raise SystemExit(1)
 
     if not model:
         _console.print(
@@ -4357,6 +4375,11 @@ def proof(
     # ── Resolve output path ───────────────────────────────────────────────────
     _safe = model.replace(":", "_").replace("/", "_")
     _out  = _Path(output) if output else _Path(f"proof_{_safe}.json")
+    try:
+        _out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as _e:
+        _console.print(f"[red]Cannot write to output path {_out}:[/red] {_e}")
+        raise SystemExit(1)
 
     # ── Run ───────────────────────────────────────────────────────────────────
     from autotune.bench.quick_proof import print_proof_result, run_quick_proof
@@ -6321,15 +6344,15 @@ def doctor() -> None:
 
     # ── Python ──────────────────────────────────────────────────────────
     py = _sys.version_info
-    py_ok = py >= (3, 10)
+    py_ok = py >= (3, 9)
     _row(
         "Python version",
         py_ok,
         f"{py.major}.{py.minor}.{py.micro}"
-        + ("" if py_ok else "  [dim](3.10+ required)[/dim]"),
+        + ("" if py_ok else "  [dim](3.9+ required)[/dim]"),
     )
 
-    # ── Key packages ────────────────────────────────────────────────────
+    # ── Key packages (required deps only) ───────────────────────────────
     packages = [
         ("click",       "click"),
         ("rich",        "rich"),
@@ -6337,8 +6360,8 @@ def doctor() -> None:
         ("psutil",      "psutil"),
         ("fastapi",     "fastapi"),
         ("uvicorn",     "uvicorn"),
-        ("numpy",       "numpy"),
-        ("sqlalchemy",  "sqlalchemy"),
+        ("pydantic",    "pydantic"),
+        ("packaging",   "packaging"),
     ]
     for label, mod in packages:
         try:
@@ -6348,15 +6371,30 @@ def doctor() -> None:
         except ImportError:
             _row(f"  {label}", False, "not installed — run `pip install llm-autotune`")
 
+    # ── Optional packages ────────────────────────────────────────────────
+    opt_packages = [
+        ("mlx-lm",    "mlx_lm",    "Apple Silicon acceleration"),
+        ("numpy",     "numpy",      "recall/search features"),
+    ]
+    for label, mod, purpose in opt_packages:
+        try:
+            m = importlib.import_module(mod)
+            ver = getattr(m, "__version__", "?")
+            _row(f"  {label} [dim](optional)[/dim]", True, f"v{ver}")
+        except ImportError:
+            _row(f"  {label} [dim](optional)[/dim]", None, f"not installed — needed for {purpose}")
+
     # ── Ollama ──────────────────────────────────────────────────────────
+    from autotune._ollama import ollama_base as _ollama_base
+    _ollama_url = _ollama_base()
     console.print()
     try:
-        r = httpx.get("http://localhost:11434/api/version", timeout=2.0)
+        r = httpx.get(f"{_ollama_url}/api/version", timeout=2.0)
         ver = r.json().get("version", "?")
-        _row("Ollama", True, f"v{ver} running at localhost:11434")
+        _row("Ollama", True, f"v{ver} running at {_ollama_url}")
         # How many models loaded?
         try:
-            ps_r = httpx.get("http://localhost:11434/api/ps", timeout=2.0)
+            ps_r = httpx.get(f"{_ollama_url}/api/ps", timeout=2.0)
             loaded = ps_r.json().get("models", [])
             n = len(loaded)
             if n:

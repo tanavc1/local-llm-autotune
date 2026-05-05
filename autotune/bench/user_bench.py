@@ -81,7 +81,8 @@ from autotune.hardware.profiler import profile_hardware
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-OLLAMA_BASE = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base_fn
+OLLAMA_BASE = _ollama_base_fn()
 
 # Realistic prompts sampled from actual user workflows
 SCENARIOS: dict[str, list[dict]] = {

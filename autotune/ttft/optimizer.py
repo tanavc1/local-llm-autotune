@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Optional
 import psutil
 
 from autotune.api.ctx_utils import compute_num_ctx, estimate_tokens
+from autotune.config.user_config import effective_default
 
 if TYPE_CHECKING:
     from autotune.api.profiles import Profile
@@ -306,6 +307,12 @@ class TTFTOptimizer:
         if num_keep > 0:
             options["num_keep"] = num_keep
 
+        keep_alive_val = (
+            KEEP_ALIVE_FOREVER
+            if effective_default("keep_alive_enabled") is not False
+            else "5m"
+        )
+
         debug = {
             "pressure_level":    pressure_level,
             "ram_pct":           round(ram_pct, 1),
@@ -316,7 +323,7 @@ class TTFTOptimizer:
             "f16_kv":            f16_kv,
             "num_batch":         num_batch,
             "flash_attn":        True,
-            "keep_alive":        KEEP_ALIVE_FOREVER,
+            "keep_alive":        keep_alive_val,
             "no_swap":           no_swap,
             "no_swap_level":     no_swap_decision.level if no_swap_decision else None,
         }
@@ -324,7 +331,7 @@ class TTFTOptimizer:
 
         return {
             "options":       options,
-            "keep_alive":    KEEP_ALIVE_FOREVER,   # Mechanism 2
+            "keep_alive":    keep_alive_val,
             "_debug":        debug,
             "_no_swap":      no_swap_decision,     # None if no_swap=False
         }

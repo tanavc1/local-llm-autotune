@@ -108,7 +108,8 @@ except ImportError:
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-_OLLAMA_BASE         = "http://localhost:11434"
+from autotune._ollama import ollama_base as _ollama_base_fn
+_OLLAMA_BASE         = _ollama_base_fn()
 _RAW_NUM_CTX         = 4096
 _KEEP_ALIVE_LOADED   = "30m"
 _COOLDOWN_TRIAL_SEC  = 5.0      # between same-condition trials

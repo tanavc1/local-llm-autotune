@@ -20,10 +20,11 @@ from typing import Any, Optional
 
 # Keys the user is allowed to set, with (type_hint, description, default)
 KNOWN_KEYS: dict[str, tuple[str, str, Any]] = {
-    "default_model":   ("str",  "Default model for `autotune chat` / `autotune run`", None),
-    "default_profile": ("str",  "Default profile: fast | balanced | quality",         "balanced"),
-    "serve_host":      ("str",  "Default host for `autotune serve`",                  "127.0.0.1"),
-    "serve_port":      ("int",  "Default port for `autotune serve`",                  8765),
+    "default_model":      ("str",  "Default model for `autotune chat` / `autotune run`",                None),
+    "default_profile":    ("str",  "Default profile: fast | balanced | quality",                        "balanced"),
+    "serve_host":         ("str",  "Default host for `autotune serve`",                                 "127.0.0.1"),
+    "serve_port":         ("int",  "Default port for `autotune serve`",                                 8765),
+    "keep_alive_enabled": ("bool", "Keep model loaded between sessions (eliminates 1–4 s cold reload)", True),
 }
 
 
@@ -85,6 +86,16 @@ def set_value(key: str, value: str) -> tuple[bool, str]:
             coerced = int(value)
         except ValueError:
             return False, f"{key} must be an integer, got {value!r}"
+
+    if type_hint == "bool":
+        if isinstance(value, bool):
+            coerced = value
+        elif str(value).lower() in ("true", "1", "yes", "on"):
+            coerced = True
+        elif str(value).lower() in ("false", "0", "no", "off"):
+            coerced = False
+        else:
+            return False, f"{key} must be true or false, got {value!r}"
 
     if key == "default_profile" and value not in ("fast", "balanced", "quality"):
         return False, "default_profile must be one of: fast, balanced, quality"

@@ -126,6 +126,33 @@ function OptimizationCard({
   );
 }
 
+// ─── Summary data ─────────────────────────────────────────────────────────────
+
+const ALL_OPTIMIZATIONS = [
+  { n: "01", name: "Precise KV allocation",        cat: "Memory",       impact: "Highest",  desc: "Right-sizes the KV cache to each request — frees 300+ MB per call",              color: "violet" },
+  { n: "02", name: "Live pressure response",        cat: "Memory",       impact: "Highest",  desc: "Adjusts context + KV precision in real time as RAM changes",                     color: "orange" },
+  { n: "03", name: "System prompt caching",         cat: "Speed",        impact: "High",     desc: "Pins system prompt in KV — never re-evaluated after turn 1",                    color: "blue" },
+  { n: "04", name: "Keep-alive",                    cat: "Speed",        impact: "High",     desc: "Model stays in RAM — eliminates 1–4s cold-reload between sessions",             color: "green" },
+  { n: "05", name: "Bucket snapping",               cat: "Speed",        impact: "High",     desc: "Snaps context to stable sizes so Ollama reuses Metal buffers — no thrashing",   color: "violet" },
+  { n: "06", name: "KV precision control",          cat: "Memory",       impact: "High",     desc: "F16 → Q8 under pressure — halves KV footprint with negligible quality impact",  color: "blue" },
+  { n: "07", name: "Flash attention",               cat: "Speed",        impact: "Medium",   desc: "Reduces peak activation memory during prefill — zero quality impact",            color: "violet" },
+  { n: "08", name: "NoSwapGuard",                   cat: "Safety",       impact: "Medium",   desc: "Pre-flight RAM check; graduates context down before any swap risk",              color: "orange" },
+  { n: "09", name: "Larger prefill batch",          cat: "Speed",        impact: "Medium",   desc: "num_batch=1024 → fewer GPU passes for long prompts",                            color: "blue" },
+  { n: "10", name: "Pre-flight model analysis",     cat: "Safety",       impact: "Medium",   desc: "Checks model fits before loading; suggests lighter quants if not",              color: "orange" },
+  { n: "11", name: "Hardware tuner",                cat: "Intelligence", impact: "Moderate", desc: "QOS class, process priority, GC disable, CPU governor around inference",        color: "orange" },
+  { n: "12", name: "Adaptive session advisor",      cat: "Intelligence", impact: "Moderate", desc: "Watches live metrics; takes graduated action before performance degrades",       color: "red" },
+  { n: "13", name: "Context compressor",            cat: "Context",      impact: "Moderate", desc: "Compresses old messages in tiers when approaching context ceiling",              color: "violet" },
+  { n: "14", name: "Conversation memory & recall",  cat: "Context",      impact: "Selective", desc: "Saves sessions locally; injects semantically relevant past context",            color: "blue" },
+] as const;
+
+const impactBadge: Record<string, string> = {
+  "Highest":   "border-violet-500/40 bg-violet-500/15 text-violet-300",
+  "High":      "border-green-500/30 bg-green-500/10 text-green-300",
+  "Medium":    "border-blue-500/30 bg-blue-500/10 text-blue-300",
+  "Moderate":  "border-white/15 bg-white/5 text-white/50",
+  "Selective": "border-white/15 bg-white/5 text-white/50",
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WhatWeDo() {
@@ -142,7 +169,7 @@ export default function WhatWeDo() {
             autotune
           </Link>
           <div className="flex items-center gap-5 text-xs text-white/50">
-            <a href="#kv-cache" className="hidden hover:text-white transition-colors sm:block">The KV Cache</a>
+            <a href="#all" className="hidden hover:text-white transition-colors sm:block">All 14</a>
             <a href="#memory" className="hidden hover:text-white transition-colors sm:block">Memory</a>
             <a href="#speed" className="hidden hover:text-white transition-colors sm:block">Speed</a>
             <a href="#intelligence" className="hidden hover:text-white transition-colors sm:block">Intelligence</a>
@@ -163,7 +190,7 @@ export default function WhatWeDo() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative overflow-hidden px-6 pt-24 pb-16 text-center">
+      <section className="relative overflow-hidden px-6 pt-24 pb-12 text-center">
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -top-32 left-1/2 h-[500px] w-[700px] -translate-x-1/2 rounded-full bg-violet-600/8 blur-[120px]" />
         </div>
@@ -178,49 +205,77 @@ export default function WhatWeDo() {
             </span>
           </h1>
           <p className="text-lg text-white/55 leading-relaxed max-w-2xl mx-auto">
-            No marketing copy. No jargon. This page explains every single optimization
-            autotune applies — what it is, why it matters, and how it actually works.
-            We&apos;ll start with the one concept that underpins almost everything: the KV cache.
+            No marketing copy. No jargon. Every single optimization — what it is, why it matters,
+            and exactly how it works. Ordered by how much it actually helps.
           </p>
         </div>
       </section>
 
-      {/* ── Table of contents ── */}
-      <section className="px-6 pb-12">
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ── ALL 14 OPTIMIZATIONS AT A GLANCE ── */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      <section id="all" className="px-6 pb-16">
         <div className="mx-auto max-w-5xl">
-          <div className="rounded-2xl border border-white/8 bg-white/3 p-6">
-            <p className="text-xs font-semibold uppercase tracking-widest text-white/40 mb-4">On this page</p>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
-              {[
-                { href: "#kv-cache",    label: "What is the KV cache?",           sub: "The central concept" },
-                { href: "#memory",      label: "Memory optimizations",             sub: "5 separate techniques" },
-                { href: "#speed",       label: "Speed optimizations",              sub: "5 separate techniques" },
-                { href: "#intelligence",label: "Adaptive intelligence",            sub: "2 systems" },
-                { href: "#context",     label: "Context & conversation",           sub: "2 systems" },
-                { href: "#honest",      label: "What we don't change",             sub: "Honest about tradeoffs" },
-              ].map((item) => (
+          <SectionLabel>All 14 optimizations</SectionLabel>
+          <h2 className="text-2xl font-bold text-white mb-2">At a glance — ordered by impact</h2>
+          <p className="text-white/45 text-sm mb-8 max-w-xl">
+            Click any item below to jump to the full explanation.
+          </p>
+
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            {ALL_OPTIMIZATIONS.map((opt, i) => {
+              const borderColors: Record<string, string> = {
+                violet: "hover:border-violet-500/30",
+                blue:   "hover:border-blue-500/25",
+                green:  "hover:border-green-500/25",
+                orange: "hover:border-orange-500/25",
+                red:    "hover:border-red-500/25",
+              };
+              const dotColors: Record<string, string> = {
+                violet: "bg-violet-400",
+                blue:   "bg-blue-400",
+                green:  "bg-green-400",
+                orange: "bg-orange-400",
+                red:    "bg-red-400",
+              };
+              const sectionMap: Record<number, string> = {
+                0: "memory", 1: "memory", 2: "speed", 3: "speed", 4: "speed",
+                5: "memory", 6: "speed", 7: "safety", 8: "speed", 9: "safety",
+                10: "intelligence", 11: "intelligence", 12: "context", 13: "context",
+              };
+              return (
                 <a
-                  key={item.href}
-                  href={item.href}
-                  className="flex items-start gap-3 rounded-xl border border-white/5 bg-white/3 px-4 py-3 hover:border-violet-500/30 hover:bg-violet-500/5 transition-colors group"
+                  key={opt.n}
+                  href={`#${sectionMap[i] ?? "memory"}`}
+                  className={`flex items-start gap-3 rounded-xl border border-white/6 bg-white/3 px-4 py-3 transition-colors ${borderColors[opt.color]} hover:bg-white/5 group`}
                 >
-                  <span className="mt-0.5 text-violet-400 group-hover:text-violet-300 text-xs">→</span>
-                  <div>
-                    <div className="text-white/80 font-medium group-hover:text-white transition-colors">{item.label}</div>
-                    <div className="text-xs text-white/35 mt-0.5">{item.sub}</div>
+                  <div className="flex items-center gap-2 shrink-0 mt-0.5">
+                    <span className="text-[10px] font-mono text-white/25">#{opt.n}</span>
+                    <div className={`h-1.5 w-1.5 rounded-full ${dotColors[opt.color]}`} />
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                      <span className="text-sm font-semibold text-white/85 group-hover:text-white transition-colors">{opt.name}</span>
+                      <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${impactBadge[opt.impact]}`}>
+                        {opt.impact}
+                      </span>
+                    </div>
+                    <p className="text-xs text-white/40 leading-relaxed">{opt.desc}</p>
+                  </div>
+                  <span className="text-white/20 group-hover:text-white/50 transition-colors text-xs mt-0.5 shrink-0">→</span>
                 </a>
-              ))}
-            </div>
+              );
+            })}
           </div>
         </div>
       </section>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}
-      {/* ── THE KV CACHE ── */}
+      {/* ── THE KV CACHE — FOUNDATION ── */}
       {/* ══════════════════════════════════════════════════════════════════════ */}
 
-      <section id="kv-cache" className="px-6 py-20 bg-white/[0.02] border-y border-white/5">
+      <section className="px-6 py-20 bg-white/[0.02] border-y border-white/5">
         <div className="mx-auto max-w-5xl">
           <SectionLabel>Foundation</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-3">
@@ -322,23 +377,23 @@ export default function WhatWeDo() {
 
       <section id="memory" className="px-6 py-20">
         <div className="mx-auto max-w-5xl">
-          <SectionLabel>Memory optimizations</SectionLabel>
+          <SectionLabel>Memory — highest impact</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-3">
-            Five ways autotune manages RAM.
+            How autotune manages RAM.
           </h2>
           <p className="text-white/50 mb-12 max-w-2xl text-sm">
             RAM is the single most important resource for local LLM inference. Running out means
             your OS starts writing to your SSD (swap), which drops generation speed from 30+ tok/s
-            to under 5 tok/s and makes your whole computer sluggish. autotune has five independent
-            systems for keeping memory under control.
+            to under 5 tok/s and makes your whole computer sluggish. autotune has four independent
+            systems for keeping memory under control — ordered here from most to least impactful.
           </p>
 
           <div className="space-y-6">
 
             <OptimizationCard
               number="01"
-              title="Dynamic context sizing"
-              tag="Core · Every request"
+              title="Precise KV allocation — dynamic context sizing"
+              tag="Highest impact · Every request"
               tagColor="violet"
               icon="📐"
             >
@@ -346,7 +401,7 @@ export default function WhatWeDo() {
                 Ollama allocates the full KV cache before generating the first token. With the
                 default <code className="text-white/70">num_ctx=4096</code>, it zeros and initializes
                 a 4,096-token buffer even if your prompt is 50 words. That initialization is part
-                of what you wait for.
+                of what you wait for before the first token appears.
               </p>
               <p>
                 autotune computes the minimum context that actually fits this specific request:
@@ -354,8 +409,8 @@ export default function WhatWeDo() {
               <Formula>num_ctx = clamp(input_tokens + max_new_tokens + 256, 512, profile_max)</Formula>
               <p>
                 For a typical balanced-profile chat message: ~22-token prompt + 1024 max reply +
-                256 buffer = 1,302 tokens. That maps to the 1,536 bucket (see optimization #6 below).
-                The 14B model frees ~600 MB before a single token is generated.
+                256 buffer = 1,302 tokens. That maps to the 1,536 bucket (see optimization #05 below).
+                On qwen3:8b, this frees 381 MB before a single token is generated — on every single request.
               </p>
               <div className="rounded-xl border border-white/8 bg-black/30 p-4 space-y-2">
                 <p className="text-xs font-semibold text-white/40 uppercase tracking-wider">RAM freed per request — qwen3:8b</p>
@@ -372,22 +427,75 @@ export default function WhatWeDo() {
 
             <OptimizationCard
               number="02"
+              title="Live memory pressure response — real-time adaptation"
+              tag="Highest impact · Every request"
+              tagColor="orange"
+              icon="📊"
+            >
+              <p>
+                Right-sizing the KV cache at request time is the foundation. But RAM usage on your
+                machine is dynamic: a browser tab loads, Xcode compiles in the background, a background
+                process wakes up. autotune reads the system&apos;s actual RAM usage before every single
+                request and applies two independent levers — context window size and KV precision —
+                automatically, without any user action.
+              </p>
+              <div className="rounded-xl border border-white/8 bg-black/30 p-4">
+                <p className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                  Automatic adjustments by RAM tier — checked live, every request
+                </p>
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="font-semibold text-white/40">RAM usage</div>
+                    <div className="font-semibold text-white/40">Context window</div>
+                    <div className="font-semibold text-white/40">KV precision</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono border-t border-white/5 pt-2">
+                    <div className="text-green-300">under 80%</div>
+                    <div className="text-white/60">full size</div>
+                    <div className="text-white/60">profile default</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono">
+                    <div className="text-yellow-300">80–88%</div>
+                    <div className="text-yellow-300">−10%</div>
+                    <div className="text-white/60">unchanged</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono">
+                    <div className="text-orange-300">88–93%</div>
+                    <div className="text-orange-300">−25%</div>
+                    <div className="text-orange-300">F16 → Q8 (−50% KV RAM)</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono">
+                    <div className="text-red-400">over 93%</div>
+                    <div className="text-red-400">halved</div>
+                    <div className="text-red-400">forced Q8</div>
+                  </div>
+                </div>
+              </div>
+              <p>
+                KV precision switching (F16 → Q8) cuts the KV cache&apos;s RAM footprint in half
+                at the cost of negligible quality degradation — each attention value goes from 2 bytes
+                to 1 byte. The difference in model output is undetectable in practice. You get a notice
+                in the chat interface when an adjustment fires: &ldquo;RAM 88% — context 8,192→6,144 tokens, KV F16→Q8&rdquo;.
+              </p>
+            </OptimizationCard>
+
+            <OptimizationCard
+              number="06"
               title="KV cache precision control"
-              tag="Memory · Automatic"
+              tag="High impact · Profile-aware"
               tagColor="blue"
               icon="🎚️"
             >
               <p>
-                Each element in the KV cache can be stored at different numeric precision.
-                F16 (16-bit float) uses 2 bytes per element. Q8 (8-bit quantized) uses 1 byte.
-                Switching from F16 to Q8 <strong className="text-white/85">cuts the entire KV
-                cache footprint in half</strong> — with negligible quality impact.
+                Beyond the live pressure response above, each profile has a deliberate default KV
+                precision setting. F16 (16-bit float) uses 2 bytes per KV element. Q8 (8-bit quantized)
+                uses 1 byte — <strong className="text-white/85">half the KV memory at the same context size</strong>,
+                with negligible quality impact.
               </p>
               <p>
                 This is separate from model quantization (Q4_K_M, Q5_K_M, etc.), which applies
                 to the model&apos;s weights. KV precision only affects the temporary computation
-                cache, not the model itself. The effect on output quality is essentially
-                undetectable in practice.
+                cache, not the model itself.
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-white/8 bg-white/3 p-3 text-xs">
@@ -409,7 +517,7 @@ export default function WhatWeDo() {
             </OptimizationCard>
 
             <OptimizationCard
-              number="03"
+              number="08"
               title="NoSwapGuard — pre-flight RAM check"
               tag="Safety · Every request"
               tagColor="orange"
@@ -466,57 +574,7 @@ export default function WhatWeDo() {
             </OptimizationCard>
 
             <OptimizationCard
-              number="04"
-              title="Live memory pressure response"
-              tag="Adaptive · Real-time"
-              tagColor="orange"
-              icon="📊"
-            >
-              <p>
-                Even with pre-flight checks, RAM usage changes during a session as other apps
-                open files, browsers load pages, and background tasks run. autotune monitors RAM
-                usage on every request and automatically adjusts if pressure builds.
-              </p>
-              <div className="rounded-xl border border-white/8 bg-black/30 p-4">
-                <p className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Automatic adjustments by RAM tier
-                </p>
-                <div className="space-y-2 text-xs">
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="font-semibold text-white/40">RAM usage</div>
-                    <div className="font-semibold text-white/40">Context</div>
-                    <div className="font-semibold text-white/40">KV precision</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 font-mono">
-                    <div className="text-green-300">under 80%</div>
-                    <div className="text-white/60">full size</div>
-                    <div className="text-white/60">profile default</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 font-mono">
-                    <div className="text-yellow-300">80–88%</div>
-                    <div className="text-yellow-300">−10%</div>
-                    <div className="text-white/60">profile default</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 font-mono">
-                    <div className="text-orange-300">88–93%</div>
-                    <div className="text-orange-300">−25%</div>
-                    <div className="text-orange-300">F16 → Q8</div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 font-mono">
-                    <div className="text-red-400">over 93%</div>
-                    <div className="text-red-400">halved</div>
-                    <div className="text-red-400">forced Q8</div>
-                  </div>
-                </div>
-              </div>
-              <p>
-                These happen automatically — no user action required. You get a notice in the chat
-                interface when an adjustment is made ("RAM 88% — context 8,192→6,144 tokens, KV F16→Q8").
-              </p>
-            </OptimizationCard>
-
-            <OptimizationCard
-              number="05"
+              number="10"
               title="Pre-flight model fit analysis"
               tag="Safety · Before loading"
               tagColor="blue"
@@ -544,7 +602,7 @@ export default function WhatWeDo() {
                 </Callout>
                 <Callout color="orange">
                   If the model is too heavy, autotune suggests a lighter quantization:
-                  "Model requires ~14 GB but only 11 GB available. Pull Q4_K_M instead (~9 GB)."
+                  &ldquo;Model requires ~14 GB but only 11 GB available. Pull Q4_K_M instead (~9 GB).&rdquo;
                   No guessing — the recommendation is calculated from the exact model architecture.
                 </Callout>
               </div>
@@ -560,50 +618,22 @@ export default function WhatWeDo() {
 
       <section id="speed" className="px-6 py-20 bg-white/[0.02] border-y border-white/5">
         <div className="mx-auto max-w-5xl">
-          <SectionLabel>Speed optimizations</SectionLabel>
+          <SectionLabel>Speed — high impact</SectionLabel>
           <h2 className="text-3xl font-bold text-white sm:text-4xl mb-3">
             Five ways autotune reduces latency.
           </h2>
           <p className="text-white/50 mb-12 max-w-2xl text-sm">
             TTFT — time to first token — is what you feel as the &ldquo;thinking pause&rdquo; before
             the model starts responding. autotune reduces it through five distinct techniques, all
-            of which work simultaneously and compound each other.
+            working simultaneously, ordered here from most to least impactful.
           </p>
 
           <div className="space-y-6">
 
             <OptimizationCard
-              number="06"
-              title="Context bucket snapping"
-              tag="Speed · Every request"
-              tagColor="violet"
-              icon="🎯"
-            >
-              <p>
-                After computing the minimum context size needed, autotune rounds it up to the nearest
-                &ldquo;bucket&rdquo; from a fixed list:
-              </p>
-              <Formula>Buckets: 512 · 768 · 1024 · 1536 · 2048 · 3072 · 4096 · 6144 · 8192 · 12288 · 16384 · 32768</Formula>
-              <p>
-                Here&apos;s why this matters enormously: Ollama caches the KV buffer for the most
-                recently used context length. If <code className="text-white/70">num_ctx</code> changes
-                between requests — say 1,286 then 1,157 then 1,308 — Ollama must{" "}
-                <strong className="text-white/85">reallocate the Metal buffer on every single call</strong>,
-                even if the model is already loaded. This &ldquo;KV thrashing&rdquo; adds 100–300 ms
-                of overhead per request and completely negates the benefit of smaller context windows.
-              </p>
-              <p>
-                By snapping to buckets, prompts of 50–200 tokens all map to bucket 1,536. Ollama
-                allocates it once and reuses the buffer on every subsequent request — zero reallocation
-                cost. All bucket sizes are multiples of 256, which aligns with Metal&apos;s memory
-                alignment boundaries for F16 tensors.
-              </p>
-            </OptimizationCard>
-
-            <OptimizationCard
-              number="07"
+              number="03"
               title="System prompt prefix caching"
-              tag="Speed · Multi-turn"
+              tag="High impact · Multi-turn"
               tagColor="blue"
               icon="📌"
             >
@@ -647,9 +677,9 @@ export default function WhatWeDo() {
             </OptimizationCard>
 
             <OptimizationCard
-              number="08"
+              number="04"
               title="Model keep-alive"
-              tag="Speed · Session start"
+              tag="High impact · Session start"
               tagColor="green"
               icon="♾️"
             >
@@ -668,14 +698,43 @@ export default function WhatWeDo() {
                 weights were already taking up RAM from the moment it was loaded. Setting keep-alive
                 to forever means Ollama doesn&apos;t release and re-acquire that same RAM between
                 sessions. It doesn&apos;t cost more memory — it just keeps the memory committed,
-                which eliminates the reload time.
+                which eliminates the reload time. You can disable this via{" "}
+                <code className="text-white/70">autotune config set keep_alive_enabled false</code>.
               </Callout>
             </OptimizationCard>
 
             <OptimizationCard
-              number="09"
+              number="05"
+              title="Context bucket snapping"
+              tag="High impact · Every request"
+              tagColor="violet"
+              icon="🎯"
+            >
+              <p>
+                After computing the minimum context size needed, autotune rounds it up to the nearest
+                &ldquo;bucket&rdquo; from a fixed list:
+              </p>
+              <Formula>Buckets: 512 · 768 · 1024 · 1536 · 2048 · 3072 · 4096 · 6144 · 8192 · 12288 · 16384 · 32768</Formula>
+              <p>
+                Here&apos;s why this matters enormously: Ollama caches the KV buffer for the most
+                recently used context length. If <code className="text-white/70">num_ctx</code> changes
+                between requests — say 1,286 then 1,157 then 1,308 — Ollama must{" "}
+                <strong className="text-white/85">reallocate the Metal buffer on every single call</strong>,
+                even if the model is already loaded. This &ldquo;KV thrashing&rdquo; adds 100–300 ms
+                of overhead per request and completely negates the benefit of smaller context windows.
+              </p>
+              <p>
+                By snapping to buckets, prompts of 50–200 tokens all map to bucket 1,536. Ollama
+                allocates it once and reuses the buffer on every subsequent request — zero reallocation
+                cost. All bucket sizes are multiples of 256, which aligns with Metal&apos;s memory
+                alignment boundaries for F16 tensors.
+              </p>
+            </OptimizationCard>
+
+            <OptimizationCard
+              number="07"
               title="Flash attention"
-              tag="Speed · Every request"
+              tag="Medium impact · Every request"
               tagColor="violet"
               icon="⚡"
             >
@@ -699,9 +758,9 @@ export default function WhatWeDo() {
             </OptimizationCard>
 
             <OptimizationCard
-              number="10"
+              number="09"
               title="Larger prefill batch size"
-              tag="Speed · Long prompts"
+              tag="Medium impact · Long prompts"
               tagColor="blue"
               icon="🚀"
             >
@@ -748,7 +807,7 @@ export default function WhatWeDo() {
             <OptimizationCard
               number="11"
               title="Hardware tuner — OS-level scheduling"
-              tag="Speed · During inference"
+              tag="Moderate impact · During inference"
               tagColor="orange"
               icon="🔧"
             >
@@ -803,7 +862,7 @@ export default function WhatWeDo() {
             <OptimizationCard
               number="12"
               title="Adaptive session advisor"
-              tag="Adaptive · Live monitoring"
+              tag="Moderate impact · Live monitoring"
               tagColor="red"
               icon="🧠"
             >
@@ -877,7 +936,7 @@ export default function WhatWeDo() {
             <OptimizationCard
               number="13"
               title="Context compressor"
-              tag="Context · Long sessions"
+              tag="Moderate impact · Long sessions"
               tagColor="violet"
               icon="🗜️"
             >
@@ -923,7 +982,7 @@ export default function WhatWeDo() {
             <OptimizationCard
               number="14"
               title="Conversation memory &amp; recall"
-              tag="Recall · Across sessions"
+              tag="Selective impact · Across sessions"
               tagColor="blue"
               icon="💾"
             >
@@ -1040,51 +1099,6 @@ export default function WhatWeDo() {
         </div>
       </section>
 
-      {/* ── Summary table ── */}
-      <section className="px-6 pb-20">
-        <div className="mx-auto max-w-5xl">
-          <SectionLabel>Summary</SectionLabel>
-          <h2 className="text-2xl font-bold text-white mb-8">All 14 optimizations at a glance</h2>
-          <div className="overflow-hidden rounded-2xl border border-white/8">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-white/8 bg-white/4 text-left font-semibold uppercase tracking-wider text-white/40">
-                  <th className="px-5 py-4">#</th>
-                  <th className="px-5 py-4">Optimization</th>
-                  <th className="px-5 py-4 hidden sm:table-cell">Category</th>
-                  <th className="px-5 py-4">What it does</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { n: "01", name: "Dynamic context sizing",        cat: "Memory",       desc: "Allocates exactly the KV cache each request needs — not a fixed maximum" },
-                  { n: "02", name: "KV cache precision",            cat: "Memory",       desc: "F16 (2 B/elem) or Q8 (1 B/elem) — halves KV footprint when needed" },
-                  { n: "03", name: "NoSwapGuard",                   cat: "Memory",       desc: "Pre-flight RAM check before every request; reduces context if needed" },
-                  { n: "04", name: "Live pressure response",        cat: "Memory",       desc: "Real-time context + precision reduction at 80/88/93% RAM thresholds" },
-                  { n: "05", name: "Pre-flight model analysis",     cat: "Memory",       desc: "Calculates whether the model fits before loading; suggests lighter quants" },
-                  { n: "06", name: "Bucket snapping",               cat: "Speed",        desc: "Snaps num_ctx to stable buckets so Ollama reuses KV buffers — no thrashing" },
-                  { n: "07", name: "System prompt prefix caching",  cat: "Speed",        desc: "Pins system prompt in KV via num_keep — never re-processed after turn 1" },
-                  { n: "08", name: "Keep-alive",                    cat: "Speed",        desc: "Model stays in RAM forever — eliminates 1–4s cold reload between sessions" },
-                  { n: "09", name: "Flash attention",               cat: "Speed",        desc: "Reduces peak activation memory during prefill — zero quality impact" },
-                  { n: "10", name: "Larger prefill batch",          cat: "Speed",        desc: "num_batch=1024 (vs 512 default) — fewer GPU passes for long prompts" },
-                  { n: "11", name: "Hardware tuner",                cat: "Intelligence", desc: "QOS class, process priority, GC disable, and CPU governor around inference" },
-                  { n: "12", name: "Adaptive session advisor",      cat: "Intelligence", desc: "Watches live metrics; takes graduated action before performance degrades" },
-                  { n: "13", name: "Context compressor",            cat: "Context",      desc: "Compresses old messages in tiers when approaching context limit" },
-                  { n: "14", name: "Conversation memory & recall",  cat: "Context",      desc: "Saves and semantically searches past sessions; injects relevant context" },
-                ].map((row, i) => (
-                  <tr key={row.n} className={`border-b border-white/5 ${i % 2 === 0 ? "bg-white/2" : ""}`}>
-                    <td className="px-5 py-3 font-mono text-white/30">{row.n}</td>
-                    <td className="px-5 py-3 font-medium text-white/80">{row.name}</td>
-                    <td className="px-5 py-3 text-white/40 hidden sm:table-cell">{row.cat}</td>
-                    <td className="px-5 py-3 text-white/50">{row.desc}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
       {/* ── CTA ── */}
       <section className="px-6 py-20 bg-white/[0.02] border-t border-white/5">
         <div className="mx-auto max-w-3xl text-center">
@@ -1119,7 +1133,7 @@ export default function WhatWeDo() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.0.0 — MIT License</span>
+            <span>autotune v1.1.1 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">

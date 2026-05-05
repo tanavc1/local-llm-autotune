@@ -500,7 +500,7 @@ def unload_mlx_model() -> bool:
     # Best-effort: clear Metal cache if mlx exposes it
     try:
         import mlx.core as mx
-        mx.metal.clear_cache()
+        mx.clear_cache()
     except Exception:
         pass
     return True

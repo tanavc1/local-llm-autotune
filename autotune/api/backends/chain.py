@@ -30,6 +30,7 @@ from typing import AsyncGenerator, Optional
 import httpx
 
 from autotune._ollama import ollama_base as _ollama_base
+from autotune.config.user_config import effective_default as _cfg
 
 from .base import Backend, ChatChunk
 from .mlx_backend import (
@@ -413,7 +414,7 @@ class BackendChain:
                 options["repeat_penalty"] = repetition_penalty
             if options:
                 extra_body["options"] = options
-            extra_body["keep_alive"] = "-1m"   # keep model in VRAM/unified-memory
+            extra_body["keep_alive"] = "-1m" if _cfg("keep_alive_enabled") is not False else "5m"
 
         async for chunk in backend.stream(
             canonical_id,

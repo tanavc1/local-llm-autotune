@@ -7,6 +7,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.1.2] — 2026-05-04
+
+### Fixed
+
+- **`_version_newer` fallback** — the version comparison fallback used `v_new != v_cur` which returned `True` for any difference, not just newer versions. Fixed to use a tuple-based comparison so upgrade checks work correctly without `packaging`.
+- **`doctor` Python version check** — reported "3.10+ required" but the package supports Python 3.9+. Now correctly checks `>= 3.9`.
+- **`doctor` false failures for optional packages** — `numpy` and `sqlalchemy` were checked as required but are optional. They now show as warnings (⚠) instead of failures (✗).
+- **`packaging` added to required dependencies** — used internally for version comparison but was missing from `pyproject.toml`.
+- **Hardcoded `localhost:11434` in CLI commands** — `init`, `doctor`, `proof`, `ps`, `ls`, `run`, and bench-autoselect all bypassed `AUTOTUNE_OLLAMA_URL`. Fixed to use `_ollama_base()` consistently.
+- **`bench/proof_suite.py`, `bench/agent_bench.py`, `bench/user_bench.py`** — module-level `_OLLAMA_BASE` constants hardcoded `http://localhost:11434`, ignoring `AUTOTUNE_OLLAMA_URL`. Fixed to call `_ollama_base()` at import time.
+- **`proof` command silent failure** — `except Exception: pass` hid Ollama connection errors. Now shows a descriptive error message and exits with code 1.
+- **`proof` output path not validated** — writing results could crash with an unhelpful traceback if the parent directory didn't exist. Now creates missing directories with a clear error on failure.
+- **`ps` command unhandled exceptions** — raw tracebacks on backend query failure replaced with a clean error message and exit code 1.
+- **`mlx_backend.py` cache clear** — `mx.metal.clear_cache()` renamed to `mx.clear_cache()` in recent mlx versions; updated to avoid `AttributeError` on newer Apple Silicon setups.
+- **`keep_alive_enabled` config key** — new user-configurable setting (`autotune config set keep_alive_enabled false`) to disable indefinite model pinning for users on memory-constrained machines. Respected by both `TTFTOptimizer` and `BackendChain`.
+- **`user_config` bool coercion** — config values of type `bool` now accept `true/false/1/0/yes/no/on/off` strings instead of failing silently.
+
+---
+
 ## [1.0.9] — 2026-04-29
 
 ### Fixed
