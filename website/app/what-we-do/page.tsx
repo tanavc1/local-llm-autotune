@@ -1152,7 +1152,7 @@ export default function WhatWeDo() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.1.1 — MIT License</span>
+            <span>autotune v1.1.2 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">

@@ -154,7 +154,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-tight text-white">autotune</span>
             <span className="hidden rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-medium text-violet-300 sm:block">
-              v1.0.7
+              v1.1.2
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm text-white/60">
@@ -234,20 +234,6 @@ export default function Home() {
             </a>
           </div>
 
-          <div className="animate-fade-up delay-400">
-            <a
-              href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <img
-                alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
-                width="250"
-                height="54"
-                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
-              />
-            </a>
-          </div>
         </div>
 
         {/* Stats row */}
@@ -1010,20 +996,6 @@ export default function Home() {
             </a>
           </div>
 
-          <div className="mt-2">
-            <a
-              href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <img
-                alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
-                width="250"
-                height="54"
-                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
-              />
-            </a>
-          </div>
         </div>
       </section>
 
@@ -1031,7 +1003,7 @@ export default function Home() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.0.7 — MIT License</span>
+            <span>autotune v1.1.2 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
