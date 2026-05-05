@@ -234,6 +234,20 @@ export default function Home() {
             </a>
           </div>
 
+          <div className="animate-fade-up delay-400">
+            <a
+              href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
+                width="250"
+                height="54"
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
+              />
+            </a>
+          </div>
         </div>
 
         {/* Stats row */}
