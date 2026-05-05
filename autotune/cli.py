@@ -525,6 +525,7 @@ def init(model: Optional[str], skip_proof: bool, force: bool) -> None:
 
     # Check what's already installed in Ollama
     import httpx as _hx
+
     from autotune._ollama import ollama_base as _ollama_base_init
     installed: list[dict] = []
     try:
@@ -1516,6 +1517,7 @@ def _bench_autoselect(preferred: Optional[str] = None) -> Optional[str]:
         return preferred
     try:
         import httpx as _hx
+
         from autotune._ollama import ollama_base as _ob
         with _hx.Client(timeout=4.0) as c:
             r = c.get(f"{_ob()}/api/tags")

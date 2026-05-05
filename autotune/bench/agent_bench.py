@@ -109,6 +109,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 
 from autotune._ollama import ollama_base as _ollama_base_fn
+
 _OLLAMA_BASE         = _ollama_base_fn()
 _RAW_NUM_CTX         = 4096
 _KEEP_ALIVE_LOADED   = "30m"

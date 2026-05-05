@@ -65,6 +65,8 @@ from typing import Optional
 
 import psutil
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+from autotune._ollama import ollama_base as _ollama_base_fn
 from autotune.api.kv_manager import build_ollama_options, memory_pressure_snapshot
 from autotune.api.profiles import get_profile
 
@@ -79,9 +81,6 @@ from autotune.bench.user_metrics import (
 )
 from autotune.hardware.profiler import profile_hardware
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-from autotune._ollama import ollama_base as _ollama_base_fn
 OLLAMA_BASE = _ollama_base_fn()
 
 # Realistic prompts sampled from actual user workflows
