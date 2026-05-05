@@ -1,11 +1,12 @@
 # autotune — Local LLM Inference Optimizer
 
 [![PyPI](https://img.shields.io/pypi/v/llm-autotune)](https://pypi.org/project/llm-autotune/)
-[![Python](https://img.shields.io/pypi/pyversions/llm-autotune)](https://pypi.org/project/llm-autotune/)
+[![Python](https://img.shields.io/badge/python-3.9--3.13-blue)](https://pypi.org/project/llm-autotune/)
 [![CI](https://github.com/tanavc1/local-llm-autotune/actions/workflows/test.yml/badge.svg)](https://github.com/tanavc1/local-llm-autotune/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-Featured-DA552F?logo=producthunt&logoColor=white)](https://www.producthunt.com/products/autotune-llm)
 
-**Website & install guide → [autotune-llm.vercel.app](https://autotune-llm.vercel.app)**
+**Website & install guide → [autotunellm.com](https://autotunellm.com)**
 
 **39% faster time-to-first-word. 3× less KV cache. Drop-in for Ollama, LM Studio, and MLX.**
 
