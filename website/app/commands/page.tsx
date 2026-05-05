@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { CopyButton } from "../components/CopyButton";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "autotune commands — full reference",
   description:

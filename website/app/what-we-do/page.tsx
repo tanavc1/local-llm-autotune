@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "All we do — autotune",
   description:
@@ -130,13 +132,13 @@ function OptimizationCard({
 
 const ALL_OPTIMIZATIONS = [
   { n: "01", name: "Precise KV allocation",        cat: "Memory",       impact: "Highest",  desc: "Right-sizes the KV cache to each request — frees 300+ MB per call",              color: "violet" },
-  { n: "02", name: "Live pressure response",        cat: "Memory",       impact: "Highest",  desc: "Adjusts context + KV precision in real time as RAM changes",                     color: "orange" },
+  { n: "02", name: "Live pressure response",        cat: "Memory",       impact: "Highest",  desc: "Heuristic RAM % tiers — proactively trims context + KV precision long before swap risk",  color: "orange" },
   { n: "03", name: "System prompt caching",         cat: "Speed",        impact: "High",     desc: "Pins system prompt in KV — never re-evaluated after turn 1",                    color: "blue" },
   { n: "04", name: "Keep-alive",                    cat: "Speed",        impact: "High",     desc: "Model stays in RAM — eliminates 1–4s cold-reload between sessions",             color: "green" },
   { n: "05", name: "Bucket snapping",               cat: "Speed",        impact: "High",     desc: "Snaps context to stable sizes so Ollama reuses Metal buffers — no thrashing",   color: "violet" },
   { n: "06", name: "KV precision control",          cat: "Memory",       impact: "High",     desc: "F16 → Q8 under pressure — halves KV footprint with negligible quality impact",  color: "blue" },
   { n: "07", name: "Flash attention",               cat: "Speed",        impact: "Medium",   desc: "Reduces peak activation memory during prefill — zero quality impact",            color: "violet" },
-  { n: "08", name: "NoSwapGuard",                   cat: "Safety",       impact: "Medium",   desc: "Pre-flight RAM check; graduates context down before any swap risk",              color: "orange" },
+  { n: "08", name: "NoSwapGuard",                   cat: "Safety",       impact: "Medium",   desc: "Exact-math hard guarantee — computes precise KV bytes from model arch; only fires when swap is certain", color: "orange" },
   { n: "09", name: "Larger prefill batch",          cat: "Speed",        impact: "Medium",   desc: "num_batch=1024 → fewer GPU passes for long prompts",                            color: "blue" },
   { n: "10", name: "Pre-flight model analysis",     cat: "Safety",       impact: "Medium",   desc: "Checks model fits before loading; suggests lighter quants if not",              color: "orange" },
   { n: "11", name: "Hardware tuner",                cat: "Intelligence", impact: "Moderate", desc: "QOS class, process priority, GC disable, CPU governor around inference",        color: "orange" },
@@ -427,17 +429,17 @@ export default function WhatWeDo() {
 
             <OptimizationCard
               number="02"
-              title="Live memory pressure response — real-time adaptation"
+              title="Live memory pressure response — proactive RAM tier system"
               tag="Highest impact · Every request"
               tagColor="orange"
               icon="📊"
             >
               <p>
-                Right-sizing the KV cache at request time is the foundation. But RAM usage on your
-                machine is dynamic: a browser tab loads, Xcode compiles in the background, a background
-                process wakes up. autotune reads the system&apos;s actual RAM usage before every single
-                request and applies two independent levers — context window size and KV precision —
-                automatically, without any user action.
+                Live pressure is autotune&apos;s proactive, heuristic RAM management system. Before every
+                request, it reads the OS&apos;s RAM utilization percentage and adjusts context window
+                size and KV precision according to four fixed tiers — firing well before any swap risk
+                exists. At 80% utilization there is still 20% RAM free and no danger of swap, but
+                autotune starts backing off preemptively to stay that way as conditions change.
               </p>
               <div className="rounded-xl border border-white/8 bg-black/30 p-4">
                 <p className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
@@ -472,10 +474,17 @@ export default function WhatWeDo() {
                 </div>
               </div>
               <p>
-                KV precision switching (F16 → Q8) cuts the KV cache&apos;s RAM footprint in half
-                at the cost of negligible quality degradation — each attention value goes from 2 bytes
-                to 1 byte. The difference in model output is undetectable in practice. You get a notice
-                in the chat interface when an adjustment fires: &ldquo;RAM 88% — context 8,192→6,144 tokens, KV F16→Q8&rdquo;.
+                KV precision switching (F16 → Q8) cuts the KV cache&apos;s RAM footprint in half at
+                the cost of negligible quality degradation — each attention value goes from 2 bytes to
+                1 byte. The difference in model output is undetectable in practice. You get a notice in
+                the chat interface when an adjustment fires: &ldquo;RAM 88% — context 8,192→6,144 tokens, KV F16→Q8&rdquo;.
+              </p>
+              <p className="text-xs text-white/40 border-t border-white/8 pt-3 mt-1">
+                <strong className="text-white/55">How this differs from NoSwapGuard (#08):</strong>{" "}
+                Live pressure fires on RAM percentage alone — no model architecture math, no precise byte
+                calculation. It is a proactive heuristic. NoSwapGuard is the separate exact-math check
+                that only activates when the precise KV byte calculation says swap will actually occur.
+                If Live pressure has already trimmed enough headroom, NoSwapGuard may not need to fire at all.
               </p>
             </OptimizationCard>
 
@@ -518,14 +527,23 @@ export default function WhatWeDo() {
 
             <OptimizationCard
               number="08"
-              title="NoSwapGuard — pre-flight RAM check"
+              title="NoSwapGuard — exact-math pre-flight guarantee"
               tag="Safety · Every request"
               tagColor="orange"
               icon="🛡️"
             >
               <p>
-                Before sending any request to Ollama, autotune runs a pre-flight check: will this
-                KV allocation fit in available RAM without causing swap?
+                NoSwapGuard is autotune&apos;s exact-math hard guarantee — completely different in
+                approach from the percentage-based Live pressure system (#02). Where Live pressure fires
+                at 80% RAM as a proactive heuristic, NoSwapGuard only activates when the math says
+                swap is about to happen. It queries Ollama for the actual model architecture — layers,
+                KV heads, head dimension — and computes the precise bytes the KV allocation will need:
+              </p>
+              <Formula>{"kv_bytes = 2 × n_layers × kv_heads × head_dim × num_ctx × precision_bytes"}</Formula>
+              <p>
+                If <code className="text-white/70">kv_bytes + 1.5 GB safety margin &gt; available RAM</code>,
+                it fires. Not because RAM reads as &ldquo;80% full&rdquo; — because the exact number
+                of bytes won&apos;t fit.
               </p>
               <p>
                 On Apple Silicon, when RAM fills up macOS starts compressing memory pages, then pages
@@ -566,10 +584,11 @@ export default function WhatWeDo() {
                 </div>
               </div>
               <p>
-                autotune keeps a 1.5 GB safety margin — macOS starts compressing memory at around
-                85% utilization, so staying below that threshold prevents any degradation at all.
-                The model&apos;s architecture (layers, KV heads, head dimension) is queried once
-                from Ollama and cached, so every calculation is exact, not estimated.
+                The model&apos;s architecture is queried once from Ollama&apos;s{" "}
+                <code className="text-white/70">/api/show</code> and cached — every calculation is
+                exact, not estimated. This is the fundamental distinction from Live pressure&apos;s
+                percentage tiers: NoSwapGuard knows precisely how many bytes are needed, not
+                approximately how stressed the system looks.
               </p>
             </OptimizationCard>
 

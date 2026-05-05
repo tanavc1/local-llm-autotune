@@ -234,7 +234,7 @@ Run `autotune recommend` to get a personalised pick with scores for your exact h
 | **OpenAI-compatible API** | Drop-in server at `localhost:8765/v1` — works with any OpenAI SDK |
 | **MLX backend** | On M-series Macs, routes inference to MLX-LM for native Metal GPU kernels |
 | **Persistent memory** | Every conversation saved to SQLite; semantically searches past sessions at startup |
-| **No-swap guarantee** | `--no-swap` mode reduces context window to ensure zero macOS swap |
+| **NoSwapGuard** | Exact-math pre-flight check using model architecture — computes precise KV bytes and reduces context + KV precision until the allocation fits in available RAM |
 
 ---
 
@@ -497,11 +497,15 @@ KV elements can be stored as F16 (2 bytes each) or Q8 (1 byte each). Q8 halves t
 - `fast` profile: always Q8
 - `balanced` / `quality`: F16 by default, Q8 under memory pressure
 
-**3. NoSwapGuard — pre-flight RAM check** — *every request*
+**3. NoSwapGuard — exact-math pre-flight guarantee** — *every request*
 
-Before sending any request to Ollama, autotune measures available RAM and calculates whether the KV allocation will fit without triggering swap. On Apple Silicon, swap during inference drops speed from 30+ tok/s to under 5 tok/s.
+NoSwapGuard is autotune's hard guarantee against swap — and it works completely differently from the Live pressure system below. Where Live pressure uses RAM percentage as a heuristic, NoSwapGuard queries the actual model architecture from Ollama and computes the precise bytes the KV allocation will need:
 
-If the KV won't fit, it reduces in levels (applied in order until it fits):
+```
+kv_bytes = 2 × n_layers × kv_heads × head_dim × num_ctx × precision_bytes
+```
+
+If `kv_bytes + 1.5 GB safety margin > available RAM`, it fires — not because RAM looks "80% full", but because the exact number of bytes won't fit. It reduces in levels, applied in order until the math clears:
 
 | Level | Action |
 |-------|--------|
@@ -512,11 +516,11 @@ If the KV won't fit, it reduces in levels (applied in order until it fits):
 | 4 | Quarter context + Q8 |
 | 5 | Minimum (512 tokens) + Q8 — emergency floor |
 
-The model's architecture (layers, KV heads, head dimension) is queried from Ollama's `/api/show` once and cached — every calculation is exact, not estimated.
+The model's architecture (layers, KV heads, head dimension) is queried from Ollama's `/api/show` once and cached — every calculation is exact, not estimated. This is the fundamental difference from Live pressure's percentage tiers: NoSwapGuard knows precisely how many bytes are needed.
 
 **4. Live memory pressure response** — *every request, real-time*
 
-Even with pre-flight checks, RAM usage changes as other apps open files and browsers load pages. autotune monitors RAM on every request:
+Live pressure is autotune's proactive, heuristic RAM tier system — entirely separate from NoSwapGuard's exact-math approach above. It reads the OS's RAM utilization percentage before every request and adjusts context + KV precision according to fixed thresholds, firing well before any swap risk:
 
 | RAM usage | Context | KV precision |
 |-----------|---------|--------------|
@@ -525,7 +529,7 @@ Even with pre-flight checks, RAM usage changes as other apps open files and brow
 | 88–93% | −25% | F16 → Q8 |
 | > 93% | halved | forced Q8 |
 
-Changes are reported in the chat interface. No user action needed.
+At 80% utilization there is still 20% RAM free — no swap danger — but autotune starts backing off preemptively. If Live pressure has already trimmed enough headroom, NoSwapGuard may not need to fire at all. Changes are reported in the chat interface. No user action needed.
 
 **5. Pre-flight model fit analysis** — *before loading*
 

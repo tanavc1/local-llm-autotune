@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { CopyButton } from "./components/CopyButton";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "autotune — Make your local AI faster",
   description:
@@ -193,7 +195,7 @@ export default function Home() {
           <div className="absolute bottom-0 left-0 h-[400px] w-[400px] rounded-full bg-blue-600/8 blur-[80px]" />
         </div>
 
-        <div className="relative z-10 flex flex-col items-center gap-6 max-w-4xl">
+        <div className="relative z-10 flex flex-col items-center gap-6 max-w-4xl mt-10 sm:mt-16">
           <Badge>Open source · MIT · pip install llm-autotune</Badge>
 
           <h1 className="text-5xl font-bold tracking-tight text-white sm:text-6xl lg:text-7xl animate-fade-up">
@@ -318,14 +320,14 @@ export default function Home() {
           <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-6 mb-5">
             <div className="flex items-center gap-2 mb-3">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">2</span>
-              <span className="text-sm font-semibold text-white">Live pressure management — adapts as your apps change RAM usage</span>
+              <span className="text-sm font-semibold text-white">Live pressure management — proactive RAM tier system</span>
             </div>
             <p className="text-sm text-white/60 mb-5">
               Right-sizing the KV cache at request time is the foundation. But RAM usage on your
               machine is dynamic: Chrome opens a tab, Xcode compiles, a background process wakes
-              up. autotune reads your system&apos;s actual RAM usage before every single request
-              and applies two independent levers — context window size and KV precision — to
-              ensure the model never pushes your system into disk swap, even as conditions change.
+              up. autotune reads the OS&apos;s RAM utilization percentage before every single request
+              and applies two independent levers — context window size and KV precision — across
+              four fixed tiers, maintaining headroom well before any swap risk develops.
             </p>
 
             {/* RAM pressure visualization */}
@@ -385,6 +387,9 @@ export default function Home() {
               instantly — with no meaningful quality impact. Q8 stores each attention value in 1
               byte instead of 2; the difference in model output is undetectable in practice.
               These adjustments happen automatically — you see a brief note in the chat UI when one fires.
+              This is a heuristic tier system based on RAM percentage. autotune also runs a separate
+              exact-math pre-flight check (NoSwapGuard) that computes precise KV bytes using your
+              model&apos;s architecture — that system only fires when swap is mathematically certain.
             </p>
           </div>
 
