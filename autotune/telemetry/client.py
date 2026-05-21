@@ -265,6 +265,25 @@ class TelemetryClient:
     # run_observations                                                     #
     # ------------------------------------------------------------------ #
 
+    def record_api_key_usage(self, usage_data: dict[str, Any]) -> bool:
+        """
+        Mirror one API-key usage record to the Supabase api_key_usage table.
+
+        The local SQLite store is the source of truth; this is a best-effort
+        async mirror for centralised analytics.  Failures are silently ignored.
+        """
+        allowed = {
+            "key_id", "key_name", "day", "model_id", "backend",
+            "prompt_tokens", "completion_tokens",
+            "latency_ms", "ttft_ms",
+            "status", "error_type",
+        }
+        payload = {k: v for k, v in usage_data.items() if k in allowed and v is not None}
+        if "key_id" not in payload:
+            return False
+        ok = self._post("api_key_usage", payload)
+        return ok
+
     def record_run(self, install_key: str, run_data: dict[str, Any]) -> bool:
         """
         Insert one performance observation row into run_observations.

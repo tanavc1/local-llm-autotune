@@ -409,3 +409,120 @@ FROM public.installations;
 
 COMMENT ON VIEW public.active_users IS
     'Rolling active machine counts (7d / 30d / 90d) and opt-in rate.';
+
+
+-- ==========================================================================
+-- 9. API key usage (enterprise billing / analytics)
+--    Mirrors per-request consumption from opted-in server deployments.
+--    The local SQLite db is the source of truth; this table is the
+--    cloud-side analytics mirror.
+--
+--    Writes use the anon key (INSERT-only policy).
+--    Reads require service_role or a future read-only reporting key.
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS public.api_key_usage (
+    id                  BIGSERIAL PRIMARY KEY,
+
+    -- Identifies the API key that made the request.
+    -- TEXT (not FK) so we can accept writes from any deployment without
+    -- requiring the api_keys table to be populated first.
+    key_id              TEXT NOT NULL,
+    key_name            TEXT,                    -- denormalised label for quick queries
+
+    day                 DATE NOT NULL,           -- UTC date of the request
+    model_id            TEXT,                    -- e.g. "qwen3:8b"
+    backend             TEXT,                    -- "ollama" | "mlx" | "lmstudio"
+
+    prompt_tokens       INTEGER NOT NULL DEFAULT 0,
+    completion_tokens   INTEGER NOT NULL DEFAULT 0,
+
+    latency_ms          REAL,                    -- total request wall time (ms)
+    ttft_ms             REAL,                    -- time-to-first-token (ms)
+
+    status              TEXT NOT NULL DEFAULT 'success',  -- "success" | "error"
+    error_type          TEXT,
+
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE public.api_key_usage IS
+    'Per-request API key usage records mirrored from opted-in autotune deployments. '
+    'One row per completed request.  Primary source of truth is local SQLite.';
+
+CREATE INDEX IF NOT EXISTS idx_aku_key_day
+    ON public.api_key_usage (key_id, day DESC);
+
+CREATE INDEX IF NOT EXISTS idx_aku_day
+    ON public.api_key_usage (day DESC);
+
+CREATE INDEX IF NOT EXISTS idx_aku_model
+    ON public.api_key_usage (model_id, day DESC)
+    WHERE model_id IS NOT NULL;
+
+-- RLS: anon can INSERT (best-effort mirror); service_role bypasses RLS
+ALTER TABLE public.api_key_usage ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    CREATE POLICY anon_can_insert_api_usage
+        ON public.api_key_usage FOR INSERT TO anon WITH CHECK (TRUE);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+
+-- --------------------------------------------------------------------------
+-- 9a. Aggregated daily view for dashboards / billing exports
+-- --------------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW public.api_key_daily_summary AS
+SELECT
+    key_id,
+    key_name,
+    day,
+    model_id,
+    backend,
+    COUNT(*)                                                    AS request_count,
+    SUM(prompt_tokens)                                          AS total_prompt_tokens,
+    SUM(completion_tokens)                                      AS total_completion_tokens,
+    SUM(prompt_tokens + completion_tokens)                      AS total_tokens,
+    ROUND(AVG(latency_ms)::NUMERIC, 1)                         AS avg_latency_ms,
+    ROUND(AVG(ttft_ms)::NUMERIC, 1)                            AS avg_ttft_ms,
+    COUNT(*) FILTER (WHERE status != 'success')                 AS error_count,
+    ROUND(
+        (COUNT(*) FILTER (WHERE status != 'success'))::NUMERIC
+        / NULLIF(COUNT(*), 0) * 100, 2
+    )                                                           AS error_rate_pct,
+    MIN(created_at)                                             AS first_request_at,
+    MAX(created_at)                                             AS last_request_at
+FROM public.api_key_usage
+GROUP BY key_id, key_name, day, model_id, backend
+ORDER BY day DESC, key_id;
+
+COMMENT ON VIEW public.api_key_daily_summary IS
+    'Aggregated daily usage per (key, model, backend). '
+    'Use for billing exports and per-customer consumption dashboards.';
+
+
+-- --------------------------------------------------------------------------
+-- 9b. Cross-key aggregate — useful for fleet-wide capacity planning
+-- --------------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW public.api_key_totals AS
+SELECT
+    key_id,
+    MAX(key_name)                                               AS key_name,
+    MIN(day)                                                    AS first_day,
+    MAX(day)                                                    AS last_day,
+    COUNT(DISTINCT day)                                         AS active_days,
+    COUNT(*)                                                    AS total_requests,
+    SUM(prompt_tokens)                                          AS total_prompt_tokens,
+    SUM(completion_tokens)                                      AS total_completion_tokens,
+    SUM(prompt_tokens + completion_tokens)                      AS total_tokens,
+    ROUND(AVG(latency_ms)::NUMERIC, 1)                         AS avg_latency_ms,
+    COUNT(*) FILTER (WHERE status != 'success')                 AS total_errors
+FROM public.api_key_usage
+GROUP BY key_id
+ORDER BY total_tokens DESC;
+
+COMMENT ON VIEW public.api_key_totals IS
+    'Lifetime aggregate per API key — total tokens, requests, and error count.';

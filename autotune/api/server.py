@@ -32,9 +32,9 @@ from importlib.metadata import PackageNotFoundError as _PkgNFE
 from importlib.metadata import version as _pkg_version
 
 import psutil
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 try:
@@ -260,6 +260,68 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
+# API key authentication middleware
+#
+# Activated when AUTOTUNE_REQUIRE_API_KEY=1.
+# Applies to all /v1/* requests; /health, /api/*, and /admin/* are exempt.
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def api_key_auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Only guard the OpenAI-compat inference paths
+    if not path.startswith("/v1/"):
+        return await call_next(request)
+
+    from .auth import api_key_enforcement_enabled, build_auth_error_response, verify_api_key_sync
+
+    if not api_key_enforcement_enabled():
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return build_auth_error_response(
+            401,
+            "missing_authorization",
+            "Authorization: Bearer <api_key> header required for /v1/* endpoints.",
+        )
+
+    raw_key = auth_header[len("Bearer "):]
+    key_record = verify_api_key_sync(raw_key)
+
+    if key_record is None:
+        # Key hash not found in the database at all
+        return build_auth_error_response(
+            401,
+            "invalid_api_key",
+            "The provided API key is invalid or does not exist.",
+        )
+
+    if not key_record.get("is_active"):
+        # Key exists but has been revoked
+        return build_auth_error_response(
+            403,
+            "key_revoked",
+            "This API key has been revoked. Contact your administrator.",
+        )
+
+    # Inject into request state so route handlers can log usage
+    request.state.api_key_id   = key_record["id"]
+    request.state.api_key_name = key_record.get("name", "")
+
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Admin router
+# ---------------------------------------------------------------------------
+
+from .admin import router as _admin_router  # noqa: E402
+
+app.include_router(_admin_router)
+
+# ---------------------------------------------------------------------------
 # Inference task scheduler — bounded FIFO queue
 #
 # Local LLMs are single-threaded on the hardware (GPU/ANE/unified memory).
@@ -473,6 +535,8 @@ async def _emit_run_telemetry(
     elapsed: float,
     prompt_tokens: int,
     comp_tokens: int,
+    api_key_id: Optional[str] = None,
+    api_key_name: str = "",
 ) -> None:
     """
     Log a completed inference run to local SQLite and (if opted in) Supabase.
@@ -553,6 +617,24 @@ async def _emit_run_telemetry(
         )
     except Exception:
         pass
+
+    # ── API key usage (if request was authenticated) ──────────────────────
+    if api_key_id:
+        try:
+            from .auth import log_api_key_usage
+            await log_api_key_usage(
+                key_id=api_key_id,
+                key_name=api_key_name,
+                model_id=model_id,
+                backend=backend_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=comp_tokens,
+                latency_ms=elapsed * 1000,
+                ttft_ms=ttft_ms,
+                status="success",
+            )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +904,7 @@ async def model_status(model_id: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/v1/completions")
-async def completions(req: CompletionRequest):
+async def completions(request: Request, req: CompletionRequest):
     """
     OpenAI-compatible text completion endpoint.
 
@@ -833,6 +915,8 @@ async def completions(req: CompletionRequest):
     FIM (fill-in-the-middle) is handled by embedding the suffix hint in the
     system prompt — this is the most portable approach across local models.
     """
+    api_key_id   = getattr(request.state, "api_key_id",   None)
+    api_key_name = getattr(request.state, "api_key_name", "")
     queue = _get_queue()
     try:
         await queue.acquire(timeout=_WAIT_TIMEOUT)
@@ -995,6 +1079,24 @@ async def completions(req: CompletionRequest):
     text = _strip_thinking("".join(collected))
     prompt_tokens = estimate_tokens(prompt_text)
     comp_tokens = estimate_tokens(text)
+
+    if api_key_id:
+        try:
+            from .auth import log_api_key_usage
+            await log_api_key_usage(
+                key_id=api_key_id,
+                key_name=api_key_name,
+                model_id=req.model,
+                backend="ollama",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=comp_tokens,
+                latency_ms=(time.time() - created_ts) * 1000,
+                ttft_ms=0.0,
+                status="success",
+            )
+        except Exception:
+            pass
+
     return {
         "id": chunk_id,
         "object": "text_completion",
@@ -1086,6 +1188,7 @@ def _make_error_body(error_type: str, message: str, model_id: str) -> dict:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
+    request: Request,
     req: ChatRequest,
     x_autotune_profile: Optional[str] = Header(None),
     x_conversation_id: Optional[str] = Header(None),
@@ -1122,8 +1225,14 @@ async def chat_completions(
             },
         )
 
+    api_key_id   = getattr(request.state, "api_key_id",   None)
+    api_key_name = getattr(request.state, "api_key_name", "")
+
     try:
-        response = await _chat_completions_inner(req, x_autotune_profile, x_conversation_id)
+        response = await _chat_completions_inner(
+            req, x_autotune_profile, x_conversation_id,
+            api_key_id=api_key_id, api_key_name=api_key_name,
+        )
     except Exception:
         # Release slot immediately on any error (generator never runs)
         await queue.release()
@@ -1153,6 +1262,9 @@ async def _chat_completions_inner(
     req: ChatRequest,
     x_autotune_profile: Optional[str],
     x_conversation_id: Optional[str],
+    *,
+    api_key_id: Optional[str] = None,
+    api_key_name: str = "",
 ):
     """Core chat completions logic, called once the task semaphore is held."""
     # Strip Open WebUI connection prefix (e.g. "autotune.qwen3:8b" → "qwen3:8b").
@@ -1315,6 +1427,8 @@ async def _chat_completions_inner(
                     elapsed=elapsed,
                     prompt_tokens=prompt_tokens_s,
                     comp_tokens=comp_tokens,
+                    api_key_id=api_key_id,
+                    api_key_name=api_key_name,
                 )
 
         # Emit a usage chunk before [DONE] when stream_options.include_usage=True.
@@ -1400,6 +1514,8 @@ async def _chat_completions_inner(
             elapsed=elapsed2,
             prompt_tokens=prompt_tokens,
             comp_tokens=comp_tokens,
+            api_key_id=api_key_id,
+            api_key_name=api_key_name,
         )
 
     return _make_completion_json(

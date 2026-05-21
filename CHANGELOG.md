@@ -7,6 +7,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.2.0] — 2026-05-21
+
+### Added
+
+**Enterprise API key authentication**
+- `POST /admin/keys` — create an API key (`sk-at-` prefix); plaintext returned once, SHA-256 hash stored.
+- `GET /admin/keys` — list all keys with status, label, and metadata.
+- `GET /admin/keys/{id}` — single key detail + 30-day usage breakdown.
+- `DELETE /admin/keys/{id}` — soft-revoke a key with an optional reason.
+- `GET /admin/usage` — per-key / per-day / per-model request breakdown (params: `start`, `end`, `key_id`, `model_id`).
+- `GET /admin/usage/summary` — aggregate totals per key (param: `days`).
+- All `/admin/*` endpoints require `Authorization: Bearer $AUTOTUNE_ADMIN_KEY` (returns 503 if env var not set).
+
+**API key enforcement middleware**
+- `AUTOTUNE_REQUIRE_API_KEY=1` enables enforcement on all `/v1/*` paths (default: off, fully backwards-compatible).
+- 401 for unknown keys; 403 for revoked keys — distinguishable by callers.
+- In-memory key cache (hit → no DB read); invalidated automatically on revocation.
+- `/health`, `/api/*`, and `/admin/*` are exempt from key enforcement.
+
+**Per-key usage logging**
+- Every authorized `/v1/*` request logs: `key_id`, `model_id`, `tokens_in`, `tokens_out`, `latency_ms`, timestamp.
+- SQLite primary store; best-effort Supabase mirror via INSERT-only RLS.
+- `api_key_daily_summary` and `api_key_totals` views in Supabase schema.
+
+**Schema migration safety**
+- `_pre_migrate()` added to `Database.connect()`: adds `session_id` and `autotune_version` columns to existing DBs before applying the full schema, preventing `OperationalError` on older installs.
+
+### Environment variables (new)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOTUNE_REQUIRE_API_KEY` | `0` | Set to `1` to enforce API key auth on all `/v1/*` routes |
+| `AUTOTUNE_ADMIN_KEY` | _(unset)_ | Bearer token for all `/admin/*` endpoints |
+
+---
+
 ## [1.1.2] — 2026-05-04
 
 ### Fixed
@@ -225,6 +261,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+[1.2.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/tanavc1/local-llm-autotune/compare/v1.0.0...v1.1.2
 [1.0.0]: https://github.com/tanavc1/local-llm-autotune/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/tanavc1/local-llm-autotune/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/tanavc1/local-llm-autotune/compare/v0.1.0...v0.1.1

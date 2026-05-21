@@ -311,9 +311,31 @@ class Database:
         # when operations are serialised via the transaction() context manager.
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # Pre-migration: add any columns that the main SCHEMA script now indexes
+        # but that older databases may not have.  Must run BEFORE executescript so
+        # the partial indexes (WHERE col IS NOT NULL) don't fail on old tables.
+        self._pre_migrate()
         self._conn.executescript(SCHEMA)
         self._conn.commit()
         self._migrate()
+
+    # Columns that the SCHEMA indexes but that older DB versions may lack.
+    # Sorted so parent columns always come before any index that needs them.
+    _PRE_MIGRATE_COLS: list[tuple[str, str, str]] = [
+        ("run_observations", "session_id",       "TEXT"),
+        ("run_observations", "autotune_version",  "TEXT"),
+        ("telemetry_events", "session_id",        "TEXT"),
+        ("telemetry_events", "autotune_version",  "TEXT"),
+    ]
+
+    def _pre_migrate(self) -> None:
+        """Add missing columns that SCHEMA indexes — must run before executescript."""
+        for table, col, col_type in self._PRE_MIGRATE_COLS:
+            try:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists, or table is brand new (schema creates it)
 
     def close(self) -> None:
         if self._conn:
@@ -379,6 +401,63 @@ class Database:
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass
+
+        # API key tables (added in v1.2)
+        self._migrate_api_key_tables()
+
+    _API_KEY_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS api_keys (
+        id              TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        key_prefix      TEXT NOT NULL,
+        key_hash        TEXT NOT NULL UNIQUE,
+        is_active       INTEGER NOT NULL DEFAULT 1,
+        created_at      REAL NOT NULL,
+        last_used_at    REAL,
+        revoked_at      REAL,
+        revoked_reason  TEXT,
+        metadata        TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash
+        ON api_keys(key_hash);
+
+    CREATE INDEX IF NOT EXISTS idx_api_keys_active
+        ON api_keys(is_active, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS api_key_usage (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_id            TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        day               TEXT NOT NULL,
+        model_id          TEXT,
+        backend           TEXT,
+        prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        latency_ms        REAL,
+        ttft_ms           REAL,
+        status            TEXT NOT NULL DEFAULT 'success',
+        error_type        TEXT,
+        created_at        REAL NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aku_key_day
+        ON api_key_usage(key_id, day DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_aku_day
+        ON api_key_usage(day DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_aku_status
+        ON api_key_usage(status, day DESC)
+        WHERE status != 'success';
+    """
+
+    def _migrate_api_key_tables(self) -> None:
+        """Create API key tables if they don't exist (idempotent)."""
+        try:
+            self._conn.executescript(self._API_KEY_SCHEMA)
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     @contextmanager
     def transaction(self) -> Generator[sqlite3.Connection, None, None]:
@@ -653,6 +732,129 @@ class Database:
                 pct = round((b - a) / a * 100, 1)
                 result["deltas"][m] = {"a": a, "b": b, "delta_pct": pct}
         return result
+
+    # ------------------------------------------------------------------ #
+    # API key management (CRUD)                                           #
+    # ------------------------------------------------------------------ #
+
+    def create_api_key(self, data: dict[str, Any]) -> str:
+        """Insert a new API key record.  Returns the key ID."""
+        data = dict(data)
+        _safe_cols(data)
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        with self.transaction():
+            self.conn.execute(
+                f"INSERT INTO api_keys ({cols}) VALUES ({placeholders})",
+                list(data.values()),
+            )
+        return data["id"]
+
+    def get_api_key_by_hash(self, key_hash: str) -> Optional[dict[str, Any]]:
+        """Look up an active key by its SHA-256 hash."""
+        row = self.conn.execute(
+            "SELECT * FROM api_keys WHERE key_hash = ?",
+            (key_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_api_key_by_id(self, key_id: str) -> Optional[dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM api_keys WHERE id = ?",
+            (key_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_api_keys(self, include_revoked: bool = False) -> list[dict[str, Any]]:
+        q = "SELECT * FROM api_keys"
+        if not include_revoked:
+            q += " WHERE is_active = 1"
+        q += " ORDER BY created_at DESC"
+        return [dict(r) for r in self.conn.execute(q).fetchall()]
+
+    def revoke_api_key(self, key_id: str, reason: Optional[str] = None) -> bool:
+        """Soft-delete a key. Returns True if a row was updated."""
+        with self.transaction():
+            cur = self.conn.execute(
+                """UPDATE api_keys
+                      SET is_active = 0,
+                          revoked_at = ?,
+                          revoked_reason = ?
+                    WHERE id = ? AND is_active = 1""",
+                (time.time(), reason, key_id),
+            )
+        return cur.rowcount > 0
+
+    def touch_api_key(self, key_id: str) -> None:
+        """Update last_used_at for a key (called after each authenticated request)."""
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+                (time.time(), key_id),
+            )
+
+    def log_api_key_usage(self, data: dict[str, Any]) -> int:
+        """Append one usage record. Returns the new row ID."""
+        data = dict(data)
+        data.setdefault("created_at", time.time())
+        _safe_cols(data)
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        with self.transaction():
+            cur = self.conn.execute(
+                f"INSERT INTO api_key_usage ({cols}) VALUES ({placeholders})",
+                list(data.values()),
+            )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_api_usage(
+        self,
+        *,
+        key_id:   Optional[str] = None,
+        model_id: Optional[str] = None,
+        start_day: Optional[str] = None,
+        end_day:   Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Return aggregated usage rows (key × day × model) with key metadata joined.
+
+        Each row includes request_count, token totals, average latencies, and
+        error_count so the caller can build both detail tables and summaries
+        without a second query.
+        """
+        q = """
+            SELECT
+                u.key_id,
+                k.name          AS key_name,
+                k.key_prefix,
+                u.day,
+                u.model_id,
+                u.backend,
+                COUNT(*)                                        AS request_count,
+                SUM(u.prompt_tokens)                            AS prompt_tokens,
+                SUM(u.completion_tokens)                        AS completion_tokens,
+                ROUND(AVG(u.latency_ms), 1)                     AS avg_latency_ms,
+                ROUND(AVG(u.ttft_ms), 1)                        AS avg_ttft_ms,
+                SUM(CASE WHEN u.status != 'success' THEN 1 ELSE 0 END) AS error_count
+            FROM api_key_usage u
+            LEFT JOIN api_keys k ON k.id = u.key_id
+            WHERE 1=1
+        """
+        args: list[Any] = []
+        if key_id:
+            q += " AND u.key_id = ?"
+            args.append(key_id)
+        if model_id:
+            q += " AND u.model_id = ?"
+            args.append(model_id)
+        if start_day:
+            q += " AND u.day >= ?"
+            args.append(start_day)
+        if end_day:
+            q += " AND u.day <= ?"
+            args.append(end_day)
+        q += " GROUP BY u.key_id, u.day, u.model_id, u.backend ORDER BY u.day DESC, k.name"
+        return [dict(r) for r in self.conn.execute(q, args).fetchall()]
 
     # ------------------------------------------------------------------ #
     # Agent benchmark tables (migration + CRUD)                           #
