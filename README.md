@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/llm-autotune)](https://pypi.org/project/llm-autotune/)
 [![Python](https://img.shields.io/badge/python-3.9--3.13-blue)](https://pypi.org/project/llm-autotune/)
+[![Docker](https://img.shields.io/docker/v/tanavc1/llm-autotune?label=docker)](https://hub.docker.com/r/tanavc1/llm-autotune)
 [![CI](https://github.com/tanavc1/local-llm-autotune/actions/workflows/test.yml/badge.svg)](https://github.com/tanavc1/local-llm-autotune/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Product Hunt](https://img.shields.io/badge/Product%20Hunt-Featured-DA552F?logo=producthunt&logoColor=white)](https://www.producthunt.com/products/autotune-llm)
@@ -13,9 +14,11 @@
 autotune is a middleware layer that makes your local LLMs noticeably faster and lighter — without changing your code or workflow. It computes the exact KV cache each request needs, pins your system prompt in memory, and manages context windows automatically.
 
 ```bash
-pip install llm-autotune          # macOS / Windows
-pipx install llm-autotune         # Linux (recommended — see install notes below)
-autotune chat --model qwen3:8b    # that's it
+pip install llm-autotune                        # macOS / Windows
+pipx install llm-autotune                       # Linux (recommended — see install notes below)
+brew install tanavc1/autotune/llm-autotune      # Homebrew (macOS)
+docker pull tanavc1/llm-autotune                # Docker
+autotune chat --model qwen3:8b                  # that's it
 ```
 
 Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of the box.
@@ -193,6 +196,52 @@ X-Conversation-Id: a3f92c1b       # attach to a persistent conversation
 | `POST/GET/DELETE /api/conversations` | Persistent conversation CRUD |
 | `GET /api/conversations/{id}/export` | Export as Markdown |
 
+### API key authentication
+
+By default the server accepts all requests. To enforce API keys on all `/v1/*` routes:
+
+```bash
+export AUTOTUNE_ADMIN_KEY="your-secret-admin-key"
+export AUTOTUNE_REQUIRE_API_KEY=1
+autotune serve
+```
+
+**Create and manage keys** via the admin API (requires `Authorization: Bearer $AUTOTUNE_ADMIN_KEY`):
+
+```bash
+# Create a key
+curl -s -X POST http://localhost:8765/admin/keys \
+  -H "Authorization: Bearer $AUTOTUNE_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-app", "label": "Production"}' | jq .
+
+# List all keys
+curl -s http://localhost:8765/admin/keys \
+  -H "Authorization: Bearer $AUTOTUNE_ADMIN_KEY" | jq .
+
+# Per-key usage (last 30 days)
+curl -s "http://localhost:8765/admin/usage/summary?days=30" \
+  -H "Authorization: Bearer $AUTOTUNE_ADMIN_KEY" | jq .
+
+# Revoke a key
+curl -s -X DELETE http://localhost:8765/admin/keys/{id} \
+  -H "Authorization: Bearer $AUTOTUNE_ADMIN_KEY" \
+  -d '{"reason": "rotated"}'
+```
+
+Keys use the format `sk-at-<token>`. The plaintext is returned once on creation — only the SHA-256 hash is stored. Usage is logged per key per day to local SQLite with an optional Supabase mirror.
+
+| Admin endpoint | Description |
+|----------------|-------------|
+| `POST /admin/keys` | Create key — returns plaintext once |
+| `GET /admin/keys` | List all keys |
+| `GET /admin/keys/{id}` | Single key + 30-day usage |
+| `DELETE /admin/keys/{id}` | Revoke (soft delete) |
+| `GET /admin/usage` | Per-key/day/model breakdown |
+| `GET /admin/usage/summary` | Aggregate totals per key |
+
+`/health`, `/api/*`, and `/admin/*` are always exempt from key enforcement.
+
 ### Concurrency
 
 ```bash
@@ -302,9 +351,21 @@ MLX activates automatically on Apple Silicon — no configuration needed. Use Ol
 
 ## Docker — Ollama + autotune bundled
 
-Yes — autotune ships a Docker image with Ollama bundled inside. No local Python, no separate Ollama install. One command gets you a fully optimized local LLM server.
+autotune ships pre-built images to Docker Hub for `linux/amd64` and `linux/arm64`. No local Python, no separate Ollama install.
 
-### New user quickstart (3 steps)
+### Quickstart from Docker Hub
+
+```bash
+# autotune server only — point it at your existing Ollama instance
+docker run -p 8765:8765 \
+  -e AUTOTUNE_OLLAMA_URL=http://host.docker.internal:11434 \
+  tanavc1/llm-autotune:latest
+
+# pin to a specific version
+docker pull tanavc1/llm-autotune:1.2.0
+```
+
+### Bundled image — Ollama + autotune in one container
 
 ```bash
 git clone https://github.com/tanavc1/local-llm-autotune.git
@@ -312,7 +373,7 @@ cd local-llm-autotune
 docker compose --profile single up
 ```
 
-That's it. Docker builds the image (pulls Ollama, installs autotune), starts both services, and exposes the API at `http://localhost:8765/v1`. Point any OpenAI-compatible client there.
+Docker builds the bundled image (Ollama + autotune), starts both services, and exposes the API at `http://localhost:8765/v1`. Point any OpenAI-compatible client there.
 
 ### Auto-pull a model on first boot
 
@@ -351,6 +412,8 @@ In this mode, Ollama and autotune run as separate services. autotune receives `A
 | `AUTOTUNE_PORT` | `8765` | Port autotune binds inside the container |
 | `OLLAMA_HOST` | `0.0.0.0` | Bind address passed to `ollama serve` inside the container |
 | `AUTOTUNE_OLLAMA_URL` | `http://localhost:11434` | Where autotune reaches Ollama — set to `http://ollama:11434` for multi-container mode |
+| `AUTOTUNE_REQUIRE_API_KEY` | `0` | Set to `1` to enforce API key auth on all `/v1/*` routes |
+| `AUTOTUNE_ADMIN_KEY` | _(unset)_ | Bearer token for all `/admin/*` endpoints — 503 if unset when accessed |
 
 ### GPU support
 
