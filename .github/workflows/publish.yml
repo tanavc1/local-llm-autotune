@@ -58,3 +58,25 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
           attestations: false
+
+  sync-homebrew-tap:
+    name: Sync Homebrew tap
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push formula to homebrew-autotune tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/tanavc1/homebrew-autotune.git" /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp Formula/llm-autotune.rb /tmp/tap/Formula/llm-autotune.rb
+          cd /tmp/tap
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/llm-autotune.rb
+          git diff --cached --quiet && echo "Formula unchanged — skipping commit" && exit 0
+          git commit -m "chore: update llm-autotune to ${GITHUB_REF_NAME}"
+          git push

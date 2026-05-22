@@ -1,0 +1,80 @@
+name: Docker Hub
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    name: Build and push multi-arch image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (for linux/arm64 cross-compilation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # PyPI publishing runs in parallel — wait until the version appears
+      - name: Wait for PyPI propagation
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          echo "Waiting for llm-autotune==$VERSION on PyPI..."
+          for i in $(seq 1 24); do
+            if curl -sf "https://pypi.org/pypi/llm-autotune/$VERSION/json" > /dev/null; then
+              echo "Found llm-autotune==$VERSION on PyPI after $((i * 30))s"
+              exit 0
+            fi
+            echo "  attempt $i/24 — sleeping 30s..."
+            sleep 30
+          done
+          echo "ERROR: llm-autotune==$VERSION not found on PyPI after 12 minutes"
+          exit 1
+
+      - name: Build and push (linux/amd64 + linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.autotune
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            AUTOTUNE_VERSION=${{ steps.meta.outputs.version }}
+          tags: |
+            tanavc1/llm-autotune:${{ steps.meta.outputs.version }}
+            tanavc1/llm-autotune:latest
+          labels: |
+            org.opencontainers.image.title=llm-autotune
+            org.opencontainers.image.description=39% faster TTFT for local LLMs — autotune optimises Ollama, LM Studio, and MLX with zero config
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.source=https://github.com/tanavc1/local-llm-autotune
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: tanavc1/llm-autotune
+          short-description: "39% faster TTFT for local LLMs — autotune optimises Ollama, LM Studio, and MLX with zero config"
+          readme-filepath: ./README.md

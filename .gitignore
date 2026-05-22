@@ -34,8 +34,6 @@ AGENT_BENCHMARK_RESULTS*.md
 # WebUI runtime secret
 .webui_secret_key
 
-# Homebrew formula lives in the separate homebrew-autotune tap repo
-Formula/
 
 # macOS
 .DS_Store
