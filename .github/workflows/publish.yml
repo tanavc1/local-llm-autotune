@@ -66,13 +66,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Push formula to homebrew-autotune tap
+      - name: Push updated formula to homebrew-autotune tap
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Fetch the new tarball URL + SHA256 from PyPI (publish-pypi already finished)
+          PYPI_JSON=$(curl -sf "https://pypi.org/pypi/llm-autotune/${VERSION}/json")
+          TARBALL_URL=$(echo "$PYPI_JSON" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          sdist = next(f for f in d['urls'] if f['packagetype'] == 'sdist')
+          print(sdist['url'])
+          ")
+          TARBALL_SHA=$(echo "$PYPI_JSON" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          sdist = next(f for f in d['urls'] if f['packagetype'] == 'sdist')
+          print(sdist['digests']['sha256'])
+          ")
+
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/tanavc1/homebrew-autotune.git" /tmp/tap
           mkdir -p /tmp/tap/Formula
           cp Formula/llm-autotune.rb /tmp/tap/Formula/llm-autotune.rb
+
+          # Patch the main-package URL and SHA256 in the copied formula
+          sed -i "s|^  url \"https://files\.pythonhosted\.org[^\"]*\"|  url \"${TARBALL_URL}\"|" \
+            /tmp/tap/Formula/llm-autotune.rb
+          # Replace only the first sha256 line (main package; resource sha256s stay unchanged)
+          sed -i "0,/^  sha256 \"[a-f0-9]\{64\}\"/{s/^  sha256 \"[a-f0-9]\{64\}\"/  sha256 \"${TARBALL_SHA}\"/}" \
+            /tmp/tap/Formula/llm-autotune.rb
+
           cd /tmp/tap
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"

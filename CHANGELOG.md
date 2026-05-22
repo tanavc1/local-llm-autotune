@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.2.1] — 2026-05-22
+
+### Added
+
+- **Docker Hub image** (`tanavc1/llm-autotune`) — pre-built `linux/amd64` + `linux/arm64` images published automatically on every release tag. `docker pull tanavc1/llm-autotune:latest` to get the autotune-only server.
+- **Homebrew tap** — `brew install tanavc1/autotune/llm-autotune` via the new `homebrew-autotune` tap. Formula is auto-synced from `Formula/llm-autotune.rb` on every release.
+- **`.github/workflows/docker.yml`** — multi-arch Docker Hub publish workflow; polls PyPI before building to avoid race with the PyPI publish job; updates Docker Hub description from `README.md` automatically.
+- **`Dockerfile.autotune` `HEALTHCHECK`** — Docker now reports container health via `/health` endpoint.
+
+### Changed
+
+- `README.md`: added Docker Hub badge; Homebrew one-liner in install block; Docker Hub pull in Docker section; API key auth section with curl examples and admin endpoint table; new env vars (`AUTOTUNE_REQUIRE_API_KEY`, `AUTOTUNE_ADMIN_KEY`) in Docker env vars table.
+- Homebrew tap sync now auto-patches the formula URL and SHA256 from PyPI on every release — no manual formula edits needed.
+
+---
+
 ## [1.2.0] — 2026-05-21
 
 ### Added
@@ -261,6 +277,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+[1.2.1]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/tanavc1/local-llm-autotune/compare/v1.0.0...v1.1.2
 [1.0.0]: https://github.com/tanavc1/local-llm-autotune/compare/v0.2.0...v1.0.0
