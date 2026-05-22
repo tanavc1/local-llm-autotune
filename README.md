@@ -910,6 +910,35 @@ autotune/
 
 ---
 
+## Support development
+
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/tanavc1?label=Sponsor&logo=GitHub&color=EA4AAA)](https://github.com/sponsors/tanavc1)
+
+autotune is free and MIT-licensed. If it saves you time or compute costs, sponsoring helps keep it maintained and worth improving.
+
+**What sponsorships actually cover:**
+
+| Cost | Monthly |
+|------|---------|
+| Supabase (anonymous telemetry DB) | $0 — free tier |
+| Vercel (autotunellm.com hosting) | $0 — hobby plan |
+| Domain (autotunellm.com) | $1.25 |
+| **Total infrastructure** | **~$1.25 / month** |
+
+The real cost is developer time. All development is done evenings and weekends. Sponsorships are a direct signal that the project is worth that time.
+
+**Suggested tiers** (set up at [github.com/sponsors/tanavc1](https://github.com/sponsors/tanavc1)):
+
+| | What it means |
+|-|--------------|
+| **$3 / month** — Supporter | You use it and it works. Thank you. |
+| **$10 / month** — Regular | Your name in the README sponsors list. |
+| **$25 / month** — Patron | Priority issue responses + your name in the README. |
+
+No features are locked behind sponsorship. Everything in this repo is and will remain free.
+
+---
+
 ## Contributing & support
 
 Bug reports and pull requests welcome. Open an issue on GitHub or email [autotunellm@gmail.com](mailto:autotunellm@gmail.com).

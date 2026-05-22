@@ -70,6 +70,21 @@ jobs:
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          # Guard: skip gracefully if the PAT hasn't been configured yet.
+          if [[ -z "$TAP_TOKEN" ]]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set — Homebrew tap sync skipped."
+            echo ""
+            echo "One-time setup (takes ~5 min):"
+            echo "  1. Create repo: github.com/new  →  name: homebrew-autotune  (public)"
+            echo "     Add Formula/ folder (any file inside to initialise the repo)."
+            echo "  2. github.com/settings/tokens → New token (classic)"
+            echo "     Scopes: repo  →  copy the token"
+            echo "  3. github.com/tanavc1/local-llm-autotune/settings/secrets/actions → add:"
+            echo "       HOMEBREW_TAP_TOKEN = <token from step 2>"
+            echo "  4. Re-run this job from the Actions tab — no re-tag needed."
+            exit 0
+          fi
+
           VERSION="${GITHUB_REF_NAME#v}"
 
           # Fetch the new tarball URL + SHA256 from PyPI (publish-pypi already finished)
