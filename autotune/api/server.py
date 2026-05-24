@@ -317,9 +317,11 @@ async def api_key_auth_middleware(request: Request, call_next):
 # Admin router
 # ---------------------------------------------------------------------------
 
+from ..dashboard.router import router as _dashboard_router  # noqa: E402
 from .admin import router as _admin_router  # noqa: E402
 
 app.include_router(_admin_router)
+app.include_router(_dashboard_router)
 
 # ---------------------------------------------------------------------------
 # Inference task scheduler — bounded FIFO queue
@@ -552,14 +554,20 @@ async def _emit_run_telemetry(
         db = get_db()
         db.upsert_hardware(hw_dict)
         db.log_run({
-            "model_id":          model_id,
-            "hardware_id":       hw_dict["id"],
-            "quant":             quant,
-            "context_len":       ollama_opts["num_ctx"],
-            "n_gpu_layers":      -1,
-            "tokens_per_sec":    round(tps, 1),
+            "model_id":           model_id,
+            "hardware_id":        hw_dict["id"],
+            "quant":              quant,
+            "context_len":        ollama_opts["num_ctx"],
+            "n_gpu_layers":       -1,
+            "tokens_per_sec":     round(tps, 1),
             "gen_tokens_per_sec": round(tps, 1),
-            "ttft_ms":           round(ttft_ms, 1),
+            "ttft_ms":            round(ttft_ms, 1),
+            "elapsed_sec":        round(elapsed, 2),
+            "prompt_tokens":      prompt_tokens,
+            "completion_tokens":  comp_tokens,
+            "profile_name":       profile_name,
+            "f16_kv":             1 if ollama_opts.get("f16_kv", True) else 0,
+            "num_keep":           ollama_opts.get("num_keep", 0),
             "notes": (
                 f"profile={profile_name} backend={backend_name} "
                 f"f16_kv={ollama_opts.get('f16_kv', True)}"

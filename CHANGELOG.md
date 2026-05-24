@@ -7,6 +7,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.3.0] — 2026-05-24
+
+### Added
+
+- **Web dashboard at `localhost:8765/dashboard`** — fully accurate, live-updating dashboard showing:
+  - **System overview KPIs**: RAM used (with pressure color), running models in memory, requests today, avg TTFT, avg tok/s, KV cache savings vs 4096 default
+  - **Requests per hour chart**: 24-bucket bar chart of the last 24 h
+  - **TTFT sparkline**: last 100 requests colored by latency tier (green / blue / yellow / red)
+  - **Raw vs Tuned comparison**: autotune's average dynamic context vs Ollama's fixed 4096-token default — shows context reduction %, KV memory savings %, and measured avg TTFT
+  - **Per-model breakdown table**: requests, avg/min/max TTFT, avg tok/s, avg context, avg elapsed, total tokens, last used — for every model ever routed through autotune
+  - **Active API keys**: requests and tokens consumed today per key
+  - **Slow requests panel**: recent requests that took >5 s, with model, elapsed, TTFT, context, profile, and timestamp
+  - **Suggestions panel**: rule-based guidance derived from real data — high TTFT, RAM pressure, KV savings, slow requests
+  - Auto-polls all data every 10 seconds; live / offline indicator in the header
+- **`autotune/dashboard/`** — new package (`metrics.py` query layer + `router.py` FastAPI router + `static/index.html` self-contained UI)
+- **SQLite `run_observations` now stores all fields**: `elapsed_sec`, `prompt_tokens`, `completion_tokens`, `profile_name`, `f16_kv`, `num_keep` — previously omitted from the local DB write in `_emit_run_telemetry()`, making historical dashboard data accurate from this version forward
+
+---
+
 ## [1.2.2] — 2026-05-24
 
 ### Fixed
