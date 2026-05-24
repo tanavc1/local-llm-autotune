@@ -130,12 +130,21 @@ def print_popular_models(console: Optional[Console] = None) -> None:
 
 def is_ollama_running() -> bool:
     """Return True if the Ollama daemon is reachable."""
-    try:
-        req = urllib.request.Request(f"{_ollama_base()}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=2):
-            return True
-    except Exception:
-        return False
+    base = _ollama_base()
+    # If the URL uses 'localhost', also try the explicit IPv4 address.
+    # On Windows, localhost can resolve to ::1 (IPv6) while Ollama listens on
+    # 127.0.0.1 (IPv4 only), causing urllib to fail even when Ollama is running.
+    candidates = [base]
+    if "localhost" in base:
+        candidates.append(base.replace("localhost", "127.0.0.1"))
+    for url in candidates:
+        try:
+            req = urllib.request.Request(f"{url}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=2):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _install_ollama(con: Console) -> bool:

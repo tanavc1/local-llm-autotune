@@ -7,6 +7,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.2.2] — 2026-05-24
+
+### Fixed
+
+- **Windows: Ollama falsely reported as not running** (issue #3) — on Windows,
+  `localhost` resolves to `::1` (IPv6) before `127.0.0.1` (IPv4), while Ollama
+  listens on IPv4 only. `ollama_base()` now defaults to `http://127.0.0.1:11434`
+  on Windows when `AUTOTUNE_OLLAMA_URL` is not set. `is_ollama_running()` also
+  tries `127.0.0.1` as a fallback when `localhost` is in the configured URL,
+  covering users who have set the env var explicitly.
+
+---
+
 ## [1.2.1] — 2026-05-22
 
 ### Added
@@ -277,6 +290,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+[1.2.2]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/tanavc1/local-llm-autotune/compare/v1.0.0...v1.1.2
