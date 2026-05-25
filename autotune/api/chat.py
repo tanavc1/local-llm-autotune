@@ -789,42 +789,15 @@ class ChatSession:
                 _clear_line()
             error_msg = str(e)
             err_text = str(e)
-            # If Ollama is not running the error says so explicitly — show it and stop.
-            ollama_not_running = "Ollama is not running" in err_text
-            if ollama_not_running:
+            if "Ollama is not running" in err_text:
                 console.print(f"\n[yellow]{err_text.strip()}[/yellow]")
-            # For Ollama-style model names, offer to pull the model right now —
-            # but only when Ollama is actually running (otherwise the pull will fail too).
-            elif "/" not in self.model_id and not _retried:
-                console.print(
-                    f"\n[yellow]Model [bold]{self.model_id}[/bold] not found locally.[/yellow]"
-                )
-                try:
-                    console.file.flush()
-                    sys.stdout.flush()
-                    answer = input("  → Download it from Ollama now? [Y/n]: ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    answer = "n"
-                if answer in ("", "y", "yes"):
-                    pulled = await self._pull_model(self.model_id)
-                    if pulled:
-                        # Invalidate backend cache so next request picks up the new model
-                        self.chain._ollama_ok = None
-                        self.chain._ollama_probed_at = 0.0
-                        console.print(
-                            "[dim]Model downloaded — your message has been kept. "
-                            "Sending it now…[/dim]"
-                        )
-                        # Re-run the same message now that the model exists
-                        await self._chat(user_input, _retried=True)
-                        return
-                else:
-                    console.print(
-                        f"[dim]Tip: pull later with  "
-                        f"[bold]autotune pull {self.model_id}[/bold][/dim]"
-                    )
             else:
+                # Preflight in start_chat() should have caught missing models before
+                # the REPL started — this is a fallback for mid-session model swaps.
                 console.print(f"\n[red]Model not available:[/red] {e}")
+                console.print(
+                    f"[dim]Tip: [bold]autotune pull {self.model_id}[/bold][/dim]"
+                )
         except AuthError as e:
             if not header_shown:
                 _clear_line()
@@ -1528,4 +1501,64 @@ def start_chat(
     recall: bool = False,
 ) -> None:
     """Entry point called from the CLI."""
+    # ── Preflight: only applies to Ollama-hosted models (no "/" in id) ────────
+    if "/" not in model_id:
+        _preflight_ollama_model(model_id)
+
     asyncio.run(_run_chat(model_id, profile, system_prompt, conv_id, optimize, no_swap, recall))
+
+
+def _preflight_ollama_model(model_id: str) -> None:
+    """Ensure the Ollama model is downloaded before entering the chat REPL.
+
+    If the model is missing, show its size/RAM info and offer to download it
+    immediately.  Exits the process cleanly if the user declines.
+    """
+    from autotune.api.ollama_pull import (
+        ensure_ollama_running,
+        is_model_available,
+        pull_model,
+        OllamaNotRunningError,
+        PullError,
+    )
+    from autotune.api.model_guard import estimate_size_gb, estimate_ram_gb
+
+    con = Console()
+
+    # 1. Make sure Ollama daemon is up
+    if not ensure_ollama_running(con):
+        con.print("\n[red]Cannot start chat: Ollama is not running.[/red]")
+        raise SystemExit(1)
+
+    # 2. Check if model is already available
+    if is_model_available(model_id):
+        return  # all good — proceed to chat
+
+    # 3. Model not found — show info and prompt
+    size_gb = estimate_size_gb(model_id)
+    ram_gb  = estimate_ram_gb(size_gb) if size_gb else None
+
+    con.print(f"\n[yellow]Model [bold]{model_id}[/bold] is not downloaded yet.[/yellow]")
+    if size_gb:
+        con.print(
+            f"  Download size : ~[cyan]{size_gb:.1f} GB[/cyan]\n"
+            f"  RAM needed    : ~[cyan]{ram_gb:.1f} GB[/cyan]"
+        )
+
+    try:
+        answer = input("\n  Download it now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer not in ("", "y", "yes"):
+        con.print(
+            f"\n[dim]Tip: download later with  [bold]autotune pull {model_id}[/bold][/dim]"
+        )
+        raise SystemExit(0)
+
+    # 4. Pull the model
+    try:
+        pull_model(model_id, console=con)
+    except (OllamaNotRunningError, PullError) as exc:
+        con.print(f"\n[red]Download failed:[/red] {exc}")
+        raise SystemExit(1)

@@ -187,6 +187,66 @@ def _after_command(result: object, **_kwargs: object) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `autotune version`
+# ---------------------------------------------------------------------------
+
+@cli.command("version")
+def version_cmd() -> None:
+    """Show the current version and check PyPI for updates."""
+    import importlib.metadata
+    import json
+    import pathlib
+    import urllib.request
+
+    from rich.table import Table
+
+    try:
+        current = importlib.metadata.version("llm-autotune")
+    except Exception:
+        current = "unknown"
+
+    cache_path = pathlib.Path.home() / ".autotune" / "version_check.json"
+    cached_latest: str = ""
+    try:
+        if cache_path.exists():
+            cached_latest = json.loads(cache_path.read_text()).get("latest", "")
+    except Exception:
+        pass
+
+    with console.status("[dim]Checking PyPI for latest version…[/dim]", spinner="dots"):
+        try:
+            req = urllib.request.Request(
+                "https://pypi.org/pypi/llm-autotune/json",
+                headers={"User-Agent": f"autotune/{current} version-cmd"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                latest = json.loads(r.read())["info"]["version"]
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps({"checked_at": __import__("time").time(), "latest": latest}))
+        except Exception:
+            latest = cached_latest or None
+
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim")
+    t.add_column()
+    t.add_row("installed", f"[bold cyan]v{current}[/bold cyan]")
+    if latest:
+        if _version_newer(latest, current):
+            t.add_row("latest", f"[yellow]v{latest}[/yellow]  [dim](update available)[/dim]")
+            console.print(t)
+            console.print(
+                f"\n  Run [bold cyan]autotune upgrade[/bold cyan] or "
+                f"[bold cyan]pip install --upgrade llm-autotune[/bold cyan] to update.\n"
+            )
+        else:
+            t.add_row("latest", f"[green]v{latest}[/green]  [dim](up to date)[/dim]")
+            console.print(t)
+    else:
+        t.add_row("latest", "[dim]unavailable (offline?)[/dim]")
+        console.print(t)
+
+
+# ---------------------------------------------------------------------------
 # `autotune recommend`
 # ---------------------------------------------------------------------------
 
@@ -313,6 +373,21 @@ def recommend(
         f"{len(recs)} mode(s)\n"
     )
     print_recommendations(recs, modes=modes)
+
+    # ── Catalog tip ───────────────────────────────────────────────────────
+    try:
+        from autotune.models.catalog import load_catalog, is_stale
+        from autotune.models.catalog_updater import refresh_if_stale as _upd_stale
+        _cat = load_catalog()
+        _upd_stale(_cat, background=True)
+        _n = len(_cat.get("models", []))
+        console.print(
+            f"  [dim]Browse {_n} models across all size tiers:  "
+            f"[bold]autotune catalog[/bold]  "
+            f"·  [bold]autotune catalog best[/bold] (fits your {hw.memory.total_gb:.0f} GB)[/dim]\n"
+        )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -887,6 +962,229 @@ def models(registry: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `autotune catalog` — model catalog browser + auto-updater
+# ---------------------------------------------------------------------------
+
+@cli.group("catalog", invoke_without_command=True)
+@click.pass_context
+def catalog_group(ctx: click.Context) -> None:
+    """Browse and update the model catalog.
+
+    The catalog is a comprehensive directory of ~40 LLMs covering every size
+    tier from 135M to 235B, with benchmark scores, RAM requirements, and
+    install commands.  It auto-refreshes every few days in the background.
+
+    \b
+    autotune catalog           Show the full catalog
+    autotune catalog best      Best model per tier for your hardware
+    autotune catalog update    Force a catalog refresh now
+    autotune catalog status    Show last/next update time
+    autotune catalog interval  Set refresh interval (2 / 4 / 7 days)
+    """
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(_catalog_show)
+
+
+@catalog_group.command("show", hidden=True)
+@click.option("--tier", default=None,
+              help="Filter by tier: tiny/small/medium/large/xl/flagship")
+@click.option("--tag",  default=None,
+              help="Filter by tag: coding/reasoning/multilingual/moe/…")
+@click.option("--ram",  default=None, type=float,
+              help="Only show models that fit in this many GB of RAM.")
+def _catalog_show(tier: str, tag: str, ram: float) -> None:
+    """Show the full model catalog."""
+    from autotune.models.catalog import load_catalog, get_entries
+    from autotune.models.catalog_updater import refresh_if_stale as _upd_stale
+
+    catalog = load_catalog()
+    _upd_stale(catalog, background=True)  # kick off refresh if stale
+
+    entries = get_entries(catalog)
+
+    # Apply filters
+    if tier:
+        entries = [e for e in entries if e.tier == tier.lower()]
+    if tag:
+        entries = [e for e in entries if tag.lower() in e.tags]
+    if ram:
+        entries = [e for e in entries if e.ram_gb <= ram * 0.80]
+
+    if not entries:
+        console.print("[yellow]No models match the given filters.[/yellow]")
+        return
+
+    from rich import box as _box
+    from rich.table import Table
+
+    _TIER_ORDER = {"tiny": 0, "small": 1, "medium": 2, "large": 3, "xl": 4, "flagship": 5}
+    _SPEED_ICON = {"fast": "⚡", "medium": "◎", "slow": "◉"}
+    _TIER_COLOR = {"tiny": "dim", "small": "cyan", "medium": "green",
+                   "large": "yellow", "xl": "magenta", "flagship": "red"}
+
+    entries.sort(key=lambda e: (_TIER_ORDER.get(e.tier, 99), e.parameters_b))
+
+    last_tier = None
+    for e in entries:
+        if e.tier != last_tier:
+            tier_label = e.tier.upper()
+            color = _TIER_COLOR.get(e.tier, "white")
+            console.rule(f"[bold {color}]{tier_label}[/bold {color}]  "
+                         f"[dim]({e.tier})[/dim]")
+            last_tier = e.tier
+
+        mmlu_str = f"MMLU {e.bench_mmlu:.0%}" if e.bench_mmlu else ""
+        he_str   = f"  HE {e.bench_humaneval:.0%}" if e.bench_humaneval else ""
+        gsm_str  = f"  GSM8K {e.bench_gsm8k:.0%}" if e.bench_gsm8k else ""
+        bench_str = (mmlu_str + he_str + gsm_str).strip() or "—"
+
+        tag_str = "  ".join(f"[dim]{t}[/dim]" for t in e.tags[:4])
+        speed   = _SPEED_ICON.get(e.speed_class, "")
+        new_badge = " [green][NEW][/green]" if e.is_new else ""
+
+        ollama_cmd = (f"  [bold green]→ autotune pull {e.ollama_tag}[/bold green]"
+                      if e.ollama_tag else "")
+
+        console.print(
+            f"\n  [bold]{e.name}[/bold]  "
+            f"[dim]{e.parameters_b:.1f}B · {e.size_gb:.1f} GB disk · {e.ram_gb:.1f} GB RAM · "
+            f"{e.context_k}k ctx  {speed}[/dim]{new_badge}"
+        )
+        if e.highlight:
+            console.print(f"  [italic yellow]{e.highlight}[/italic yellow]")
+        console.print(f"  {e.description}")
+        console.print(f"  [dim]{bench_str}[/dim]")
+        if tag_str:
+            console.print(f"  {tag_str}")
+        if ollama_cmd:
+            console.print(ollama_cmd)
+
+    console.print()
+    console.print(
+        f"[dim]{len(entries)} model(s) shown  ·  "
+        f"last updated {catalog.get('last_updated', '?')[:10]}  ·  "
+        f"[bold]autotune catalog update[/bold] to refresh[/dim]"
+    )
+
+
+@catalog_group.command("best")
+@click.option("--ram", default=None, type=float,
+              help="Override RAM budget (GB).  Defaults to current system RAM.")
+@click.option("--mode", default="balanced",
+              type=click.Choice(["fastest", "balanced", "best_quality"], case_sensitive=False),
+              help="Recommendation mode.")
+def _catalog_best(ram: float, mode: str) -> None:
+    """Show the best model for each tier that fits on this machine."""
+    from autotune.models.catalog import load_catalog, get_best_for_ram, get_entries, get_by_tier
+    from autotune.models.catalog_updater import refresh_if_stale as _upd_stale
+
+    catalog = load_catalog()
+    _upd_stale(catalog, background=True)
+
+    if ram is None:
+        import psutil
+        ram = psutil.virtual_memory().total / 1024 ** 3
+
+    console.rule(f"[bold blue]Best models for {ram:.0f} GB RAM — {mode}[/bold blue]")
+    console.print()
+
+    fits = get_best_for_ram(catalog, ram, mode)
+    if not fits:
+        console.print("[yellow]No models fit the RAM budget.[/yellow]")
+        return
+
+    _TIER_ORDER = ["tiny", "small", "medium", "large", "xl", "flagship"]
+    seen_tiers: set[str] = set()
+    top_by_tier: dict[str, "CatalogEntry"] = {}
+    for e in fits:
+        if e.tier not in top_by_tier:
+            top_by_tier[e.tier] = e
+
+    for tier in _TIER_ORDER:
+        e = top_by_tier.get(tier)
+        if not e:
+            continue
+        mmlu_str = f"MMLU {e.bench_mmlu:.0%}" if e.bench_mmlu else ""
+        he_str   = f"  HumanEval {e.bench_humaneval:.0%}" if e.bench_humaneval else ""
+        gsm_str  = f"  GSM8K {e.bench_gsm8k:.0%}" if e.bench_gsm8k else ""
+        bench    = (mmlu_str + he_str + gsm_str).strip() or "no benchmarks"
+
+        console.print(
+            f"  [bold cyan]{tier.upper():10s}[/bold cyan]  "
+            f"[bold]{e.name}[/bold]  "
+            f"[dim]{e.parameters_b:.1f}B · {e.size_gb:.1f} GB disk · {e.ram_gb:.1f} GB RAM[/dim]"
+        )
+        if e.highlight:
+            console.print(f"               [italic yellow]{e.highlight}[/italic yellow]")
+        console.print(f"               [dim]{bench}[/dim]")
+        if e.ollama_tag:
+            console.print(f"               [green]→ autotune pull {e.ollama_tag}[/green]")
+        console.print()
+
+
+@catalog_group.command("update")
+@click.option("--interval", default=None, type=int,
+              help="Also set the auto-refresh interval in days (2, 4, or 7).")
+def _catalog_update(interval: int) -> None:
+    """Force a catalog refresh right now (fetches Ollama + HuggingFace)."""
+    from autotune.models.catalog import load_catalog, save_catalog, set_update_interval
+    from autotune.models.catalog_updater import force_refresh
+
+    if interval:
+        if interval not in (2, 4, 7):
+            console.print("[red]--interval must be 2, 4, or 7 days.[/red]")
+            raise SystemExit(1)
+        catalog = load_catalog()
+        set_update_interval(catalog, interval)
+        save_catalog(catalog)
+        console.print(f"[green]✓[/green]  Auto-refresh interval set to [bold]{interval}[/bold] days.")
+
+    with console.status("[cyan]Fetching model data from Ollama + HuggingFace…[/cyan]", spinner="dots"):
+        updated_catalog, new_count, upd_count = force_refresh()
+
+    console.print(
+        f"[green]✓[/green]  Catalog refreshed.  "
+        f"[bold]{new_count}[/bold] new model(s) added, "
+        f"[bold]{upd_count}[/bold] updated."
+    )
+    console.print(
+        f"[dim]Next auto-refresh: {updated_catalog.get('next_update', '?')[:10]}[/dim]"
+    )
+
+
+@catalog_group.command("status")
+def _catalog_status() -> None:
+    """Show the catalog's last and next update times."""
+    from autotune.models.catalog import load_catalog, is_stale
+
+    catalog = load_catalog()
+    last = catalog.get("last_updated", "unknown")[:10]
+    nxt  = catalog.get("next_update",  "unknown")[:10]
+    days = catalog.get("update_interval_days", 4)
+    n    = len(catalog.get("models", []))
+    stale_flag = "  [yellow](stale — run autotune catalog update)[/yellow]" if is_stale(catalog) else ""
+
+    console.print(f"  Models in catalog   : [bold]{n}[/bold]")
+    console.print(f"  Last updated        : [bold]{last}[/bold]{stale_flag}")
+    console.print(f"  Next auto-refresh   : [bold]{nxt}[/bold]  (every {days} days)")
+    console.print(
+        f"\n  [dim]Catalog file: {__import__('autotune.models.catalog', fromlist=['CATALOG_PATH']).CATALOG_PATH}[/dim]"
+    )
+
+
+@catalog_group.command("interval")
+@click.argument("days", type=click.Choice(["2", "4", "7"]))
+def _catalog_interval(days: str) -> None:
+    """Set how often the catalog auto-refreshes (2, 4, or 7 days)."""
+    from autotune.models.catalog import load_catalog, save_catalog, set_update_interval
+    n = int(days)
+    catalog = load_catalog()
+    set_update_interval(catalog, n)
+    save_catalog(catalog)
+    console.print(f"[green]✓[/green]  Catalog will auto-refresh every [bold]{n}[/bold] day(s).")
+
+
+# ---------------------------------------------------------------------------
 # `autotune pull`
 # ---------------------------------------------------------------------------
 
@@ -907,11 +1205,12 @@ def pull(model: Optional[str], show_list: bool) -> None:
       autotune pull llama3.2
       autotune chat --model llama3.2
 
-    Run without arguments (or with --list) to browse popular models.
+    Run without arguments (or with --list) to browse and interactively pick a model.
     """
     from autotune.api.ollama_pull import (
         OllamaNotRunningError,
         PullError,
+        POPULAR_MODELS,
         print_popular_models,
         pull_model,
     )
@@ -919,12 +1218,33 @@ def pull(model: Optional[str], show_list: bool) -> None:
     if show_list or not model:
         print_popular_models(console)
         if not model:
-            return
+            # Interactive picker
+            console.print(
+                "\n[bold]Enter a number to download a model, a custom tag, or press Enter to cancel:[/bold]"
+            )
+            try:
+                choice = input("  › ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]Cancelled.[/dim]")
+                return
+            if not choice:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+            # Numeric pick
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(POPULAR_MODELS):
+                    model = POPULAR_MODELS[idx].id
+                else:
+                    console.print(f"[red]No model at position {choice}.[/red]")
+                    return
+            else:
+                model = choice
 
     try:
         pull_model(model, console)
         console.print(
-            f"[dim]Start chatting:  [bold]autotune chat --model {model}[/bold]\n"
+            f"\n[dim]Start chatting:  [bold]autotune chat --model {model}[/bold]\n"
             f"           or list models: [bold]autotune ls[/bold][/dim]"
         )
     except OllamaNotRunningError as e:
@@ -3626,6 +3946,21 @@ def mlx_pull(model: str, quant: str) -> None:
         mlx_id = guess
     else:
         console.print(f"Resolved  [cyan]{model}[/cyan]  →  [cyan]{mlx_id}[/cyan]")
+
+    from autotune.api.model_guard import check_feasibility
+    guard = check_feasibility(mlx_id, source="mlx")
+    if guard.verdict == "blocked":
+        console.print(f"\n[red]✗  Download blocked:[/red] {guard.reason}")
+        raise SystemExit(1)
+    if guard.verdict == "warn":
+        console.print(f"\n[yellow]⚠  Warning:[/yellow]  {guard.reason}\n")
+        try:
+            answer = input("  Continue anyway? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer not in ("y", "yes"):
+            console.print("[dim]Pull cancelled.[/dim]")
+            raise SystemExit(0)
 
     console.print(f"[bold]Downloading {mlx_id}…[/bold]  (this may take a while)")
 

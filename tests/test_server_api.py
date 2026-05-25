@@ -126,6 +126,72 @@ class TestHealthEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/version
+# ---------------------------------------------------------------------------
+
+class TestVersionEndpoint:
+    def test_returns_200(self, client: TestClient):
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", side_effect=Exception("offline")):
+            r = client.get("/api/version")
+        assert r.status_code == 200
+
+    def test_has_required_fields(self, client: TestClient):
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", side_effect=Exception("offline")):
+            data = client.get("/api/version").json()
+        assert "current" in data
+        assert "latest" in data
+        assert "update_available" in data
+        assert "update_command" in data
+
+    def test_current_is_string(self, client: TestClient):
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", side_effect=Exception("offline")):
+            data = client.get("/api/version").json()
+        assert isinstance(data["current"], str)
+        assert len(data["current"]) > 0
+
+    def test_offline_sets_latest_null(self, client: TestClient):
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", side_effect=Exception("offline")):
+            data = client.get("/api/version").json()
+        assert data["latest"] is None
+        assert data["update_available"] is False
+        assert data["update_command"] is None
+
+    def test_update_available_when_newer_version(self, client: TestClient):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"info": {"version": "99.99.99"}}
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", return_value=mock_resp):
+            data = client.get("/api/version").json()
+        assert data["latest"] == "99.99.99"
+        assert data["update_available"] is True
+        assert data["update_command"] == "pip install --upgrade llm-autotune"
+
+    def test_up_to_date_when_same_version(self, client: TestClient):
+        import autotune.api.server as srv
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"info": {"version": srv._VERSION}}
+        with patch("autotune.api.server._VERSION_CACHE", {}), \
+             patch("httpx.get", return_value=mock_resp):
+            data = client.get("/api/version").json()
+        assert data["update_available"] is False
+        assert data["update_command"] is None
+
+    def test_uses_cache_on_second_call(self, client: TestClient):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"info": {"version": "9.9.9"}}
+        cache: dict = {}
+        with patch("autotune.api.server._VERSION_CACHE", cache), \
+             patch("httpx.get", return_value=mock_resp) as mock_get:
+            client.get("/api/version")
+            client.get("/api/version")
+        assert mock_get.call_count == 1
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/models
 # ---------------------------------------------------------------------------
 

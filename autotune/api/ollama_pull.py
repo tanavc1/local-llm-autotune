@@ -102,20 +102,21 @@ POPULAR_MODELS: list[PopularModel] = [
 
 
 def print_popular_models(console: Optional[Console] = None) -> None:
-    """Print the popular model catalogue as a Rich table."""
+    """Print the popular model catalogue as a numbered Rich table."""
     con = console or Console()
     t = Table(
-        title="Popular Ollama Models  •  pull with [bold]autotune pull <id>[/bold]",
+        title="Popular Ollama Models",
         box=_box.SIMPLE_HEAD,
         show_lines=False,
         title_style="bold",
     )
+    t.add_column("#", style="dim", justify="right", no_wrap=True)
     t.add_column("Model ID", style="cyan", no_wrap=True)
     t.add_column("Size", justify="right", style="dim")
     t.add_column("Description")
 
-    for m in POPULAR_MODELS:
-        t.add_row(m.id, m.size, m.desc)
+    for i, m in enumerate(POPULAR_MODELS, 1):
+        t.add_row(str(i), m.id, m.size, m.desc)
 
     con.print(t)
     con.print(
@@ -142,6 +143,31 @@ def is_ollama_running() -> bool:
             req = urllib.request.Request(f"{url}/api/tags", method="GET")
             with urllib.request.urlopen(req, timeout=2):
                 return True
+        except Exception:
+            continue
+    return False
+
+
+def is_model_available(model_id: str) -> bool:
+    """Return True if *model_id* is already downloaded in the local Ollama library."""
+    base = _ollama_base()
+    candidates = [base]
+    if "localhost" in base:
+        candidates.append(base.replace("localhost", "127.0.0.1"))
+    tag = model_id.lower().strip()
+    # Normalise: treat "name" same as "name:latest"
+    tag_with_latest = tag if ":" in tag else f"{tag}:latest"
+    tag_bare = tag_with_latest.rsplit(":latest", 1)[0]
+    for url in candidates:
+        try:
+            req = urllib.request.Request(f"{url}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read())
+            for m in data.get("models", []):
+                name = m.get("name", "").lower()
+                if name == tag or name == tag_with_latest or name.rsplit(":latest", 1)[0] == tag_bare:
+                    return True
+            return False
         except Exception:
             continue
     return False
@@ -310,6 +336,13 @@ def pull_model(model_id: str, console: Optional[Console] = None) -> bool:
             "Ollama could not be started automatically. "
             "Install it from https://ollama.ai or open the Ollama desktop app."
         )
+
+    from autotune.api.model_guard import check_feasibility
+    guard = check_feasibility(model_id, source="ollama")
+    if guard.verdict == "blocked":
+        raise PullError(f"Download blocked: {guard.reason}")
+    if guard.verdict == "warn":
+        con.print(f"\n[yellow]⚠  Warning:[/yellow]  {guard.reason}\n")
 
     con.print(f"\n[bold]Pulling[/bold] [cyan]{model_id}[/cyan]…\n")
 

@@ -307,6 +307,411 @@
 
     /* ── Empty / loading states ──────────────────────────────────────── */
     .empty { text-align: center; padding: 32px 16px; color: var(--muted); font-size: 12px; }
+
+    /* ── Logout button ───────────────────────────────────────────────── */
+    .logout-btn {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 11px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .logout-btn:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── Modal ───────────────────────────────────────────────────── */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.72); z-index: 200;
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; width: 100%; max-width: 440px;
+      box-shadow: 0 24px 48px rgba(0,0,0,.5);
+      animation: modal-in .14s ease;
+    }
+    @keyframes modal-in { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+    .modal-header {
+      padding: 18px 20px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .modal-title { font-size: 14px; font-weight: 600; }
+    .modal-x {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-size: 18px; line-height: 1; padding: 0 2px; transition: color .1s;
+    }
+    .modal-x:hover { color: var(--text); }
+    .modal-body { padding: 20px; }
+    .modal-footer {
+      padding: 14px 20px; border-top: 1px solid var(--border);
+      display: flex; gap: 8px; justify-content: flex-end;
+    }
+    .modal-body label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .6px;
+      margin-bottom: 7px;
+    }
+    .modal-input {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 13px;
+      outline: none; transition: border-color .15s;
+    }
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-hint { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.55; }
+    .modal-err {
+      margin: 0 20px 14px; padding: 9px 12px; border-radius: 6px;
+      background: rgba(248,81,73,.10); border: 1px solid rgba(248,81,73,.3);
+      color: var(--red); font-size: 12px; display: none;
+    }
+    .modal-err.show { display: block; }
+
+    /* Shared buttons */
+    .btn-primary {
+      padding: 8px 16px; background: var(--accent); color: #0d1117;
+      font-weight: 600; font-size: 13px; border: none; border-radius: 6px;
+      cursor: pointer; transition: opacity .15s;
+    }
+    .btn-primary:hover { opacity: .85; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-ghost {
+      padding: 8px 14px; background: transparent; color: var(--muted);
+      font-size: 13px; border: 1px solid var(--border); border-radius: 6px;
+      cursor: pointer; transition: border-color .15s, color .15s;
+    }
+    .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+    .btn-add {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px;
+      color: var(--accent); font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: border-color .15s;
+    }
+    .btn-add:hover { border-color: var(--accent); }
+    .btn-revoke {
+      padding: 3px 8px; background: transparent;
+      border: 1px solid rgba(248,81,73,.25); border-radius: 4px;
+      color: rgba(248,81,73,.7); font-size: 11px; cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .btn-revoke:hover { border-color: var(--red); color: var(--red); }
+
+    /* Key reveal */
+    .key-box {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;
+    }
+    .key-box code {
+      font-family: 'SF Mono','Fira Code',monospace;
+      font-size: 12px; color: var(--green); flex: 1;
+      word-break: break-all; user-select: all;
+    }
+    .btn-copy {
+      flex-shrink: 0; padding: 4px 10px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--muted); font-size: 12px;
+      cursor: pointer; transition: border-color .15s, color .15s; white-space: nowrap;
+    }
+    .btn-copy:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-copy.copied { border-color: var(--green); color: var(--green); }
+    .reveal-warning { font-size: 12px; color: var(--yellow); margin-bottom: 8px; }
+    .reveal-timer { font-size: 12px; color: var(--muted); }
+
+    /* ── Security checks ─────────────────────────────────────────── */
+    .sec-check {
+      display: flex; align-items: flex-start; gap: 13px;
+      padding: 12px 18px;
+      border-bottom: 1px solid rgba(48,54,61,.5);
+    }
+    .sec-check:last-child { border-bottom: none; }
+    .sec-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+    .sec-name { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+    .sec-msg  { font-size: 12px; color: var(--muted); line-height: 1.55; }
+    .sec-act  {
+      display: inline-block; margin-top: 5px; font-size: 11px;
+      font-family: 'SF Mono','Fira Code',monospace;
+      background: var(--bg); border: 1px solid var(--border);
+      padding: 2px 7px; border-radius: 3px; color: var(--accent);
+    }
+    .sec-check.ok    .sec-name { color: var(--green); }
+    .sec-check.warn  .sec-name { color: var(--yellow); }
+    .sec-check.error .sec-name { color: var(--red); }
+    .sec-check.info  .sec-name { color: var(--muted); }
+
+    /* ── Activity feed & sessions ────────────────────────────────────── */
+    .activity-now {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(63,185,80,.04);
+    }
+    .activity-now-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+      flex-shrink: 0; animation: blink 2s infinite;
+    }
+    .activity-now-label { font-size: 12px; font-weight: 600; color: var(--green); }
+    .activity-now-models { font-size: 12px; color: var(--muted); margin-left: 4px; }
+    .activity-now-none { font-size: 12px; color: var(--muted); }
+
+    .session-item {
+      padding: 12px 18px;
+      border-bottom: 1px solid rgba(48,54,61,.5);
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .session-item:last-child { border-bottom: none; }
+    .session-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent); flex-shrink: 0;
+      margin-top: 3px;
+    }
+    .session-dot.recent { background: var(--green); animation: blink 2s infinite; }
+    .session-time { font-size: 11px; color: var(--muted); }
+    .session-models {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      font-family: 'SF Mono','Fira Code',monospace;
+      margin-bottom: 3px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .session-meta { font-size: 11px; color: var(--muted); }
+    .session-stats {
+      text-align: right; flex-shrink: 0;
+    }
+    .session-reqs { font-size: 13px; font-weight: 700; color: var(--text); }
+    .session-reqs-label { font-size: 10px; color: var(--muted); }
+
+    /* ── Search input ────────────────────────────────────────────────── */
+    .search-input {
+      padding: 5px 10px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 12px;
+      outline: none; width: 220px; transition: border-color .15s;
+    }
+    .search-input:focus { border-color: var(--accent); }
+    .search-input::placeholder { color: var(--muted); }
+
+    /* ── Installed model row ─────────────────────────────────────────── */
+    .model-status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--border); margin-right: 5px;
+      vertical-align: middle;
+    }
+    .model-status-dot.loaded { background: var(--green); animation: blink 2s infinite; }
+
+    /* ── Latency quality bands (for new cols) ────────────────────────── */
+    .lat-great { color: var(--green); }
+    .lat-ok    { color: var(--accent); }
+    .lat-slow  { color: var(--yellow); }
+    .lat-bad   { color: var(--red); }
+
+    /* ── Source selector tabs ────────────────────────────────────────── */
+    .src-tabs { display: flex; gap: 4px; }
+    .src-tab {
+      padding: 4px 12px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: transparent; color: var(--muted); cursor: pointer;
+      transition: all .15s;
+    }
+    .src-tab.active {
+      background: var(--accent); color: #0d1117; border-color: var(--accent);
+    }
+    .src-tab:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Source hint bar ─────────────────────────────────────────────── */
+    .src-hint {
+      padding: 10px 18px; font-size: 12px; color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+      line-height: 1.5;
+    }
+    .src-hint .hint-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: .4px;
+      padding: 2px 7px; border-radius: 4px; white-space: nowrap;
+    }
+    .src-hint .hint-badge.ollama  { background: rgba(88,166,255,.15); color: var(--accent); }
+    .src-hint .hint-badge.gguf    { background: rgba(63,185,80,.15);  color: var(--green); }
+    .src-hint .hint-badge.mlx     { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .src-hint code {
+      background: var(--surface2); padding: 1px 5px; border-radius: 3px;
+      font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; color: var(--text);
+    }
+
+    /* ── Feasibility feedback bar ────────────────────────────────────── */
+    .feasibility-bar {
+      display: none; padding: 10px 18px; font-size: 12px;
+      border-bottom: 1px solid var(--border); line-height: 1.5;
+    }
+    .feasibility-bar.ok      { color: var(--green);  }
+    .feasibility-bar.warn    { color: var(--yellow); background: rgba(210,153,34,.06); }
+    .feasibility-bar.blocked { color: var(--red);    background: rgba(248,81,73,.06); }
+    .feasibility-bar .feas-stats { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Conversations / Sessions ────────────────────────────────────── */
+    .conv-session {
+      border-bottom: 1px solid var(--border); cursor: pointer;
+      transition: background .12s;
+    }
+    .conv-session:last-child { border-bottom: none; }
+    .conv-session:hover { background: var(--surface2); }
+    .conv-session-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 18px;
+    }
+    .conv-session-meta { flex: 1; min-width: 0; }
+    .conv-session-preview {
+      font-size: 13px; color: var(--text); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    }
+    .conv-session-sub {
+      font-size: 11px; color: var(--muted); margin-top: 3px;
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .conv-session-chevron {
+      color: var(--muted); font-size: 11px; flex-shrink: 0; transition: transform .2s;
+    }
+    .conv-session.open .conv-session-chevron { transform: rotate(90deg); }
+    .conv-turns { display: none; border-top: 1px solid var(--border); }
+    .conv-session.open .conv-turns { display: block; }
+    .conv-turn {
+      padding: 14px 18px 14px 40px; border-bottom: 1px solid var(--border);
+    }
+    .conv-turn:last-child { border-bottom: none; }
+    .conv-turn-role {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; margin-bottom: 6px;
+    }
+    .conv-turn-role.user      { color: var(--accent); }
+    .conv-turn-role.assistant { color: var(--green); }
+    .conv-turn-role.system    { color: var(--yellow); }
+    .conv-turn-content {
+      font-size: 13px; color: var(--text); line-height: 1.6;
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 300px; overflow-y: auto;
+    }
+    .conv-turn-content.collapsed { max-height: 80px; overflow: hidden; }
+    .conv-turn-expand {
+      font-size: 11px; color: var(--accent); cursor: pointer;
+      margin-top: 4px; display: inline-block;
+    }
+    .conv-turn-stats {
+      display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap;
+    }
+    .conv-stat {
+      font-size: 10px; color: var(--muted);
+      display: flex; flex-direction: column; align-items: flex-start;
+    }
+    .conv-stat-val {
+      font-size: 12px; font-weight: 600; color: var(--text);
+    }
+    .conv-search {
+      padding: 5px 10px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 12px; outline: none;
+      width: 220px; transition: border-color .15s;
+    }
+    .conv-search:focus { border-color: var(--accent); }
+    .conv-search::placeholder { color: var(--muted); }
+
+    /* ── Model Catalog ───────────────────────────────────────── */
+    .catalog-toolbar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .catalog-filter-bar {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 8px 18px 6px; border-bottom: 1px solid var(--border);
+    }
+    .tier-chip {
+      padding: 3px 10px; border-radius: 20px; font-size: 11px;
+      font-weight: 600; cursor: pointer; border: 1px solid var(--border);
+      background: transparent; color: var(--muted); transition: all .15s;
+    }
+    .tier-chip.active   { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+    .tier-chip:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+    .catalog-tbl-wrap { overflow-x: auto; }
+    .catalog-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .catalog-tbl th {
+      padding: 7px 14px; text-align: left; font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .catalog-tbl td {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .catalog-tbl tr:last-child td { border-bottom: none; }
+    .catalog-tbl tr:hover td { background: rgba(255,255,255,.02); }
+    .cat-name     { font-weight: 600; color: var(--text); }
+    .cat-highlight{ font-size: 10px; color: var(--yellow); font-weight: 500; margin-top: 2px; }
+    .cat-tier-badge {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+    }
+    .cat-tier-badge.tiny     { background: rgba(139,148,158,.15); color: var(--muted); }
+    .cat-tier-badge.small    { background: rgba(88,166,255,.15);  color: var(--accent); }
+    .cat-tier-badge.medium   { background: rgba(63,185,80,.15);   color: var(--green); }
+    .cat-tier-badge.large    { background: rgba(210,153,34,.15);  color: var(--yellow); }
+    .cat-tier-badge.xl       { background: rgba(162,104,246,.15); color: #a268f6; }
+    .cat-tier-badge.flagship { background: rgba(248,81,73,.15);   color: var(--red); }
+    .cat-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .cat-tag {
+      padding: 1px 6px; border-radius: 3px; font-size: 10px;
+      background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+    }
+    .cat-bench  { color: var(--text); font-weight: 500; }
+    .bench-bar  { height: 4px; border-radius: 2px; background: var(--border); width: 60px; margin-top: 3px; }
+    .bench-fill { height: 100%; border-radius: 2px; background: var(--green); transition: width .3s; }
+    .cat-pull-btn {
+      padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+      background: rgba(63,185,80,.15); color: var(--green);
+      border: 1px solid rgba(63,185,80,.3); cursor: pointer; transition: all .15s;
+      white-space: nowrap;
+    }
+    .cat-pull-btn:hover { background: rgba(63,185,80,.25); border-color: var(--green); }
+    .cat-new-badge {
+      display: inline-block; padding: 1px 5px; border-radius: 4px; font-size: 9px;
+      font-weight: 700; background: rgba(63,185,80,.2); color: var(--green);
+      border: 1px solid rgba(63,185,80,.3); vertical-align: middle; margin-left: 4px;
+    }
+    .catalog-footer {
+      padding: 8px 18px; font-size: 11px; color: var(--muted);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .catalog-refresh-btn {
+      padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+      background: transparent; color: var(--accent); border: 1px solid var(--border);
+      cursor: pointer; transition: all .15s;
+    }
+    .catalog-refresh-btn:hover { border-color: var(--accent); background: rgba(88,166,255,.08); }
+
+    /* ── Per-key usage chart (click-to-expand) ─────────────────────────── */
+    .key-row { cursor: pointer; }
+    .key-row:hover td { background: var(--surface2); }
+    .key-expand-row td {
+      padding: 0 !important; border-bottom: 1px solid var(--border);
+    }
+    .key-expand-row.hidden { display: none; }
+    .key-chart-wrap {
+      padding: 16px 18px 18px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+    }
+    .key-chart-title {
+      font-size: 11px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .key-chart-canvas-wrap { position: relative; height: 140px; }
   </style>
 </head>
 <body>
@@ -325,6 +730,15 @@
       <span id="live-txt">connecting…</span>
     </div>
     <span id="last-updated" style="font-size:11px;">—</span>
+    <a href="/dashboard/logout" class="logout-btn" id="logout-btn" title="Sign out">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+      Sign out
+    </a>
   </div>
 </header>
 
@@ -355,9 +769,9 @@
     </div>
 
     <div class="kpi">
-      <div class="kpi-label">Avg TTFT</div>
+      <div class="kpi-label">TTFT Median</div>
       <div class="kpi-val" id="kv-ttft">—</div>
-      <div class="kpi-sub">time-to-first-token</div>
+      <div class="kpi-sub" id="kv-ttft-sub">time-to-first-token</div>
     </div>
 
     <div class="kpi green">
@@ -377,6 +791,63 @@
   <!-- Running model chips -->
   <div id="chips-section" style="display:none">
     <div class="chips-row" id="chips"></div>
+  </div>
+
+  <!-- Live Activity -->
+  <div class="section-label">Live Activity</div>
+  <div class="two-col">
+
+    <!-- Sessions panel -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Sessions</div>
+          <div class="card-subtitle">Grouped by 5-min inactivity gaps</div>
+        </div>
+        <div class="card-badge" id="sessions-badge">—</div>
+      </div>
+      <div id="sessions-now"></div>
+      <div id="sessions-list"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- Request feed -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Request Feed</div>
+        <div class="card-badge" id="feed-badge">—</div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>TTFT</th>
+              <th>Total</th>
+              <th>Tokens</th>
+              <th>Profile</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody id="activity-tbody">
+            <tr><td colspan="6" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Gateway Health -->
+  <div class="section-label">Gateway Health</div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Security &amp; Health Checks</div>
+        <div class="card-subtitle">Refreshes every 10 s</div>
+      </div>
+      <div class="card-badge" id="security-badge">—</div>
+    </div>
+    <div id="security-list"><div class="empty">Loading…</div></div>
   </div>
 
   <!-- Charts -->
@@ -455,7 +926,7 @@
             <th>Model</th>
             <th>Requests</th>
             <th>Avg TTFT</th>
-            <th>Min / Max TTFT</th>
+            <th>P95 TTFT</th>
             <th>Avg Tok/s</th>
             <th>Avg Context</th>
             <th>Avg Elapsed</th>
@@ -470,6 +941,106 @@
     </div>
   </div>
 
+  <!-- Model Library -->
+  <div class="section-label">Model Library</div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Installed Models</div>
+        <div class="card-subtitle" id="installed-subtitle">All Ollama models available locally</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+        <div class="src-tabs">
+          <button class="src-tab active" data-src="ollama">Ollama</button>
+          <button class="src-tab" data-src="hf-gguf">HF GGUF</button>
+          <button class="src-tab" data-src="hf-mlx">HF MLX</button>
+        </div>
+        <input class="search-input" type="search" id="model-search"
+               placeholder="Filter or type a model name…" autocomplete="off">
+        <button class="btn-add" id="pull-btn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round">
+            <polyline points="8 17 12 21 16 17"/>
+            <line x1="12" y1="3" x2="12" y2="21"/>
+          </svg>
+          Pull
+        </button>
+      </div>
+    </div>
+    <div id="src-hint" class="src-hint"></div>
+    <div id="feasibility-bar" class="feasibility-bar"></div>
+    <div id="pull-status" style="display:none;padding:10px 18px;font-size:12px;color:var(--accent);border-bottom:1px solid var(--border);"></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Size</th>
+            <th>Parameters</th>
+            <th>Quantization</th>
+            <th>Family</th>
+            <th>Installed</th>
+          </tr>
+        </thead>
+        <tbody id="installed-tbody">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Model Catalog -->
+  <div class="section-label">Model Catalog</div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Recommended Models</div>
+        <div class="card-subtitle" id="catalog-subtitle">Best LLMs at every size — auto-updated</div>
+      </div>
+      <div class="catalog-toolbar">
+        <input class="conv-search" type="search" id="catalog-search"
+               placeholder="Search models…" autocomplete="off" style="width:180px;">
+        <div class="card-badge" id="catalog-badge">—</div>
+      </div>
+    </div>
+    <div class="catalog-filter-bar" id="catalog-tier-bar">
+      <span style="font-size:11px;color:var(--muted);margin-right:4px;">Tier:</span>
+      <button class="tier-chip active" data-tier="">All</button>
+      <button class="tier-chip" data-tier="tiny">Tiny</button>
+      <button class="tier-chip" data-tier="small">Small</button>
+      <button class="tier-chip" data-tier="medium">Medium</button>
+      <button class="tier-chip" data-tier="large">Large</button>
+      <button class="tier-chip" data-tier="xl">XL</button>
+      <button class="tier-chip" data-tier="flagship">Flagship</button>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);">
+        <span id="catalog-tag-filter" style="cursor:pointer;"></span>
+      </span>
+    </div>
+    <div class="catalog-tbl-wrap">
+      <table class="catalog-tbl">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Tier</th>
+            <th>Size</th>
+            <th>RAM</th>
+            <th>Context</th>
+            <th>Benchmarks</th>
+            <th>Tags</th>
+            <th>Pull</th>
+          </tr>
+        </thead>
+        <tbody id="catalog-tbody">
+          <tr><td colspan="8" class="empty">Loading catalog…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="catalog-footer">
+      <span id="catalog-last-updated">—</span>
+      <button class="catalog-refresh-btn" id="catalog-refresh-btn">Refresh catalog</button>
+    </div>
+  </div>
+
   <!-- API keys + slow requests -->
   <div class="section-label">API Keys &amp; Slow Requests</div>
   <div class="two-col">
@@ -477,7 +1048,16 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title">Active API Keys</div>
-        <div class="card-badge" id="keys-badge">—</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="card-badge" id="keys-badge">—</div>
+          <button class="btn-add" id="new-key-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.5" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Key
+          </button>
+        </div>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -488,10 +1068,12 @@
               <th>Req Today</th>
               <th>Tokens Today</th>
               <th>Last Used</th>
+              <th>Created</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="keys-tbody">
-            <tr><td colspan="5" class="empty">Loading…</td></tr>
+            <tr><td colspan="6" class="empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -523,6 +1105,25 @@
 
   </div>
 
+  <!-- Conversations -->
+  <div class="section-label">Conversation History</div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">All Conversations</div>
+        <div class="card-subtitle" id="conv-hist-subtitle">Every session captured by the gateway</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input class="conv-search" type="search" id="conv-hist-search"
+               placeholder="Search conversations…" autocomplete="off">
+        <div class="card-badge" id="conv-hist-badge">—</div>
+      </div>
+    </div>
+    <div id="conv-hist-list">
+      <div style="padding:16px 18px;" class="empty dim">Loading conversation history…</div>
+    </div>
+  </div>
+
   <!-- Suggestions -->
   <div class="section-label">Suggestions</div>
   <div class="suggestions" id="suggestions">
@@ -530,6 +1131,54 @@
   </div>
 
 </main>
+
+<!-- ─────────────────── MODALS ─────────────────── -->
+
+<!-- Create key -->
+<div class="modal-backdrop" id="modal-create">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">New API Key</div>
+      <button class="modal-x" id="create-close">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <label for="new-key-name">Key name</label>
+      <input class="modal-input" type="text" id="new-key-name"
+             placeholder="e.g. dev-laptop, ci-pipeline, alice"
+             maxlength="128" autocomplete="off">
+      <div class="modal-hint">
+        A human-readable label. Shown in usage logs and the dashboard.
+        The key itself is generated automatically.
+      </div>
+    </div>
+    <div class="modal-err" id="create-err"></div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="create-cancel">Cancel</button>
+      <button class="btn-primary" id="create-submit">Create key</button>
+    </div>
+  </div>
+</div>
+
+<!-- Key reveal (shown once) -->
+<div class="modal-backdrop" id="modal-reveal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Copy your key — shown once</div>
+    </div>
+    <div class="modal-body">
+      <label>Key for <span id="reveal-name" style="color:var(--text);font-weight:600;text-transform:none;letter-spacing:0">—</span></label>
+      <div class="key-box">
+        <code id="reveal-key">—</code>
+        <button class="btn-copy" id="copy-btn">Copy</button>
+      </div>
+      <div class="reveal-warning">&#9888; This key cannot be recovered. Copy it now and store it securely.</div>
+      <div class="reveal-timer">Auto-closes in <span id="reveal-countdown">60</span> s</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="reveal-done">I've copied it &rarr;</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -547,6 +1196,68 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // ── Time formatting ─────────────────────────────────────────────────────
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts * 1000).toLocaleTimeString('en-US', {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+  }
+
+  function fmtRelDate(ts) {
+    if (!ts) return '';
+    const d    = new Date(ts * 1000);
+    const now  = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yest  = new Date(+today - 86400000);
+    const day   = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (+day === +today) return 'Today';
+    if (+day === +yest)  return 'Yesterday';
+    const diffDays = Math.round((+today - +day) / 86400000);
+    if (diffDays < 7)
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (d.getFullYear() === now.getFullYear())
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtDateTime(ts) {
+    if (!ts) return '—';
+    return `${fmtRelDate(ts)} at ${fmtTime(ts)}`;
+  }
+
+  function fmtDateShort(ts) {
+    if (!ts) return '—';
+    const d    = new Date(ts * 1000);
+    const now  = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yest  = new Date(+today - 86400000);
+    const day   = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (+day === +today) return fmtTime(ts);
+    if (+day === +yest)  return 'Yest · ' + fmtTime(ts);
+    if (d.getFullYear() === now.getFullYear())
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtDuration(sec) {
+    if (!sec || sec <= 0) return '—';
+    if (sec < 60) return Math.round(sec) + 's';
+    const m = Math.floor(sec / 60);
+    const s = Math.round(sec % 60);
+    if (m < 60) return `${m}m ${s}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  }
+
+  function latClass(ms) {
+    if (!ms) return '';
+    if (ms < 400)  return 'lat-great';
+    if (ms < 1200) return 'lat-ok';
+    if (ms < 2500) return 'lat-slow';
+    return 'lat-bad';
   }
 
   function fmtMs(ms) {
@@ -687,7 +1398,7 @@
               title: (items) => {
                 const i = items[0].dataIndex;
                 const d = data[i];
-                return d ? `${esc(d.model)} · ${d.time}` : `#${i + 1}`;
+                return d ? `${esc(d.model)} · ${fmtDateTime(d.observed_at_ts)}` : `#${i + 1}`;
               },
             },
           },
@@ -723,8 +1434,9 @@
 
     // TTFT
     const ttftEl = document.getElementById('kv-ttft');
-    ttftEl.textContent = fmtMs(d.avg_ttft_ms);
-    ttftEl.style.color = ttftColor(d.avg_ttft_ms);
+    ttftEl.textContent = fmtMs(d.p50_ttft_ms || d.avg_ttft_ms);
+    ttftEl.style.color = ttftColor(d.p50_ttft_ms || d.avg_ttft_ms);
+    document.getElementById('kv-ttft-sub').textContent = d.avg_elapsed_ms > 0 ? 'median · avg total ' + fmtMs(d.avg_elapsed_ms) : 'time-to-first-token';
 
     // Tok/s
     document.getElementById('kv-tps').textContent        = d.avg_tps > 0 ? d.avg_tps.toFixed(1) : '—';
@@ -767,32 +1479,156 @@
         <td><span class="mono">${esc(m.model_id)}</span></td>
         <td>${m.requests}</td>
         <td style="color:${ttftColor(m.avg_ttft_ms)}">${fmtMs(m.avg_ttft_ms)}</td>
-        <td class="dim" style="font-size:12px;">${fmtMs(m.min_ttft_ms)} / ${fmtMs(m.max_ttft_ms)}</td>
+        <td class="dim" style="font-size:12px;">${fmtMs(m.max_ttft_ms)}</td>
         <td class="c-green">${m.avg_tps > 0 ? m.avg_tps.toFixed(1) + ' t/s' : '—'}</td>
         <td>${m.avg_context_len > 0 ? Number(m.avg_context_len).toFixed(0) : '—'}</td>
         <td>${m.avg_elapsed_sec > 0 ? m.avg_elapsed_sec.toFixed(2) + ' s' : '—'}</td>
         <td>${fmtTokens(m.total_tokens)}</td>
-        <td class="dim">${esc(m.last_seen) || '—'}</td>
+        <td class="dim" style="font-size:12px;">${fmtDateShort(m.last_seen_ts)}</td>
       </tr>
     `).join('');
+  }
+
+  // ── Per-key usage trend charts ─────────────────────────────────────────
+  const _openKeyIds  = new Set();   // key IDs currently expanded
+  const _keyCharts   = {};          // key_id → Chart instance
+
+  function _keyChartId(keyId) {
+    // Canvas IDs must be valid HTML identifiers — strip hyphens
+    return 'kc-' + keyId.replace(/[^a-zA-Z0-9]/g, '_');
+  }
+
+  async function _toggleKeyChart(keyId, keyName) {
+    const expandRow = document.getElementById('kexp-' + _keyChartId(keyId));
+    if (!expandRow) return;
+
+    if (_openKeyIds.has(keyId)) {
+      _openKeyIds.delete(keyId);
+      expandRow.classList.add('hidden');
+      return;
+    }
+
+    _openKeyIds.add(keyId);
+    expandRow.classList.remove('hidden');
+
+    const canvasId = _keyChartId(keyId);
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    // Destroy previous chart instance if row was previously opened
+    if (_keyCharts[keyId]) {
+      _keyCharts[keyId].destroy();
+      delete _keyCharts[keyId];
+    }
+
+    const titleEl = expandRow.querySelector('.key-chart-title span');
+    if (titleEl) titleEl.textContent = 'Loading…';
+
+    try {
+      const r = await fetch('/api/dashboard/usage/' + encodeURIComponent(keyId) + '?days=30');
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (!d.data || !d.data.length) {
+        if (titleEl) titleEl.textContent = 'No usage data for this key yet.';
+        return;
+      }
+      if (titleEl) titleEl.textContent = `30-day usage · ${esc(keyName)}`;
+
+      const labels   = d.data.map(p => p.day.slice(5));  // MM-DD
+      const requests = d.data.map(p => p.requests);
+      const maxReq   = Math.max(...requests, 1);
+
+      _keyCharts[keyId] = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Requests',
+            data: requests,
+            backgroundColor: requests.map(v =>
+              v === 0 ? 'rgba(48,54,61,.4)' :
+              v >= maxReq * 0.8 ? 'rgba(88,166,255,.8)' : 'rgba(88,166,255,.45)'
+            ),
+            borderRadius: 3,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.parsed.y} request${ctx.parsed.y !== 1 ? 's' : ''}`,
+              afterLabel: ctx => {
+                const tok = d.data[ctx.dataIndex]?.tokens;
+                return tok > 0 ? fmtTokens(tok) + ' tokens' : '';
+              },
+            },
+          }},
+          scales: {
+            x: { grid: { color: 'rgba(48,54,61,.4)' }, ticks: { color: '#8b949e', font: { size: 9 }, maxRotation: 0 }, border: { color: '#30363d' } },
+            y: { grid: { color: 'rgba(48,54,61,.4)' }, ticks: { color: '#8b949e', font: { size: 9 }, precision: 0 }, border: { color: '#30363d' }, beginAtZero: true },
+          },
+        },
+      });
+    } catch (e) {
+      if (titleEl) titleEl.textContent = 'Could not load usage data — ' + esc(String(e));
+    }
   }
 
   function renderKeys(keys) {
     document.getElementById('keys-badge').textContent = keys.length + (keys.length === 1 ? ' key' : ' keys');
     const tbody = document.getElementById('keys-tbody');
     if (!keys.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys. Create one with: POST /admin/keys</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No active API keys. Click New Key to create one.</td></tr>';
       return;
     }
-    tbody.innerHTML = keys.map(k => `
-      <tr>
-        <td>${esc(k.name)}</td>
-        <td><span class="mono">${esc(k.key_prefix)}…</span></td>
-        <td>${k.requests_today}</td>
-        <td>${fmtTokens(k.tokens_today)}</td>
-        <td class="dim">${esc(k.last_used_at) || 'never'}</td>
-      </tr>
-    `).join('');
+
+    // Preserve which keys are open across re-renders
+    const stillOpen = new Set([..._openKeyIds].filter(id => keys.some(k => k.id === id)));
+    _openKeyIds.clear();
+    stillOpen.forEach(id => _openKeyIds.add(id));
+
+    tbody.innerHTML = keys.map(k => {
+      const cid    = _keyChartId(k.id);
+      const isOpen = _openKeyIds.has(k.id);
+      return `
+        <tr class="key-row" data-keyid="${esc(k.id)}" data-keyname="${esc(k.name)}" title="Click to view 30-day usage chart">
+          <td>${esc(k.name)}</td>
+          <td><span class="mono">${esc(k.key_prefix)}…</span></td>
+          <td>${k.requests_today}</td>
+          <td>${fmtTokens(k.tokens_today)}</td>
+          <td class="dim">${fmtDateShort(k.last_used_ts) || 'never'}</td>
+          <td class="dim" style="font-size:11px;">${fmtDateShort(k.created_ts)}</td>
+          <td style="text-align:right" onclick="event.stopPropagation()">
+            <button class="btn-revoke" data-id="${esc(k.id)}" data-name="${esc(k.name)}">Revoke</button>
+          </td>
+        </tr>
+        <tr class="key-expand-row${isOpen ? '' : ' hidden'}" id="kexp-${cid}">
+          <td colspan="7">
+            <div class="key-chart-wrap">
+              <div class="key-chart-title"><span>${isOpen ? `30-day usage · ${esc(k.name)}` : ''}</span></div>
+              <div class="key-chart-canvas-wrap"><canvas id="${cid}"></canvas></div>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-revoke').forEach(btn => {
+      btn.addEventListener('click', () => revokeKey(btn.dataset.id, btn.dataset.name));
+    });
+
+    tbody.querySelectorAll('.key-row').forEach(row => {
+      row.addEventListener('click', () => {
+        _toggleKeyChart(row.dataset.keyid, row.dataset.keyname);
+      });
+    });
+
+    // Re-draw charts for rows that were open before the refresh
+    stillOpen.forEach(id => {
+      const key = keys.find(k => k.id === id);
+      if (key) _toggleKeyChart(id, key.name);
+    });
   }
 
   function renderSlow(requests) {
@@ -809,12 +1645,312 @@
         <td style="color:${ttftColor(r.ttft_ms)}">${fmtMs(r.ttft_ms)}</td>
         <td>${r.context_len ? Number(r.context_len).toLocaleString() : '—'}</td>
         <td><span class="pill ${esc(r.profile_name) || ''}">${esc(r.profile_name) || '—'}</span></td>
-        <td class="dim" style="font-size:11px;">${esc(r.time)}</td>
+        <td class="dim" style="font-size:11px;">${fmtDateShort(r.observed_at_ts)}</td>
       </tr>
     `).join('');
   }
 
-  const ICONS = { ok: '✅', warning: '⚠️', error: '🚨', info: 'ℹ️' };
+  const ICONS     = { ok: '✅', warning: '⚠️', error: '🚨', info: 'ℹ️' };
+  const SEC_ICONS = { ok: '✅', warn:    '⚠️', error: '🚨', info: 'ℹ️' };
+
+  function renderVersionBadge(v) {
+    const el = document.getElementById('version-badge');
+    if (!el || !v) return;
+    if (v.update_available && v.latest) {
+      el.textContent = 'v' + v.current + ' → v' + v.latest;
+      el.title = 'Update available: ' + v.update_command;
+      el.style.color      = 'var(--yellow)';
+      el.style.borderColor = 'var(--yellow)';
+      el.style.cursor     = 'help';
+    } else {
+      el.textContent = 'v' + v.current;
+    }
+  }
+
+  function renderSecurity(checks) {
+    const list   = document.getElementById('security-list');
+    const badge  = document.getElementById('security-badge');
+    if (!checks || !checks.length) {
+      list.innerHTML = '<div class="empty">No checks returned.</div>';
+      return;
+    }
+    const errors = checks.filter(c => c.status === 'error').length;
+    const warns  = checks.filter(c => c.status === 'warn').length;
+    if (errors > 0) {
+      badge.textContent = `${errors} error${errors > 1 ? 's' : ''}`;
+      badge.style.color = 'var(--red)';
+    } else if (warns > 0) {
+      badge.textContent = `${warns} warning${warns > 1 ? 's' : ''}`;
+      badge.style.color = 'var(--yellow)';
+    } else {
+      badge.textContent = 'all clear';
+      badge.style.color = 'var(--green)';
+    }
+    list.innerHTML = checks.map(c => `
+      <div class="sec-check ${esc(c.status)}">
+        <div class="sec-icon">${SEC_ICONS[c.status] || 'ℹ️'}</div>
+        <div>
+          <div class="sec-name">${esc(c.check)}</div>
+          <div class="sec-msg">${esc(c.message)}</div>
+          ${c.action ? `<code class="sec-act">${esc(c.action)}</code>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderActivity(data) {
+    const now = Date.now() / 1000;
+    // Active now banner
+    const nowEl = document.getElementById('sessions-now');
+    const active = data.active_now;
+    if (active && active.count > 0) {
+      nowEl.innerHTML = `
+        <div class="activity-now">
+          <div class="activity-now-dot"></div>
+          <span class="activity-now-label">${active.count} request${active.count !== 1 ? 's' : ''} in last 10 min</span>
+          <span class="activity-now-models">${active.models.map(m => `<span class="mono" style="font-size:11px">${esc(m)}</span>`).join(', ')}</span>
+        </div>`;
+    } else {
+      nowEl.innerHTML = `<div class="activity-now"><span class="activity-now-none">No requests in the last 10 minutes</span></div>`;
+    }
+
+    // Sessions
+    const sessEl = document.getElementById('sessions-list');
+    document.getElementById('sessions-badge').textContent =
+      data.sessions.length + (data.sessions.length === 1 ? ' session' : ' sessions');
+    if (!data.sessions.length) {
+      sessEl.innerHTML = '<div class="empty">No sessions yet. Start sending requests through autotune.</div>';
+    } else {
+      sessEl.innerHTML = data.sessions.map(s => {
+        const isRecent = (now - s.end_ts) < 600;
+        const duration = s.end_ts - s.start_ts + (s.avg_elapsed_sec || 0);
+        return `
+          <div class="session-item">
+            <div class="session-dot ${isRecent ? 'recent' : ''}"></div>
+            <div>
+              <div class="session-models">${s.models.map(m => esc(m)).join(', ')}</div>
+              <div class="session-meta">
+                ${fmtDateTime(s.start_ts)}
+                ${duration > 5 ? ' · ' + fmtDuration(duration) : ''}
+                ${s.total_tokens > 0 ? ' · ' + fmtTokens(s.total_tokens) + ' tokens' : ''}
+                ${s.avg_ttft_ms ? ' · ' + fmtMs(s.avg_ttft_ms) + ' TTFT' : ''}
+              </div>
+            </div>
+            <div class="session-stats">
+              <div class="session-reqs">${s.request_count}</div>
+              <div class="session-reqs-label">req${s.request_count !== 1 ? 's' : ''}</div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    // Request feed
+    const tbody = document.getElementById('activity-tbody');
+    document.getElementById('feed-badge').textContent =
+      data.requests.length + (data.requests.length === 1 ? ' request' : ' requests');
+    if (!data.requests.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No requests yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.requests.slice(0, 50).map(r => `
+      <tr>
+        <td><span class="mono">${esc(r.model)}</span></td>
+        <td class="${latClass(r.ttft_ms)}">${fmtMs(r.ttft_ms)}</td>
+        <td class="dim">${r.elapsed_sec > 0 ? r.elapsed_sec.toFixed(2) + ' s' : '—'}</td>
+        <td>${fmtTokens(r.total_tokens)}</td>
+        <td>${r.profile ? `<span class="pill ${esc(r.profile)}">${esc(r.profile)}</span>` : '<span class="dim">—</span>'}</td>
+        <td class="dim" style="font-size:11px;">${fmtDateShort(r.ts)}</td>
+      </tr>
+    `).join('');
+  }
+
+  let _installedModels = [];
+  let _runningModelNames = [];
+
+  function renderInstalledModels(models) {
+    _installedModels = models;
+    _filterInstalledModels(document.getElementById('model-search').value);
+    document.getElementById('installed-subtitle').textContent =
+      models.length > 0
+        ? `${models.length} model${models.length !== 1 ? 's' : ''} installed locally`
+        : 'No Ollama models found — is Ollama running?';
+  }
+
+  function _filterInstalledModels(query) {
+    const q = (query || '').toLowerCase();
+    const filtered = q ? _installedModels.filter(m => m.name.toLowerCase().includes(q)) : _installedModels;
+    const tbody = document.getElementById('installed-tbody');
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">${q ? 'No models match "' + esc(q) + '"' : 'No models installed. Use the Pull button to download one.'}</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map(m => {
+      const loaded = _runningModelNames.some(n => n === m.name || m.name.startsWith(n + ':'));
+      return `
+        <tr>
+          <td>
+            <span class="model-status-dot ${loaded ? 'loaded' : ''}"></span>
+            <span class="mono">${esc(m.name)}</span>
+          </td>
+          <td>${m.size_gb > 0 ? m.size_gb.toFixed(1) + ' GB' : '—'}</td>
+          <td>${esc(m.parameter_size) || '—'}</td>
+          <td>${esc(m.quantization) || '—'}</td>
+          <td class="dim">${esc(m.family) || '—'}</td>
+          <td class="dim" style="font-size:11px;">${fmtDateShort(m.modified_ts)}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  // ── Source tab config ───────────────────────────────────────────────
+  const _SRC_CONFIG = {
+    'ollama': {
+      badge: 'ollama', badgeLabel: 'OLLAMA',
+      placeholder: 'Filter or search — e.g. qwen3:8b, llama3.2:3b',
+      hint: 'Standard Ollama registry. Format: <code>model:tag</code> — e.g. <code>qwen3:8b</code>, <code>llama3.2:3b</code>, <code>mistral:7b-instruct</code>',
+      filterInstalled: true,
+      feasSrc: 'ollama',
+    },
+    'hf-gguf': {
+      badge: 'gguf', badgeLabel: 'HF GGUF',
+      placeholder: 'e.g. hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M',
+      hint: 'Any GGUF model from HuggingFace — downloaded via Ollama. Format: <code>hf.co/owner/repo:quantization</code> — e.g. <code>hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M</code>',
+      filterInstalled: false,
+      feasSrc: 'ollama',
+    },
+    'hf-mlx': {
+      badge: 'mlx', badgeLabel: 'HF MLX',
+      placeholder: 'e.g. mlx-community/Qwen3-8B-4bit',
+      hint: '&#127822; Apple Silicon only — MLX-quantized models from HuggingFace. Format: <code>mlx-community/ModelName-Xbit</code> — e.g. <code>mlx-community/Qwen3-8B-4bit</code>',
+      filterInstalled: false,
+      feasSrc: 'mlx',
+    },
+  };
+
+  let _pullSource = 'ollama';
+
+  function _applySrcTab(src) {
+    _pullSource = src;
+    const cfg = _SRC_CONFIG[src];
+    document.getElementById('model-search').placeholder = cfg.placeholder;
+    document.getElementById('model-search').value = '';
+    _hideFeasibility();
+    document.getElementById('pull-status').style.display = 'none';
+    // render hint bar
+    const hint = document.getElementById('src-hint');
+    hint.innerHTML = `<span class="hint-badge ${cfg.badge}">${cfg.badgeLabel}</span><span>${cfg.hint}</span>`;
+    if (cfg.filterInstalled) _filterInstalledModels('');
+  }
+
+  document.querySelectorAll('.src-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.src-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _applySrcTab(btn.dataset.src);
+    });
+  });
+
+  // Init hint bar for default tab
+  _applySrcTab('ollama');
+
+  document.getElementById('model-search').addEventListener('input', e => {
+    if (_SRC_CONFIG[_pullSource].filterInstalled) _filterInstalledModels(e.target.value);
+    _debounceFeasibility(e.target.value.trim());
+  });
+
+  let _feasTimer = null;
+  function _debounceFeasibility(name) {
+    clearTimeout(_feasTimer);
+    _hideFeasibility();
+    if (!name || name.length < 3) return;
+    _feasTimer = setTimeout(() => _checkFeasibility(name), 500);
+  }
+
+  function _hideFeasibility() {
+    const bar = document.getElementById('feasibility-bar');
+    bar.style.display = 'none';
+    bar.className = 'feasibility-bar';
+    bar.innerHTML = '';
+  }
+
+  async function _checkFeasibility(name) {
+    const src = _SRC_CONFIG[_pullSource].feasSrc;
+    // For HF GGUF, strip the hf.co/ prefix before feasibility check (it uses param count)
+    const checkName = (_pullSource === 'hf-gguf' && name.startsWith('hf.co/'))
+      ? name.slice(6) : name;
+    try {
+      const r = await fetch(`/api/dashboard/pull-check?model=${encodeURIComponent(checkName)}&source=${src}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const bar = document.getElementById('feasibility-bar');
+      const icons = { ok: '✓', warn: '⚠', blocked: '✗' };
+      const statsStr = d.model_size_gb > 0
+        ? `~${d.model_size_gb.toFixed(1)} GB download · ~${d.ram_needed_gb.toFixed(1)} GB RAM needed · ${d.free_disk_gb.toFixed(1)} GB free disk · ${d.total_ram_gb.toFixed(1)} GB total RAM`
+        : '';
+      bar.className = `feasibility-bar ${d.verdict}`;
+      bar.innerHTML = `<div><strong>${icons[d.verdict]}  ${d.verdict.toUpperCase()}</strong>  ${esc(d.reason)}</div>` +
+        (statsStr ? `<div class="feas-stats">${statsStr}</div>` : '');
+      bar.style.display = 'block';
+    } catch (_) {}
+  }
+
+  document.getElementById('pull-btn').addEventListener('click', async () => {
+    let query = document.getElementById('model-search').value.trim();
+    if (!query) { document.getElementById('model-search').focus(); return; }
+
+    const statusEl = document.getElementById('pull-status');
+    statusEl.style.color = 'var(--accent)';
+    statusEl.style.display = 'block';
+
+    let endpoint, body, label;
+    if (_pullSource === 'hf-mlx') {
+      endpoint = '/api/dashboard/pull-hf';
+      body = JSON.stringify({repo_id: query});
+      label = `HF MLX "${query}"`;
+    } else if (_pullSource === 'hf-gguf') {
+      // Auto-prepend hf.co/ if user forgot it
+      if (!query.startsWith('hf.co/')) query = 'hf.co/' + query;
+      endpoint = '/api/dashboard/pull';
+      body = JSON.stringify({model: query});
+      label = `HF GGUF "${query}"`;
+    } else {
+      endpoint = '/api/dashboard/pull';
+      body = JSON.stringify({model: query});
+      label = `"${query}"`;
+    }
+
+    statusEl.textContent = `Downloading ${label}… This may take several minutes. Check back soon.`;
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body,
+      });
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        statusEl.textContent = (r.status === 409 ? '✗ Blocked: ' : 'Pull failed: ') +
+          (json.detail?.message || r.status);
+        statusEl.style.color = 'var(--red)';
+        return;
+      }
+      if (json.warning) {
+        statusEl.style.color = 'var(--yellow)';
+        statusEl.textContent = `⚠ ${json.warning}  —  Download started for ${label}. Refreshing in 30s…`;
+      } else {
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = `✓ Download started for ${label} — refreshing model list in 30s…`;
+      }
+      setTimeout(async () => {
+        try {
+          const d = await get('/api/dashboard/installed-models');
+          if (d) { renderInstalledModels(d.models); statusEl.style.display = 'none'; }
+        } catch (_) {}
+      }, 30000);
+    } catch (e) {
+      statusEl.textContent = 'Request failed: ' + e.message;
+      statusEl.style.color = 'var(--red)';
+    }
+  });
 
   function renderSuggestions(items) {
     const el = document.getElementById('suggestions');
@@ -835,8 +1971,17 @@
   }
 
   // ── API ────────────────────────────────────────────────────────────────
+  let _redirecting = false;
+
   async function get(path) {
     const r = await fetch(path);
+    if (r.status === 401) {
+      if (!_redirecting) {
+        _redirecting = true;
+        window.location.href = '/dashboard/login';
+      }
+      throw new Error('401');
+    }
     if (!r.ok) throw new Error(`${r.status}`);
     return r.json();
   }
@@ -848,11 +1993,201 @@
     txt.textContent = ok ? 'live' : 'offline';
   }
 
+  async function initAuthUI() {
+    try {
+      const s = await fetch('/api/dashboard/auth-status').then(r => r.json());
+      const btn = document.getElementById('logout-btn');
+      if (s.auth_required) btn.style.display = 'flex';
+    } catch (_) {}
+  }
+
+  // ── Conversation History ───────────────────────────────────────────────
+  // NOTE: All IDs use the "conv-hist-" prefix to avoid collision with the
+  // Live Activity "sessions-*" elements managed by renderActivity().
+
+  let _allConvSessions = [];
+  let _openConvSessions = new Set();  // session_ids currently expanded
+  let _loadedConvTurns  = {};         // session_id → turns[]
+
+  function renderSessions(sessions) {
+    _allConvSessions = sessions || [];
+    const q = (document.getElementById('conv-hist-search').value || '').toLowerCase();
+    _renderConvList(q);
+  }
+
+  function _convTitle(s) {
+    // Use preview text as the title; it is already the first user message or
+    // the conversation's .title field from the backend.  Strip leading
+    // whitespace and trim to a sane display length.
+    const raw = (s.preview || '').trim();
+    if (!raw) return 'Untitled conversation';
+    return raw.length > 90 ? raw.slice(0, 87) + '…' : raw;
+  }
+
+  function _renderConvList(query) {
+    const list  = document.getElementById('conv-hist-list');
+    const badge = document.getElementById('conv-hist-badge');
+    if (!list) return;  // guard: element not yet in DOM
+
+    let filtered = _allConvSessions;
+    if (query) {
+      filtered = _allConvSessions.filter(s =>
+        (s.preview || '').toLowerCase().includes(query) ||
+        s.models.some(m => m.toLowerCase().includes(query))
+      );
+    }
+
+    const total = _allConvSessions.length;
+    badge.textContent = filtered.length + (filtered.length === 1 ? ' conversation' : ' conversations');
+    document.getElementById('conv-hist-subtitle').textContent =
+      total === 0
+        ? 'No conversations yet — send a request through the gateway to start tracking'
+        : `${total} conversation${total !== 1 ? 's' : ''} recorded`;
+
+    if (!filtered.length) {
+      list.innerHTML = `<div style="padding:16px 18px;" class="empty">${
+        query ? `No conversations match "${esc(query)}"` : 'No conversations yet'
+      }</div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(s => {
+      const sid      = String(s.session_id);
+      const isOpen   = _openConvSessions.has(sid);
+      const dur      = s.end_ts - s.start_ts > 5 ? fmtDuration(s.end_ts - s.start_ts) : null;
+      const title    = _convTitle(s);
+      const modelTag = s.models.slice(0, 2).map(m =>
+        `<span class="mono" style="font-size:11px;">${esc(m)}</span>`
+      ).join(', ');
+
+      return `
+        <div class="conv-session${isOpen ? ' open' : ''}" data-chsid="${esc(sid)}">
+          <div class="conv-session-header">
+            <div class="conv-session-chevron">&#9658;</div>
+            <div class="conv-session-meta">
+              <div class="conv-session-preview">${esc(title)}</div>
+              <div class="conv-session-sub">
+                <span>${fmtDateTime(s.start_ts)}</span>
+                ${dur ? `<span>${dur}</span>` : ''}
+                <span>${s.turn_count} turn${s.turn_count !== 1 ? 's' : ''}</span>
+                <span>${modelTag}</span>
+                ${s.api_key_id ? `<span class="dim">key&nbsp;${esc(String(s.api_key_id).slice(0,8))}…</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="conv-turns" id="ch-turns-${esc(sid)}">
+            <div style="padding:12px 18px;" class="empty dim">Click to expand…</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('.conv-session').forEach(el => {
+      el.querySelector('.conv-session-header').addEventListener('click', () => {
+        _toggleConvSession(el, el.dataset.chsid);
+      });
+    });
+
+    // Re-open any sessions that were open before re-render
+    _openConvSessions.forEach(sid => {
+      const el = list.querySelector(`[data-chsid="${CSS.escape(sid)}"]`);
+      if (el) {
+        el.classList.add('open');
+        if (_loadedConvTurns[sid]) _renderConvTurns(sid, _loadedConvTurns[sid]);
+      }
+    });
+  }
+
+  async function _toggleConvSession(el, sid) {
+    if (el.classList.contains('open')) {
+      el.classList.remove('open');
+      _openConvSessions.delete(sid);
+      return;
+    }
+    el.classList.add('open');
+    _openConvSessions.add(sid);
+
+    if (_loadedConvTurns[sid]) {
+      _renderConvTurns(sid, _loadedConvTurns[sid]);
+      return;
+    }
+
+    const container = document.getElementById('ch-turns-' + CSS.escape(sid));
+    if (container) container.innerHTML = '<div style="padding:12px 18px;" class="empty dim">Loading…</div>';
+
+    try {
+      const r = await fetch('/api/dashboard/sessions/' + encodeURIComponent(sid));
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      if (data && Array.isArray(data.turns)) {
+        _loadedConvTurns[sid] = data.turns;
+        _renderConvTurns(sid, data.turns);
+      }
+    } catch (e) {
+      if (container) container.innerHTML =
+        '<div style="padding:12px 18px;" class="empty">Could not load — ' + esc(String(e)) + '</div>';
+    }
+  }
+
+  function _renderConvTurns(sid, turns) {
+    const container = document.getElementById('ch-turns-' + CSS.escape(String(sid)));
+    if (!container) return;
+
+    if (!turns.length) {
+      container.innerHTML = '<div style="padding:12px 18px;" class="empty dim">No messages in this conversation.</div>';
+      return;
+    }
+
+    container.innerHTML = turns.map(t => _turnPair(t)).join('');
+
+    // Wire expand/collapse buttons
+    container.querySelectorAll('.conv-turn-expand').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const content = btn.previousElementSibling;
+        const collapsed = content.classList.toggle('collapsed');
+        btn.textContent = collapsed ? 'Show more' : 'Show less';
+      });
+    });
+  }
+
+  function _turnPair(t) {
+    return _turnBlock('user', t.user_content, null, null, null, null)
+         + (t.assistant_content
+             ? _turnBlock('assistant', t.assistant_content,
+                          t.ttft_ms, t.tokens_per_sec, t.backend, t.completion_tokens)
+             : '');
+  }
+
+  function _turnBlock(role, content, ttft_ms, tps, backend, tokens) {
+    const text   = (content || '').trim();
+    const isLong = text.length > 500;
+    const statsHtml = role === 'assistant' ? `
+      <div class="conv-turn-stats">
+        ${ttft_ms  != null ? `<div class="conv-stat"><span class="conv-stat-val ${latClass(ttft_ms)}">${ttft_ms.toFixed(0)} ms</span>TTFT</div>` : ''}
+        ${tps      != null ? `<div class="conv-stat"><span class="conv-stat-val">${tps.toFixed(1)}</span>tok/s</div>` : ''}
+        ${tokens   != null ? `<div class="conv-stat"><span class="conv-stat-val">${tokens}</span>tokens</div>` : ''}
+        ${backend          ? `<div class="conv-stat"><span class="conv-stat-val">${esc(backend)}</span>backend</div>` : ''}
+      </div>` : '';
+    return `
+      <div class="conv-turn">
+        <div class="conv-turn-role ${role}">${role === 'user' ? 'You' : 'Assistant'}</div>
+        <div class="conv-turn-content${isLong ? ' collapsed' : ''}">${esc(text)}</div>
+        ${isLong ? '<span class="conv-turn-expand">Show more</span>' : ''}
+        ${statsHtml}
+      </div>`;
+  }
+
+  document.getElementById('conv-hist-search').addEventListener('input', e => {
+    _renderConvList(e.target.value.toLowerCase());
+  });
+
   async function refresh() {
     try {
       const [
         overview, requests, ttft, models,
-        comparison, keys, slow, suggestions, health,
+        comparison, keys, slow, suggestions, health, security, versionInfo,
+        activity, installedModels,
       ] = await Promise.all([
         get('/api/dashboard/overview'),
         get('/api/dashboard/requests'),
@@ -863,34 +2198,402 @@
         get('/api/dashboard/slow'),
         get('/api/dashboard/suggestions'),
         get('/health'),
+        get('/api/dashboard/security'),
+        fetch('/api/version').then(r => r.ok ? r.json() : null).catch(() => null),
+        get('/api/dashboard/activity'),
+        get('/api/dashboard/installed-models'),
       ]);
 
-      if (health.version) {
+      if (health && health.version) {
         document.getElementById('version-badge').textContent = 'v' + health.version;
       }
+      if (versionInfo) renderVersionBadge(versionInfo);
 
-      renderOverview(overview);
-      initRequestsChart(requests.data);
-      initTtftChart(ttft.data);
-      renderModels(models.models);
-      renderComparison(comparison);
-      renderKeys(keys.keys);
-      renderSlow(slow.requests);
-      renderSuggestions(suggestions.suggestions);
+      if (overview)    renderOverview(overview);
+      if (requests)    initRequestsChart(requests.data);
+      if (ttft)        initTtftChart(ttft.data);
+      if (models)      renderModels(models.models);
+      if (comparison)  renderComparison(comparison);
+      if (keys)        renderKeys(keys.keys);
+      if (slow)        renderSlow(slow.requests);
+      if (suggestions) renderSuggestions(suggestions.suggestions);
+      if (security)    renderSecurity(security.checks);
+      if (activity)        renderActivity(activity);
+      if (installedModels) { renderInstalledModels(installedModels.models); }
+      if (overview) { _runningModelNames = overview.running_models.map(m => m.name); }
 
       setOnline(true);
       document.getElementById('last-updated').textContent =
-        'Updated ' + new Date().toLocaleTimeString();
+        'Updated ' + fmtTime(Date.now() / 1000);
 
     } catch (err) {
+      if (_redirecting) return;
       setOnline(false);
       document.getElementById('last-updated').textContent = 'Error — ' + err.message;
     }
   }
 
+  // ── Sessions: independent refresh (never blocks other panels) ─────────
+  async function refreshSessions() {
+    try {
+      const data = await fetch('/api/dashboard/sessions').then(r => {
+        if (r.status === 401) { window.location.href = '/dashboard/login'; return null; }
+        if (!r.ok) return null;
+        return r.json();
+      });
+      if (data && data.sessions !== undefined) renderSessions(data.sessions);
+    } catch (_) {
+      // silently skip — sessions panel shows last known state
+    }
+  }
+
+  // ── Modal helpers ──────────────────────────────────────────────────────
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+  // ── Refresh just the keys table ────────────────────────────────────────
+  async function refreshKeys() {
+    try {
+      const data = await get('/api/dashboard/keys');
+      if (data) renderKeys(data.keys);
+    } catch (_) {}
+  }
+
+  // ── Create key ─────────────────────────────────────────────────────────
+  let _revealTimer = null;
+
+  function showCreateErr(msg) {
+    const el = document.getElementById('create-err');
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearCreateErr() {
+    const el = document.getElementById('create-err');
+    el.textContent = '';
+    el.classList.remove('show');
+  }
+
+  document.getElementById('new-key-btn').addEventListener('click', () => {
+    document.getElementById('new-key-name').value = '';
+    clearCreateErr();
+    const sub = document.getElementById('create-submit');
+    sub.disabled = false;
+    sub.textContent = 'Create key';
+    openModal('modal-create');
+    setTimeout(() => document.getElementById('new-key-name').focus(), 50);
+  });
+
+  document.getElementById('create-close').addEventListener('click', () => closeModal('modal-create'));
+  document.getElementById('create-cancel').addEventListener('click', () => closeModal('modal-create'));
+
+  document.getElementById('new-key-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('create-submit').click();
+  });
+
+  document.getElementById('create-submit').addEventListener('click', async () => {
+    const name = document.getElementById('new-key-name').value.trim();
+    if (!name) { showCreateErr('Key name is required.'); return; }
+
+    const btn = document.getElementById('create-submit');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+    clearCreateErr();
+
+    try {
+      const r = await fetch('/api/dashboard/admin/keys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name}),
+      });
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showCreateErr(err.detail?.message || `Server error ${r.status}`);
+        return;
+      }
+      const data = await r.json();
+      closeModal('modal-create');
+      showRevealModal(data.key, data.name);
+      await refreshKeys();
+    } catch (e) {
+      showCreateErr('Request failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create key';
+    }
+  });
+
+  // ── Reveal modal ───────────────────────────────────────────────────────
+  function showRevealModal(key, name) {
+    document.getElementById('reveal-key').textContent = key;
+    document.getElementById('reveal-name').textContent = name;
+    const copyBtn = document.getElementById('copy-btn');
+    copyBtn.textContent = 'Copy';
+    copyBtn.classList.remove('copied');
+    openModal('modal-reveal');
+
+    let secs = 60;
+    document.getElementById('reveal-countdown').textContent = secs;
+    if (_revealTimer) clearInterval(_revealTimer);
+    _revealTimer = setInterval(() => {
+      secs--;
+      document.getElementById('reveal-countdown').textContent = secs;
+      if (secs <= 0) {
+        clearInterval(_revealTimer);
+        closeModal('modal-reveal');
+        document.getElementById('reveal-key').textContent = '—';
+      }
+    }, 1000);
+  }
+
+  document.getElementById('copy-btn').addEventListener('click', async () => {
+    const key = document.getElementById('reveal-key').textContent;
+    const btn = document.getElementById('copy-btn');
+    try {
+      await navigator.clipboard.writeText(key);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+    } catch (_) {
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById('reveal-key'));
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    }
+  });
+
+  document.getElementById('reveal-done').addEventListener('click', () => {
+    if (_revealTimer) clearInterval(_revealTimer);
+    closeModal('modal-reveal');
+    document.getElementById('reveal-key').textContent = '—';
+  });
+
+  // ── Revoke key ─────────────────────────────────────────────────────────
+  async function revokeKey(keyId, keyName) {
+    if (!confirm(`Revoke API key "${keyName}"?\n\nAll requests using this key will immediately start failing. This cannot be undone.`)) return;
+    try {
+      const r = await fetch(`/api/dashboard/admin/keys/${encodeURIComponent(keyId)}`, {
+        method: 'DELETE',
+      });
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert('Failed to revoke key: ' + (err.detail?.message || r.status));
+        return;
+      }
+      await refreshKeys();
+    } catch (e) {
+      alert('Request failed: ' + e.message);
+    }
+  }
+
+  // ── Close modals on backdrop click; Escape closes create modal ─────────
+  document.querySelectorAll('.modal-backdrop').forEach(bd => {
+    bd.addEventListener('click', e => {
+      if (e.target === bd && bd.id !== 'modal-reveal') closeModal(bd.id);
+    });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('modal-create').classList.contains('open'))
+      closeModal('modal-create');
+  });
+
+  // ── Model Catalog ──────────────────────────────────────────────────────
+  // All IDs use the "catalog-" prefix; never touches conv-hist-* or sessions-* IDs.
+
+  let _catalogData    = [];       // all CatalogEntry dicts
+  let _catalogTier    = '';       // active tier filter
+  let _catalogTagFilt = '';       // active tag filter
+  let _catalogLoaded  = false;
+
+  function _catTierColor(tier) {
+    const m = {tiny:'muted',small:'accent',medium:'green',large:'yellow',xl:'purple',flagship:'red'};
+    return m[tier] || 'muted';
+  }
+
+  function _catBenchBar(val) {
+    if (val == null) return '<span class="dim">—</span>';
+    const pct = Math.round(val * 100);
+    const fill = Math.round(val * 60);
+    return `<span class="cat-bench">${pct}%</span>
+            <div class="bench-bar"><div class="bench-fill" style="width:${fill}px;"></div></div>`;
+  }
+
+  function _catRow(m) {
+    const tierBadge = `<span class="cat-tier-badge ${m.tier}">${m.tier}</span>`;
+    const newBadge  = m.is_new ? '<span class="cat-new-badge">NEW</span>' : '';
+    const hlText    = m.highlight ? `<div class="cat-highlight">${esc(m.highlight)}</div>` : '';
+    const tags = (m.tags || []).slice(0,4).map(t =>
+      `<span class="cat-tag" data-cattag="${esc(t)}" style="cursor:pointer;">${esc(t)}</span>`
+    ).join('');
+    const ctx   = m.context_k >= 1000 ? `${(m.context_k/1000).toFixed(0)}M` : `${m.context_k}k`;
+    const pullBtn = m.ollama_tag
+      ? `<button class="cat-pull-btn" data-tag="${esc(m.ollama_tag)}"
+            title="Pull ${esc(m.ollama_tag)}">
+          pull ${esc(m.ollama_tag)}
+         </button>`
+      : `<span class="dim">—</span>`;
+
+    // Benchmarks: show MMLU (general) and HumanEval (code) if available
+    const mmluBar = _catBenchBar(m.bench_mmlu);
+    const heBar   = m.bench_humaneval != null
+      ? `<div style="margin-top:6px;"><span style="font-size:10px;color:var(--muted);">HumanEval </span>${_catBenchBar(m.bench_humaneval)}</div>`
+      : '';
+
+    return `<tr data-catid="${esc(m.id)}" data-tier="${esc(m.tier)}" data-tags="${esc((m.tags||[]).join(','))}">
+      <td>
+        <div class="cat-name">${esc(m.name)}${newBadge}</div>
+        ${hlText}
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(m.description)}</div>
+      </td>
+      <td>${tierBadge}</td>
+      <td><span class="mono">${m.size_gb.toFixed(1)} GB</span></td>
+      <td><span class="mono">${m.ram_gb.toFixed(1)} GB</span></td>
+      <td><span class="mono">${ctx}</span></td>
+      <td>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">MMLU</div>
+        ${mmluBar}${heBar}
+      </td>
+      <td><div class="cat-tags">${tags}</div></td>
+      <td>${pullBtn}</td>
+    </tr>`;
+  }
+
+  function _renderCatalog() {
+    const q    = (document.getElementById('catalog-search').value || '').toLowerCase().trim();
+    const tbody = document.getElementById('catalog-tbody');
+    const badge = document.getElementById('catalog-badge');
+    if (!tbody) return;
+
+    let filtered = _catalogData;
+    if (_catalogTier) filtered = filtered.filter(m => m.tier === _catalogTier);
+    if (_catalogTagFilt) filtered = filtered.filter(m => (m.tags||[]).includes(_catalogTagFilt));
+    if (q) filtered = filtered.filter(m =>
+      m.name.toLowerCase().includes(q) ||
+      (m.id||'').toLowerCase().includes(q) ||
+      (m.highlight||'').toLowerCase().includes(q) ||
+      (m.description||'').toLowerCase().includes(q) ||
+      (m.tags||[]).some(t => t.includes(q))
+    );
+
+    badge.textContent = filtered.length + ' model' + (filtered.length !== 1 ? 's' : '');
+
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty dim">No models match the current filters.</td></tr>';
+      return;
+    }
+
+    // Sort: tier order, then by MMLU desc
+    const _TO = {tiny:0,small:1,medium:2,large:3,xl:4,flagship:5};
+    filtered.sort((a,b) => {
+      const td = (_TO[a.tier]||0) - (_TO[b.tier]||0);
+      if (td !== 0) return td;
+      return (b.bench_mmlu||0) - (a.bench_mmlu||0);
+    });
+
+    tbody.innerHTML = filtered.map(_catRow).join('');
+
+    // Wire pull buttons
+    tbody.querySelectorAll('.cat-pull-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tag = btn.dataset.tag;
+        if (!tag) return;
+        // Scroll to pull modal and pre-fill model name
+        const modelSearch = document.getElementById('model-search');
+        const pullBtn = document.getElementById('pull-btn');
+        if (modelSearch) {
+          modelSearch.value = tag;
+          modelSearch.dispatchEvent(new Event('input'));
+        }
+        if (pullBtn) pullBtn.click();
+        window.scrollTo({top: 0, behavior: 'smooth'});
+      });
+    });
+
+    // Wire tag filter chips
+    tbody.querySelectorAll('[data-cattag]').forEach(chip => {
+      chip.addEventListener('click', e => {
+        e.stopPropagation();
+        const t = chip.dataset.cattag;
+        _catalogTagFilt = (_catalogTagFilt === t) ? '' : t;
+        const tagEl = document.getElementById('catalog-tag-filter');
+        if (tagEl) tagEl.textContent = _catalogTagFilt ? `× tag: ${_catalogTagFilt}` : '';
+        _renderCatalog();
+      });
+    });
+  }
+
+  async function loadCatalog() {
+    try {
+      const r = await fetch('/api/dashboard/catalog');
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (!r.ok) return;
+      const data = await r.json();
+      if (!data || !Array.isArray(data.models)) return;
+      _catalogData   = data.models;
+      _catalogLoaded = true;
+
+      const sub = document.getElementById('catalog-subtitle');
+      const lu  = document.getElementById('catalog-last-updated');
+      if (sub) sub.textContent = `${data.count} models · auto-updates every ${data.update_interval_days} days`;
+      if (lu) {
+        const d = data.last_updated ? data.last_updated.slice(0,10) : '?';
+        const nxt = data.next_update ? data.next_update.slice(0,10) : '?';
+        const staleHint = data.is_stale ? ' · <span style="color:var(--yellow)">update pending</span>' : '';
+        lu.innerHTML = `Last updated: ${d} · Next: ${nxt}${staleHint}`;
+      }
+      _renderCatalog();
+    } catch (_) {}
+  }
+
+  // Tier filter chips
+  document.getElementById('catalog-tier-bar').addEventListener('click', e => {
+    const chip = e.target.closest('.tier-chip');
+    if (!chip) return;
+    document.querySelectorAll('.tier-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    _catalogTier = chip.dataset.tier || '';
+    _renderCatalog();
+  });
+
+  // Search input
+  document.getElementById('catalog-search').addEventListener('input', () => _renderCatalog());
+
+  // Tag filter clear
+  document.getElementById('catalog-tag-filter').addEventListener('click', () => {
+    _catalogTagFilt = '';
+    document.getElementById('catalog-tag-filter').textContent = '';
+    _renderCatalog();
+  });
+
+  // Refresh button
+  document.getElementById('catalog-refresh-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('catalog-refresh-btn');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing…';
+    try {
+      const r = await fetch('/api/dashboard/catalog/refresh', {method:'POST'});
+      if (r.ok) {
+        const data = await r.json();
+        if (data && Array.isArray(data.models)) {
+          _catalogData = data.models;
+          const lu = document.getElementById('catalog-last-updated');
+          if (lu) lu.innerHTML = `Last updated: ${(data.last_updated||'').slice(0,10)} · +${data.new_count||0} new`;
+          _renderCatalog();
+        }
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh catalog';
+    }
+  });
+
   // kick off
+  initAuthUI();
   refresh();
+  refreshSessions();  // independent — never blocks main refresh cycle
+  loadCatalog();      // independent — never blocks main refresh cycle
   setInterval(refresh, 10000);
+  setInterval(refreshSessions, 15000);  // sessions refresh at a slightly slower cadence
 })();
 </script>
 </body>

@@ -42,6 +42,8 @@ try:
 except _PkgNFE:
     _VERSION = "0.1.0"
 
+_VERSION_CACHE: dict = {}
+
 from autotune.hardware.profiler import profile_hardware
 
 from .backends.chain import BackendChain, ModelNotAvailableError, get_chain
@@ -1294,6 +1296,15 @@ async def _chat_completions_inner(
     # ── Conversation management ──────────────────────────────────────────
     raw_messages = [m.model_dump() for m in req.messages]
 
+    # Extract user text and system prompt for ALL requests (used by gateway_log
+    # and by conversation context building).
+    user_text = next(
+        (m["content"] for m in reversed(raw_messages) if m["role"] == "user"), ""
+    )
+    system_text: Optional[str] = req.system or next(
+        (m["content"] for m in raw_messages if m["role"] == "system"), None
+    )
+
     if conv_id:
         conv = conv_mgr.get(conv_id)
         if not conv:
@@ -1301,10 +1312,7 @@ async def _chat_completions_inner(
         if req.system:
             conv_mgr.update_system_prompt(conv_id, req.system)
         # Build context from history
-        user_text = next(
-            (m["content"] for m in reversed(raw_messages) if m["role"] == "user"), ""
-        )
-        messages, _ = conv_mgr.build_context(
+        messages, context_complete, _tier = conv_mgr.build_context(
             conv_id,
             profile.max_context_tokens,
             new_user_message=user_text,
@@ -1420,6 +1428,24 @@ async def _chat_completions_inner(
                     ttft_ms=ttft_ms, tokens_per_sec=tps, backend=backend_name,
                 )
 
+            if user_text:
+                try:
+                    conv_mgr.log_gateway_request(
+                        model_id=req.model,
+                        user_content=user_text,
+                        assistant_content=content or None,
+                        system_prompt=system_text or None,
+                        conv_id=conv_id,
+                        api_key_id=api_key_id,
+                        ttft_ms=ttft_ms,
+                        tokens_per_sec=tps,
+                        prompt_tokens=prompt_tokens_s,
+                        completion_tokens=comp_tokens,
+                        backend=backend_name,
+                    )
+                except Exception:
+                    pass  # never let logging break the response
+
             from autotune.db.fingerprint import hardware_to_db_dict
             hw = _hw
             if hw:
@@ -1491,6 +1517,19 @@ async def _chat_completions_inner(
                 collected.append(chunk.content)
             backend_used = chunk.backend
     except (ModelNotAvailableError, AuthError, BackendError) as e:
+        if user_text:
+            try:
+                conv_mgr.log_gateway_request(
+                    model_id=req.model,
+                    user_content=user_text,
+                    assistant_content=None,
+                    system_prompt=system_text or None,
+                    conv_id=conv_id,
+                    api_key_id=api_key_id,
+                    backend=backend_used,
+                )
+            except Exception:
+                pass
         raise HTTPException(
             status_code=503,
             detail=_make_error_body(_error_type(e), str(e), req.model),
@@ -1507,6 +1546,24 @@ async def _chat_completions_inner(
     if conv_id and content_out:
         conv_mgr.add_message(conv_id, "assistant", content_out,
                               ttft_ms=ttft, tokens_per_sec=tps2, backend=backend_used)
+
+    if user_text:
+        try:
+            conv_mgr.log_gateway_request(
+                model_id=req.model,
+                user_content=user_text,
+                assistant_content=content_out or None,
+                system_prompt=system_text or None,
+                conv_id=conv_id,
+                api_key_id=api_key_id,
+                ttft_ms=ttft,
+                tokens_per_sec=tps2,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=comp_tokens,
+                backend=backend_used,
+            )
+        except Exception:
+            pass  # never let logging break the response
 
     # SQLite + Supabase metrics for non-streaming path
     from autotune.db.fingerprint import hardware_to_db_dict
@@ -1566,6 +1623,39 @@ async def health():
             "pressure_level": mem["pressure_level"],
         },
         "profiles": list(PROFILES.keys()),
+    }
+
+
+@app.get("/api/version")
+def version_info():
+    """Return current and latest available version, with an update flag."""
+    import time as _t
+    now = _t.time()
+    if _VERSION_CACHE.get("at", 0) + 3600 > now:
+        latest = _VERSION_CACHE.get("v")
+    else:
+        try:
+            import httpx
+            r = httpx.get("https://pypi.org/pypi/llm-autotune/json", timeout=3.0)
+            latest = r.json()["info"]["version"]
+            _VERSION_CACHE.update({"at": now, "v": latest})
+        except Exception:
+            latest = None
+            _VERSION_CACHE.update({"at": now, "v": None})
+
+    update_available = False
+    if latest:
+        try:
+            from packaging.version import Version
+            update_available = Version(latest) > Version(_VERSION)
+        except Exception:
+            pass
+
+    return {
+        "current": _VERSION,
+        "latest": latest,
+        "update_available": update_available,
+        "update_command": "pip install --upgrade llm-autotune" if update_available else None,
     }
 
 

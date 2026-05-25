@@ -58,6 +58,28 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id, created_at);
+
+-- gateway_log captures every request/response pair that passes through the
+-- /v1/chat/completions endpoint, whether or not a conversation_id was provided.
+-- This is the authoritative source for the dashboard Conversations view.
+CREATE TABLE IF NOT EXISTS gateway_log (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    conv_id           TEXT,               -- set when conversation_id header used
+    model_id          TEXT NOT NULL,
+    api_key_id        TEXT,               -- NULL for unauthenticated requests
+    user_content      TEXT NOT NULL,
+    assistant_content TEXT,               -- NULL on error / cancelled stream
+    system_prompt     TEXT,
+    ttft_ms           REAL,
+    tokens_per_sec    REAL,
+    prompt_tokens     INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    backend           TEXT,
+    created_at        REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_glog_created ON gateway_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_glog_key     ON gateway_log(api_key_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_glog_model   ON gateway_log(model_id, created_at DESC);
 """
 
 
@@ -244,6 +266,224 @@ class ConversationManager:
                 (conv_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # Gateway log — records every request/response through the proxy      #
+    # ------------------------------------------------------------------ #
+
+    def log_gateway_request(
+        self,
+        model_id: str,
+        user_content: str,
+        assistant_content: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        conv_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        ttft_ms: Optional[float] = None,
+        tokens_per_sec: Optional[float] = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        backend: Optional[str] = None,
+    ) -> int:
+        """Append one request/response pair to gateway_log. Thread-safe."""
+        now = time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO gateway_log
+                   (conv_id, model_id, api_key_id, user_content, assistant_content,
+                    system_prompt, ttft_ms, tokens_per_sec, prompt_tokens,
+                    completion_tokens, backend, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (conv_id, model_id, api_key_id, user_content, assistant_content,
+                 system_prompt, ttft_ms, tokens_per_sec, prompt_tokens,
+                 completion_tokens, backend, now),
+            )
+            self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    _SESSION_GAP_SEC = 300  # 5-minute inactivity = new session
+
+    def list_sessions(self, limit: int = 50) -> list[dict]:
+        """
+        Return session summaries combining two sources:
+
+        1. gateway_log rows grouped by 5-minute inactivity + same api_key_id
+           (captures every request through the proxy, new style)
+        2. Named conversations from the conversations table that have NO
+           gateway_log entries (older / CLI-created conversations)
+
+        Sessions are returned newest-first.  Each dict has:
+          session_id  – int (first gateway_log row id) or "conv:<conv_id>"
+          source      – "gateway" | "conversation"
+          start_ts    – unix timestamp of first turn
+          end_ts      – unix timestamp of last turn
+          turn_count  – number of user/assistant pairs
+          models      – deduplicated model list
+          api_key_id  – key used (None = unauthenticated)
+          preview     – first 120 chars of first user message / title
+          conv_id     – only present for source="conversation"
+        """
+        sessions: list[dict] = []
+
+        # ── 1. Sessions from gateway_log ────────────────────────────────────
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, model_id, api_key_id, user_content, created_at
+                   FROM gateway_log ORDER BY created_at DESC LIMIT 2000""",
+            ).fetchall()
+
+        if rows:
+            entries = [dict(r) for r in rows]
+            entries.reverse()  # oldest first for grouping
+
+            current: list[dict] = [entries[0]]
+            for entry in entries[1:]:
+                prev = current[-1]
+                same_key = entry["api_key_id"] == prev["api_key_id"]
+                gap_ok = (entry["created_at"] - prev["created_at"]) < self._SESSION_GAP_SEC
+                if same_key and gap_ok:
+                    current.append(entry)
+                else:
+                    sessions.append(self._summarise_glog_session(current))
+                    current = [entry]
+            sessions.append(self._summarise_glog_session(current))
+
+        # ── 2. Named conversations with no gateway_log coverage ─────────────
+        with self._lock:
+            conv_rows = self._conn.execute(
+                """SELECT c.id, c.model_id, c.title, c.created_at, c.last_active,
+                          c.message_count,
+                          (SELECT content FROM messages
+                           WHERE conv_id = c.id AND role = 'user'
+                           ORDER BY created_at ASC LIMIT 1) AS first_msg,
+                          (SELECT COUNT(*) FROM gateway_log WHERE conv_id = c.id) AS glog_count
+                   FROM conversations c
+                   ORDER BY c.last_active DESC LIMIT 200""",
+            ).fetchall()
+
+        for row in conv_rows:
+            r = dict(row)
+            if r["glog_count"] > 0:
+                continue  # already represented in gateway sessions
+            # user+assistant pairs → turn_count = floor(message_count / 2)
+            turn_count = max(1, (r["message_count"] or 2) // 2)
+            preview = r["first_msg"] or r["title"] or f"Conversation {r['id']}"
+            sessions.append({
+                "session_id": f"conv:{r['id']}",
+                "source":     "conversation",
+                "start_ts":   r["created_at"],
+                "end_ts":     r["last_active"],
+                "turn_count": turn_count,
+                "models":     [r["model_id"]],
+                "api_key_id": None,
+                "preview":    preview[:120],
+                "conv_id":    r["id"],
+            })
+
+        sessions.sort(key=lambda s: s["end_ts"], reverse=True)
+        return sessions[:limit]
+
+    @staticmethod
+    def _summarise_glog_session(entries: list[dict]) -> dict:
+        models: list[str] = []
+        for e in entries:
+            if e["model_id"] not in models:
+                models.append(e["model_id"])
+        first_user = entries[0]["user_content"] or ""
+        return {
+            "session_id": entries[0]["id"],
+            "source":     "gateway",
+            "start_ts":   entries[0]["created_at"],
+            "end_ts":     entries[-1]["created_at"],
+            "turn_count": len(entries),
+            "models":     models,
+            "api_key_id": entries[0]["api_key_id"],
+            "preview":    first_user[:120],
+        }
+
+    def get_session_turns(self, session_id: int) -> list[dict]:
+        """
+        Return all gateway_log rows in the session whose first entry has
+        the given *session_id*.
+        """
+        with self._lock:
+            anchor = self._conn.execute(
+                "SELECT api_key_id, created_at FROM gateway_log WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if not anchor:
+                return []
+
+            api_key_id = anchor["api_key_id"]
+            start_ts   = anchor["created_at"]
+
+            if api_key_id is None:
+                rows = self._conn.execute(
+                    """SELECT * FROM gateway_log
+                       WHERE created_at >= ? AND api_key_id IS NULL
+                       ORDER BY created_at ASC LIMIT 500""",
+                    (start_ts,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """SELECT * FROM gateway_log
+                       WHERE created_at >= ? AND api_key_id = ?
+                       ORDER BY created_at ASC LIMIT 500""",
+                    (start_ts, api_key_id),
+                ).fetchall()
+
+        entries: list[dict] = []
+        for row in rows:
+            r = dict(row)
+            if not entries:
+                entries.append(r)
+                continue
+            if (r["created_at"] - entries[-1]["created_at"]) < self._SESSION_GAP_SEC:
+                entries.append(r)
+            else:
+                break
+
+        return entries
+
+    def get_conversation_turns(self, conv_id: str) -> list[dict]:
+        """Return messages for a named conversation as turn dicts matching gateway_log shape."""
+        messages = self.get_messages(conv_id)
+        turns: list[dict] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if msg["role"] == "user":
+                user_content = msg["content"]
+                asst_content = None
+                ttft_ms      = None
+                tps          = None
+                backend      = None
+                comp_tokens  = None
+                created_at   = msg["created_at"]
+                # Look ahead for the assistant reply
+                if i + 1 < len(messages) and messages[i + 1]["role"] == "assistant":
+                    a = messages[i + 1]
+                    asst_content = a["content"]
+                    ttft_ms      = a.get("ttft_ms")
+                    tps          = a.get("tokens_per_sec")
+                    backend      = a.get("backend")
+                    comp_tokens  = a.get("tokens")
+                    i += 2
+                else:
+                    i += 1
+                turns.append({
+                    "model_id":          None,
+                    "user_content":      user_content,
+                    "assistant_content": asst_content,
+                    "ttft_ms":           ttft_ms,
+                    "tokens_per_sec":    tps,
+                    "backend":           backend,
+                    "completion_tokens": comp_tokens,
+                    "created_at":        created_at,
+                })
+            else:
+                i += 1
+        return turns
 
     # ------------------------------------------------------------------ #
     # Context building (with trimming)                                     #
