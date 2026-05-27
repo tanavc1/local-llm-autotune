@@ -254,26 +254,191 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from .security_log import real_ip as _real_ip  # noqa: E402 — after app creation
+
+# ---------------------------------------------------------------------------
+# Server header scrub (belt-and-suspenders with uvicorn server_header=False)
+#
+# Removes the "server:" response header so scanners cannot fingerprint the
+# stack.  This middleware runs last (registered first) so it sees every
+# response, including errors raised by other middleware.
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def _security_response_headers(request: Request, call_next):
+    response = await call_next(request)
+
+    # Remove stack fingerprint — MutableHeaders has no pop(); delete() is the correct API
+    if "server" in response.headers:
+        del response.headers["server"]
+
+    # Disable browser hardware APIs that autotune never needs
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+    )
+
+    # Don't leak URL paths to third-party origins on navigation
+    response.headers.setdefault("Referrer-Policy", "strict-origin")
+
+    # Prevent proxies and browsers from caching JSON API responses.
+    # API keys, conversation history, and session tokens must never be stored.
+    ct = response.headers.get("content-type", "")
+    if "application/json" in ct or "text/event-stream" in ct:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"]        = "no-cache"   # HTTP/1.0 proxy compat
+
+    # HSTS — native TLS (uvicorn ssl_certfile) or trusted proxy header
+    if (
+        request.url.scheme == "https"
+        or request.headers.get("X-Forwarded-Proto") == "https"
+    ):
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=63072000; includeSubDomains",
+        )
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Request body size limit
+#
+# Enforced at two points:
+#   1. Content-Length header (fast path — rejects before reading a byte)
+#   2. Stream wrapper (covers chunked transfers that omit Content-Length)
+#
+# Default 10 MB — generous for any LLM prompt; override with
+# AUTOTUNE_MAX_BODY_BYTES if needed.  nginx already applies client_max_body_size
+# for proxied requests; this protects direct connections on port 8765.
+# ---------------------------------------------------------------------------
+
+_MAX_BODY_BYTES = int(os.environ.get("AUTOTUNE_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
+
+_TOO_LARGE = JSONResponse(
+    status_code=413,
+    content={
+        "error": {
+            "type": "payload_too_large",
+            "message": (
+                f"Request body exceeds the {_MAX_BODY_BYTES // (1024 * 1024)} MB limit. "
+                "Split your prompt or reduce the message history."
+            ),
+        }
+    },
+)
+
+
+@app.middleware("http")
+async def body_size_limit_middleware(request: Request, call_next):
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return await call_next(request)
+
+    # Fast path: Content-Length header present — reject before reading a byte
+    cl_header = request.headers.get("content-length")
+    if cl_header is not None:
+        try:
+            if int(cl_header) > _MAX_BODY_BYTES:
+                return _TOO_LARGE
+        except ValueError:
+            pass  # malformed header — let FastAPI handle it
+
+    # Slow path: wrap the ASGI receive to track bytes on chunked transfers.
+    # When the limit is exceeded we drain the body as empty so the route
+    # handler sees EOF, then replace the response with 413 after call_next.
+    _received = 0
+    _too_large = False
+    _orig_receive = request._receive
+
+    async def _limited_receive():
+        nonlocal _received, _too_large
+        if _too_large:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        msg = await _orig_receive()
+        if msg.get("type") == "http.request":
+            _received += len(msg.get("body", b""))
+            if _received > _MAX_BODY_BYTES:
+                _too_large = True
+                return {"type": "http.request", "body": b"", "more_body": False}
+        return msg
+
+    request._receive = _limited_receive
+    response = await call_next(request)
+    # Swap out whatever the route returned (likely 422) for the proper 413
+    if _too_large:
+        from .security_log import audit
+        audit(
+            "body_too_large",
+            path=request.url.path,
+            method=request.method,
+            ip=_real_ip(request),
+            max_bytes=_MAX_BODY_BYTES,
+        )
+        return _TOO_LARGE
+    return response
+
+
+# ---------------------------------------------------------------------------
+# CORS — restrict to localhost by default; team deployments set the env var.
+#
+# allow_origins=["*"] would let any webpage silently use the local LLM.
+# AUTOTUNE_CORS_ORIGINS accepts a comma-separated list of extra origins
+# (e.g. "https://autotune.example.com" for a team nginx deployment).
+# ---------------------------------------------------------------------------
+
+_port = os.environ.get("AUTOTUNE_PORT", "8765")
+_default_cors = f"http://localhost:{_port},http://127.0.0.1:{_port}"
+_extra_cors   = os.environ.get("AUTOTUNE_CORS_ORIGINS", "")
+_CORS_ORIGINS = [
+    o.strip()
+    for o in (_default_cors + ("," if _extra_cors else "") + _extra_cors).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization", "Content-Type",
+        "X-Autotune-Profile", "X-Conversation-Id", "X-Request-ID",
+    ],
 )
 
 # ---------------------------------------------------------------------------
 # API key authentication middleware
 #
 # Activated when AUTOTUNE_REQUIRE_API_KEY=1.
-# Applies to all /v1/* requests; /health, /api/*, and /admin/* are exempt.
+#
+# Guards:
+#   /v1/*               — inference endpoints (always, when enforcement is on)
+#   /api/conversations* — conversation history (sensitive user data)
+#   /api/hardware       — system info (RAM, GPU, CPU fingerprint)
+#   /api/running_models — reveals loaded model names and RAM usage
+#
+# Always open (monitoring / low-sensitivity):
+#   /health, /api/version, /api/profiles, /api/running_models (when off)
 # ---------------------------------------------------------------------------
+
+# Prefixes that require API key auth when enforcement is enabled
+_AUTH_PREFIXES = (
+    "/v1/",
+    "/api/conversations",
+    "/api/hardware",
+    "/api/running_models",
+)
+
+
+def _needs_api_key(path: str) -> bool:
+    return any(path.startswith(p) for p in _AUTH_PREFIXES)
+
 
 @app.middleware("http")
 async def api_key_auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    # Only guard the OpenAI-compat inference paths
-    if not path.startswith("/v1/"):
+    if not _needs_api_key(path):
         return await call_next(request)
 
     from .auth import api_key_enforcement_enabled, build_auth_error_response, verify_api_key_sync
@@ -286,14 +451,20 @@ async def api_key_auth_middleware(request: Request, call_next):
         return build_auth_error_response(
             401,
             "missing_authorization",
-            "Authorization: Bearer <api_key> header required for /v1/* endpoints.",
+            "Authorization: Bearer <api_key> required.",
         )
 
     raw_key = auth_header[len("Bearer "):]
     key_record = verify_api_key_sync(raw_key)
 
     if key_record is None:
-        # Key hash not found in the database at all
+        from .security_log import audit
+        audit(
+            "api_key_invalid",
+            path=path,
+            ip=_real_ip(request),
+            key_prefix=raw_key[:8] if len(raw_key) >= 8 else raw_key,
+        )
         return build_auth_error_response(
             401,
             "invalid_api_key",
@@ -301,11 +472,20 @@ async def api_key_auth_middleware(request: Request, call_next):
         )
 
     if not key_record.get("is_active"):
-        # Key exists but has been revoked
+        from .security_log import audit
+        expired = key_record.get("_reason") == "expired"
+        audit(
+            "api_key_expired" if expired else "api_key_revoked_used",
+            path=path,
+            ip=_real_ip(request),
+            key_id=key_record["id"],
+            key_name=key_record.get("name", ""),
+        )
         return build_auth_error_response(
             403,
-            "key_revoked",
-            "This API key has been revoked. Contact your administrator.",
+            "key_expired" if expired else "key_revoked",
+            "This API key has expired." if expired
+            else "This API key has been revoked. Contact your administrator.",
         )
 
     # Inject into request state so route handlers can log usage
@@ -541,6 +721,7 @@ async def _emit_run_telemetry(
     comp_tokens: int,
     api_key_id: Optional[str] = None,
     api_key_name: str = "",
+    concurrent_models: int = 0,
 ) -> None:
     """
     Log a completed inference run to local SQLite and (if opted in) Supabase.
@@ -570,6 +751,7 @@ async def _emit_run_telemetry(
             "profile_name":       profile_name,
             "f16_kv":             1 if ollama_opts.get("f16_kv", True) else 0,
             "num_keep":           ollama_opts.get("num_keep", 0),
+            "concurrent_models":  concurrent_models,
             "notes": (
                 f"profile={profile_name} backend={backend_name} "
                 f"f16_kv={ollama_opts.get('f16_kv', True)}"
@@ -1366,37 +1548,76 @@ async def _chat_completions_inner(
     # conversation storage — so the DB never sees raw <think> blocks.
     _think_filt = ThinkingStreamFilter()
 
+    # Count currently-loaded models at request start — stored for telemetry so
+    # the dashboard can flag TTFT values measured while multiple models competed
+    # for unified memory (which inflates latency and makes models look unfairly slow).
+    _concurrent_models = 0
+    try:
+        from autotune.api.running_models import get_running_models
+        _concurrent_models = len(get_running_models())
+    except Exception:
+        pass
+
     async def _raw_stream() -> AsyncGenerator[bytes, None]:
-        """Inner generator: produces raw SSE bytes from the backend."""
+        """Inner generator: produces raw SSE bytes from the backend, with stress retry."""
         nonlocal first_token_time, backend_name
 
         tuner._apply(profile_name)
         try:
-            async for chunk in chain.stream(
-                req.model,
-                messages,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                repetition_penalty=rep_penalty,
-                timeout=timeout,
-                num_ctx=ollama_opts["num_ctx"],
-                ollama_options=ollama_opts,
-            ):
-                backend_name = chunk.backend
-                if first_token_time is None and chunk.content:
-                    first_token_time = time.time()
+            for _attempt in range(2):
+                _tokens_yielded = 0
+                _inner_err: Optional[Exception] = None
 
-                if chunk.content:
-                    _think_filt.feed(chunk.content)   # track visible text
-                    yield _make_chunk_json(chunk.content, req.model, chunk_id).encode()
+                try:
+                    async for chunk in chain.stream(
+                        req.model,
+                        messages,
+                        max_new_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        repetition_penalty=rep_penalty,
+                        timeout=timeout,
+                        num_ctx=ollama_opts["num_ctx"],
+                        ollama_options=ollama_opts,
+                    ):
+                        backend_name = chunk.backend
+                        if first_token_time is None and chunk.content:
+                            first_token_time = time.time()
+                        if chunk.content:
+                            _tokens_yielded += 1
+                            _think_filt.feed(chunk.content)
+                            yield _make_chunk_json(chunk.content, req.model, chunk_id).encode()
+                        if chunk.finish_reason:
+                            yield _make_chunk_json("", req.model, chunk_id, chunk.finish_reason).encode()
+                            break
+                except _asyncio.CancelledError:
+                    raise  # propagate — client disconnected
+                except Exception as _e:
+                    _inner_err = _e
 
-                if chunk.finish_reason:
-                    yield _make_chunk_json("", req.model, chunk_id, chunk.finish_reason).encode()
-                    break
+                if _tokens_yielded > 0:
+                    break  # success
+
+                if _attempt == 0:
+                    # Empty response — machine under memory pressure or model reloading.
+                    # Inject a visible notice, wait, then retry automatically.
+                    import psutil as _ps
+                    _ram = round(_ps.virtual_memory().percent, 1)
+                    _notice = (
+                        f"\n\n> ⏳ **Your Mac is under memory pressure ({_ram}% RAM)** — "
+                        "giving it a moment to breathe before automatically retrying your request…\n\n"
+                    )
+                    yield _make_chunk_json(_notice, req.model, chunk_id).encode()
+                    await _asyncio.sleep(3.0)
+                    first_token_time = None  # reset TTFT measurement for the retry
+                else:
+                    # Both attempts produced nothing
+                    _msg = str(_inner_err) if _inner_err else "Model returned an empty response after retry"
+                    _err = json.dumps({"error": _make_error_body("backend_error", _msg, req.model)})
+                    yield f"data: {_err}\n\n".encode()
 
         except _asyncio.CancelledError:
-            pass  # client disconnected — normal, no error chunk needed
+            pass  # client disconnected — normal
         except ModelNotAvailableError as e:
             err = json.dumps({"error": _make_error_body("model_not_found", str(e), req.model)})
             yield f"data: {err}\n\n".encode()
@@ -1463,6 +1684,7 @@ async def _chat_completions_inner(
                     comp_tokens=comp_tokens,
                     api_key_id=api_key_id,
                     api_key_name=api_key_name,
+                    concurrent_models=_concurrent_models,
                 )
 
         # Emit a usage chunk before [DONE] when stream_options.include_usage=True.
@@ -1581,6 +1803,7 @@ async def _chat_completions_inner(
             comp_tokens=comp_tokens,
             api_key_id=api_key_id,
             api_key_name=api_key_name,
+            concurrent_models=_concurrent_models,
         )
 
     return _make_completion_json(
@@ -1594,7 +1817,21 @@ async def _chat_completions_inner(
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
-async def health():
+async def health(request: Request):
+    from .auth import api_key_enforcement_enabled, verify_api_key_sync
+
+    # When enforcement is on, gate verbose system info behind a valid key.
+    # Unauthenticated callers (load balancers, etc.) get a minimal liveness signal.
+    if api_key_enforcement_enabled():
+        auth_header = request.headers.get("Authorization", "")
+        authed = False
+        if auth_header.startswith("Bearer "):
+            rec = verify_api_key_sync(auth_header[len("Bearer "):])
+            if rec and rec.get("is_active"):
+                authed = True
+        if not authed:
+            return {"status": "ok"}
+
     from autotune.api.kv_manager import memory_pressure_snapshot
     chain = get_chain()
     ollama = await chain.ollama_running()
@@ -1627,8 +1864,30 @@ async def health():
 
 
 @app.get("/api/version")
-def version_info():
+def version_info(request: Request):
     """Return current and latest available version, with an update flag."""
+    from .auth import api_key_enforcement_enabled, verify_api_key_sync
+
+    # When enforcement is on, gate version details behind a valid credential.
+    # Unauthenticated probes learn nothing useful for CVE targeting.
+    if api_key_enforcement_enabled():
+        authed = False
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            rec = verify_api_key_sync(auth[len("Bearer "):])
+            if rec and rec.get("is_active"):
+                authed = True
+        if not authed:
+            # Check dashboard session cookie as well (dashboard JS uses cookies)
+            try:
+                from autotune.dashboard.router import _verify_session
+                authed = _verify_session(request)
+            except Exception:
+                pass
+        if not authed:
+            return {"current": None, "latest": None, "update_available": False,
+                    "update_command": None}
+
     import time as _t
     now = _t.time()
     if _VERSION_CACHE.get("at", 0) + 3600 > now:

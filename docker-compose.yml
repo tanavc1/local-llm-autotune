@@ -69,9 +69,12 @@ services:
       dockerfile: Dockerfile.autotune  # lightweight Python-only image (no Ollama)
     ports:
       - "8765:8765"
+    volumes:
+      - autotune_data:/data
     environment:
       AUTOTUNE_OLLAMA_URL: "http://ollama:11434"
       AUTOTUNE_PORT: "8765"
+      XDG_DATA_HOME: "/data"          # persists SQLite DB (API keys, conversations, metrics)
     depends_on:
       ollama:
         condition: service_healthy
@@ -107,10 +110,13 @@ services:
       dockerfile: Dockerfile.autotune
     env_file:
       - .env
+    volumes:
+      - autotune_data:/data
     environment:
       AUTOTUNE_OLLAMA_URL: "http://ollama-team:11434"
       AUTOTUNE_PORT: "8765"
       AUTOTUNE_REQUIRE_API_KEY: "1"
+      XDG_DATA_HOME: "/data"          # persists SQLite DB (API keys, conversations, metrics)
     depends_on:
       ollama-team:
         condition: service_healthy
@@ -139,3 +145,4 @@ services:
 
 volumes:
   ollama_models:
+  autotune_data:   # API keys, conversations, run_observations — survives restarts

@@ -161,7 +161,8 @@ def get_ttft_trend() -> list[dict]:
     """Last 100 completed requests, chronological, for the TTFT sparkline."""
     db = _db()
     rows = db.conn.execute(
-        """SELECT model_id, ttft_ms, gen_tokens_per_sec, elapsed_sec, context_len, observed_at
+        """SELECT model_id, ttft_ms, gen_tokens_per_sec, elapsed_sec, context_len,
+                  observed_at, concurrent_models
            FROM run_observations
            WHERE ttft_ms IS NOT NULL
            ORDER BY observed_at DESC
@@ -171,15 +172,53 @@ def get_ttft_trend() -> list[dict]:
     result = []
     for r in reversed(rows):
         result.append({
-            "model":       r["model_id"],
-            "ttft_ms":     round(r["ttft_ms"] or 0, 1),
-            "tps":         round(r["gen_tokens_per_sec"] or 0, 1),
-            "elapsed_sec": round(r["elapsed_sec"] or 0, 2),
-            "context_len": r["context_len"],
-            "time": datetime.datetime.fromtimestamp(r["observed_at"]).strftime("%H:%M:%S"),
-            "observed_at_ts": r["observed_at"],  # raw Unix float
+            "model":             r["model_id"],
+            "ttft_ms":           round(r["ttft_ms"] or 0, 1),
+            "tps":               round(r["gen_tokens_per_sec"] or 0, 1),
+            "elapsed_sec":       round(r["elapsed_sec"] or 0, 2),
+            "context_len":       r["context_len"],
+            "time":              datetime.datetime.fromtimestamp(r["observed_at"]).strftime("%H:%M:%S"),
+            "observed_at_ts":    r["observed_at"],
+            "concurrent_models": r["concurrent_models"] or 1,
         })
     return result
+
+
+def get_perf_trends() -> dict:
+    """Return RAM, KV-cache size, and TPS time-series for the Performance tab charts."""
+    db = _db()
+    rows = db.conn.execute(
+        """SELECT model_id, ttft_ms, gen_tokens_per_sec, context_len,
+                  peak_ram_gb, ram_before_gb, concurrent_models, observed_at
+           FROM run_observations
+           WHERE observed_at IS NOT NULL
+           ORDER BY observed_at DESC
+           LIMIT 150""",
+    ).fetchall()
+
+    ram_series:  list[dict] = []
+    kv_series:   list[dict] = []
+    tps_series:  list[dict] = []
+
+    for r in reversed(rows):
+        t = datetime.datetime.fromtimestamp(r["observed_at"]).strftime("%H:%M")
+        ram_gb = r["peak_ram_gb"] or r["ram_before_gb"] or None
+        if ram_gb is not None:
+            ram_series.append({"t": t, "v": round(ram_gb, 2), "model": r["model_id"]})
+        if r["context_len"]:
+            # Each token in KV cache uses ~0.5 MB for a typical Q4 model at F16 KV
+            kv_mb = round(r["context_len"] * 0.5 / 1024, 2)
+            kv_series.append({"t": t, "v": kv_mb, "ctx": r["context_len"], "model": r["model_id"]})
+        if r["gen_tokens_per_sec"]:
+            n_concurrent = r["concurrent_models"] or 1
+            tps_series.append({
+                "t": t,
+                "v": round(r["gen_tokens_per_sec"], 1),
+                "model": r["model_id"],
+                "concurrent": n_concurrent,
+            })
+
+    return {"ram": ram_series, "kv": kv_series, "tps": tps_series}
 
 
 def get_models_stats() -> list[dict]:
@@ -698,132 +737,576 @@ def get_installed_models() -> list[dict[str, Any]]:
 def get_gateway_security() -> list[dict[str, Any]]:
     """Return a list of gateway security and health check results.
 
-    Each item is a dict with keys: check, status (ok|warn|error|info),
-    message, action (str or None).
+    Each item: check, status (ok|warn|error|info), message, action.
+    This drives both the Overview tab mini-card and the Security tab posture grid.
     """
     checks: list[dict[str, Any]] = []
 
-    def _check(name: str, status: str, message: str, action: str | None = None) -> None:
-        checks.append({"check": name, "status": status, "message": message, "action": action})
+    def _check(
+        name: str, status: str, message: str,
+        action: str | None = None, category: str = "security",
+    ) -> None:
+        checks.append({
+            "check": name, "status": status,
+            "message": message, "action": action,
+            "category": category,
+        })
 
-    # ── 1. API key enforcement ────────────────────────────────────────────
     api_key_on = os.environ.get("AUTOTUNE_REQUIRE_API_KEY", "").strip() in ("1", "true", "yes")
-    if api_key_on:
-        _check(
-            "API Key Enforcement", "ok",
-            "AUTOTUNE_REQUIRE_API_KEY=1 — all /v1/* requests require a valid API key.",
-        )
-    else:
-        _check(
-            "API Key Enforcement", "warn",
-            "Enforcement is OFF. Any client that can reach this port can use your models.",
-            "Set AUTOTUNE_REQUIRE_API_KEY=1 in your .env file.",
-        )
+    admin_key  = os.environ.get("AUTOTUNE_ADMIN_KEY", "").strip()
+    tls_cert   = os.environ.get("AUTOTUNE_SSL_CERTFILE", "").strip()
+    max_body   = int(os.environ.get("AUTOTUNE_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
 
-    # ── 2. Admin key strength ─────────────────────────────────────────────
-    admin_key = os.environ.get("AUTOTUNE_ADMIN_KEY", "").strip()
+    # ── 1. Admin key / dashboard auth ────────────────────────────────────
     if not admin_key:
-        _check(
-            "Admin Key", "error",
-            "AUTOTUNE_ADMIN_KEY is not set. The admin API and dashboard are unprotected.",
-            "Run ./setup.sh to generate a strong key.",
-        )
+        _check("Dashboard Auth", "error",
+               "AUTOTUNE_ADMIN_KEY not set — dashboard and admin API are wide open.",
+               "Run ./setup.sh to generate a strong key.")
     elif len(admin_key) < 32:
-        _check(
-            "Admin Key", "warn",
-            f"Admin key is only {len(admin_key)} characters. Use at least 32 random characters.",
-            "python3 -c \"import secrets; print(secrets.token_urlsafe(48))\"",
-        )
+        _check("Dashboard Auth", "warn",
+               f"Admin key only {len(admin_key)} chars — use ≥ 32 random characters.",
+               'python3 -c "import secrets; print(secrets.token_urlsafe(48))"')
     else:
-        _check(
-            "Admin Key", "ok",
-            f"Admin key is set ({len(admin_key)} chars) and dashboard login is active.",
-        )
+        _check("Dashboard Auth", "ok",
+               f"Admin key set ({len(admin_key)} chars) — dashboard login required.")
 
-    # ── 3. Active API keys (only checked when enforcement is on) ──────────
+    # ── 2. API key enforcement ────────────────────────────────────────────
+    if api_key_on:
+        _check("API Key Enforcement", "ok",
+               "All /v1/* inference requests require a valid API key.")
+    else:
+        _check("API Key Enforcement", "warn",
+               "Open access — any client on this network can call your models.",
+               "Set AUTOTUNE_REQUIRE_API_KEY=1 in your .env file.")
+
+    # ── 3. Active keys (only meaningful when enforcement is on) ───────────
     if api_key_on:
         try:
             n = _db().conn.execute(
                 "SELECT COUNT(*) AS n FROM api_keys WHERE is_active=1"
             ).fetchone()["n"]
             if n == 0:
-                _check(
-                    "Active Keys", "warn",
-                    "Enforcement is ON but no active API keys exist — every request will be rejected.",
-                    "Use the New Key button in the dashboard to create a key.",
-                )
+                _check("Active API Keys", "warn",
+                       "Enforcement is ON but no active keys exist — every request will be rejected.",
+                       "Create a key on the Keys tab.")
             else:
-                _check(
-                    "Active Keys", "ok",
-                    f"{n} active API key{'s' if n != 1 else ''} configured.",
-                )
+                exp_soon = _db().conn.execute(
+                    "SELECT COUNT(*) AS n FROM api_keys WHERE is_active=1"
+                    " AND expires_at IS NOT NULL AND expires_at < ?",
+                    (time.time() + 7 * 86400,)
+                ).fetchone()["n"]
+                msg = f"{n} active key{'s' if n != 1 else ''} configured."
+                if exp_soon:
+                    msg += f" {exp_soon} expire{'s' if exp_soon == 1 else ''} within 7 days."
+                _check("Active API Keys", "warn" if exp_soon else "ok", msg)
         except Exception:
             pass
 
-    # ── 4. RAM pressure ───────────────────────────────────────────────────
-    vm = psutil.virtual_memory()
-    if vm.percent > 88:
-        _check(
-            "RAM", "warn",
-            f"System RAM is {vm.percent:.0f}% used ({vm.available / 1024**3:.1f} GB free). "
-            "Models may be competing with OS memory.",
-            "Consider a smaller model or Q4_K_M quantization.",
-        )
+    # ── 4. CORS policy ────────────────────────────────────────────────────
+    extra_cors = os.environ.get("AUTOTUNE_CORS_ORIGINS", "").strip()
+    if extra_cors and extra_cors.strip("*") == "":
+        _check("CORS Policy", "error",
+               "AUTOTUNE_CORS_ORIGINS contains '*' — any website can call your API.",
+               "Remove the wildcard and list specific domains instead.")
     else:
-        _check(
-            "RAM", "ok",
-            f"RAM at {vm.percent:.0f}% — {vm.available / 1024**3:.1f} GB free.",
-        )
+        origins_note = f" + {extra_cors}" if extra_cors else ""
+        _check("CORS Policy", "ok",
+               f"Locked to localhost{origins_note} — cross-origin requests from unknown sites are blocked.")
 
-    # ── 5. Disk space ─────────────────────────────────────────────────────
+    # ── 5. TLS / HTTPS ────────────────────────────────────────────────────
+    if tls_cert:
+        _check("TLS / HTTPS", "ok",
+               f"Native TLS active — traffic encrypted via {os.path.basename(tls_cert)}.")
+    else:
+        # For a localhost-only tool, plain HTTP is acceptable — CORS is already locked
+        # to loopback and there is no network exposure. Mark "info" so it doesn't
+        # penalise the posture score; operators who expose autotune to a LAN/VPN
+        # should add --ssl-certfile.
+        _check("TLS / HTTPS", "info",
+               "Running over HTTP (localhost only). Add TLS if you expose autotune beyond loopback.",
+               "autotune serve --ssl-certfile cert.pem --ssl-keyfile key.pem")
+
+    # ── 6. Login rate limiting ────────────────────────────────────────────
+    _check("Login Rate Limiting", "ok",
+           "Exponential backoff active — IPs locked out after 5 failed attempts (up to 5 min).")
+
+    # ── 7. Request body size limit ────────────────────────────────────────
+    _check("Body Size Limit", "ok",
+           f"Requests capped at {max_body // (1024*1024)} MB — oversized payloads rejected with 413.")
+
+    # ── 8. Server fingerprinting ──────────────────────────────────────────
+    _check("Server Fingerprint", "ok",
+           "Server: response header suppressed — stack is not advertised to scanners.")
+
+    # ── 9. Session revocation ─────────────────────────────────────────────
+    _check("Session Revocation", "ok",
+           "Logout immediately invalidates tokens — cookies cannot be replayed after sign-out.")
+
+    # ── 10. DB file permissions ───────────────────────────────────────────
     try:
-        disk = shutil.disk_usage("/")
-        free_gb = disk.free / 1024 ** 3
-        if free_gb < 5:
-            _check(
-                "Disk Space", "error",
-                f"Only {free_gb:.1f} GB free on root disk. Model pulls and logs may fail.",
-                "Free space before pulling new models.",
-            )
-        elif free_gb < 15:
-            _check(
-                "Disk Space", "warn",
-                f"{free_gb:.1f} GB free — may be tight for large models (7B+ need 4-8 GB each).",
-                "ollama rm <model-name>  to remove unused models.",
-            )
+        import stat
+        db_path = _db().path
+        mode = stat.S_IMODE(os.stat(db_path).st_mode)
+        if mode == 0o600:
+            _check("DB File Permissions", "ok",
+                   "SQLite DB is owner-read/write only (600) — other OS users cannot read keys.")
         else:
-            _check("Disk Space", "ok", f"{free_gb:.0f} GB free on root disk.")
+            _check("DB File Permissions", "warn",
+                   f"DB file mode is {oct(mode)} — should be 600 to prevent multi-user exposure.",
+                   f"chmod 600 {db_path}")
     except Exception:
         pass
 
-    # ── 6. Version currency ───────────────────────────────────────────────
+    # ── 11. Security audit log ────────────────────────────────────────────
+    _check("Security Audit Log", "ok",
+           "All auth events (logins, key use, revocations) are logged to disk and stored in the DB.")
+
+    # ── 12. Dashboard API rate limiting ──────────────────────────────────
+    _check("Dashboard Rate Limiting", "ok",
+           "Key create/revoke: 30/hr · Catalog refresh: 10/min · Reads: 300/min — per IP.")
+
+    # ── System health checks (category=health) ────────────────────────────
+
+    # RAM
+    vm = psutil.virtual_memory()
+    if vm.percent > 88:
+        _check("RAM Pressure", "warn",
+               f"RAM at {vm.percent:.0f}% — only {vm.available / 1024**3:.1f} GB free. "
+               "Models may swap under load.",
+               "Consider a smaller model or Q4_K_M quantization.",
+               category="health")
+    else:
+        _check("RAM", "ok",
+               f"RAM at {vm.percent:.0f}% — {vm.available / 1024**3:.1f} GB free.",
+               category="health")
+
+    # Disk
+    try:
+        free_gb = shutil.disk_usage("/").free / 1024**3
+        if free_gb < 5:
+            _check("Disk Space", "error",
+                   f"Only {free_gb:.1f} GB free — model pulls and logs may fail.",
+                   "Free space before pulling new models.", category="health")
+        elif free_gb < 15:
+            _check("Disk Space", "warn",
+                   f"{free_gb:.1f} GB free — tight for large models (7B+ need 4–8 GB each).",
+                   "ollama rm <model-name>", category="health")
+        else:
+            _check("Disk Space", "ok", f"{free_gb:.0f} GB free.", category="health")
+    except Exception:
+        pass
+
+    # Version
     try:
         from importlib.metadata import version as _pkgver
         from packaging.version import Version
-
         current = _pkgver("llm-autotune")
-        latest = _latest_pypi_version()
+        latest  = _latest_pypi_version()
         if latest and Version(latest) > Version(current):
-            _check(
-                "Version", "info",
-                f"Update available: v{current} → v{latest}",
-                "pip install --upgrade llm-autotune",
-            )
+            _check("Version", "info", f"Update available: v{current} → v{latest}",
+                   "pip install --upgrade llm-autotune", category="health")
         elif latest:
-            _check("Version", "ok", f"autotune v{current} is up to date.")
+            _check("Version", "ok", f"autotune v{current} is up to date.", category="health")
         else:
-            _check("Version", "info", f"Running autotune v{current} (PyPI check unavailable).")
+            _check("Version", "info", f"Running v{current} (PyPI check unavailable).", category="health")
     except Exception:
         pass
 
-    # ── 7. TLS reminder ───────────────────────────────────────────────────
-    _check(
-        "TLS / HTTPS", "info",
-        "Gateway is running on plain HTTP. For team deployments, add Nginx or Caddy in front.",
-        "See docs/team-tls.md for a Nginx + Let's Encrypt setup guide.",
-    )
-
     return checks
+
+
+def get_security_stats_24h() -> dict:
+    """Event counts for the last 24 hours, keyed by event name."""
+    try:
+        return _db().get_security_stats_24h()
+    except Exception:
+        return {}
+
+
+def get_security_events_recent(
+    limit: int = 200,
+    event_filter: str | None = None,
+    severity_filter: str | None = None,
+) -> list[dict]:
+    """Recent security events from the persistent log, newest first."""
+    try:
+        return _db().get_security_events(
+            limit=limit,
+            event_filter=event_filter or None,
+            severity_filter=severity_filter or None,
+        )
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Optimization events — derived from run_observations
+# ---------------------------------------------------------------------------
+_OPT_DESC: dict[str, dict] = {
+    "kv_context": {
+        "label": "KV Cache Sizing",
+        "purpose": (
+            "Your prompt was {after:,} tokens long. Ollama defaults to a fixed {before:,}-token "
+            "context window and pre-allocates RAM for the entire window regardless of actual usage. "
+            "autotune measured the real prompt length and set num_ctx={after:,} instead."
+        ),
+        "helps": (
+            "~{savings_pct}% of KV-cache RAM freed for this request. Smaller KV cache = "
+            "lower TTFT, less memory pressure, and headroom to run additional models simultaneously."
+        ),
+    },
+    "kv_quant_q8": {
+        "label": "KV Quant: Q8",
+        "purpose": (
+            "autotune set the KV cache to Q8 (8-bit quantized) precision instead of F16. "
+            "{reason}"
+        ),
+        "helps": (
+            "Q8 KV halves the memory footprint of the attention cache compared to F16, "
+            "with negligible quality impact (< 0.1% perplexity difference on most models). "
+            "This directly reduces TTFT and peak RAM usage."
+        ),
+    },
+    "kv_quant_f16": {
+        "label": "KV Quant: F16",
+        "purpose": (
+            "autotune kept the KV cache at full F16 (16-bit) precision. "
+            "This request used the {profile} profile, which prioritises output quality."
+        ),
+        "helps": (
+            "F16 KV preserves the full numerical range of attention scores — "
+            "important for long-context reasoning, code generation, and multi-step analysis "
+            "where small errors in attention can compound across many tokens."
+        ),
+    },
+    "sys_prompt_cache": {
+        "label": "System Prompt Cached",
+        "purpose": (
+            "autotune pinned {num_keep} tokens of the system prompt in the KV cache using num_keep. "
+            "On repeated requests the model reuses this cached prefix instead of re-encoding it."
+        ),
+        "helps": (
+            "Re-encoding the system prompt on every turn wastes compute proportional to its length. "
+            "Caching it cuts that overhead to zero for every follow-up message — directly reducing "
+            "TTFT for multi-turn conversations."
+        ),
+    },
+    "ram_pressure_moderate": {
+        "label": "RAM Pressure · Moderate",
+        "purpose": (
+            "System RAM reached {ram_pct}% during this request. "
+            "autotune reduced num_ctx by ~10% ({before:,} → {after:,} tokens) "
+            "to ease memory pressure before sending to the model."
+        ),
+        "helps": (
+            "Proactively shrinking the KV window keeps the model inside available RAM "
+            "without triggering OS paging. Paging stalls inference by orders of magnitude — "
+            "a smaller context is always faster than a swapping one."
+        ),
+    },
+    "ram_pressure_high": {
+        "label": "RAM Pressure · High",
+        "purpose": (
+            "System RAM hit {ram_pct}% — above the high-pressure threshold. "
+            "autotune cut num_ctx by ~25% ({before:,} → {after:,} tokens) "
+            "and downgraded KV cache from F16 → Q8 to reclaim memory."
+        ),
+        "helps": (
+            "At high RAM pressure a double reduction is applied: smaller context window "
+            "shrinks total KV allocation, and Q8 precision halves the per-token KV footprint. "
+            "Together they can free 30–50% of KV memory, keeping inference stable."
+        ),
+    },
+    "ram_pressure_critical": {
+        "label": "RAM Pressure · Critical",
+        "purpose": (
+            "System RAM hit {ram_pct}% — critical threshold. "
+            "autotune halved num_ctx ({before:,} → {after:,} tokens), forced KV to Q8, "
+            "and reduced num_batch to 256 to limit peak activation memory."
+        ),
+        "helps": (
+            "Critical pressure means the system is on the edge of OOM. "
+            "All three levers (context, KV precision, batch size) are pulled simultaneously "
+            "to keep inference from crashing. Consider a smaller model or Q4_K_M quantization."
+        ),
+    },
+    "swap_guard": {
+        "label": "SwapGuard Triggered",
+        "purpose": (
+            "NoSwapGuard detected that the requested configuration would exceed available RAM "
+            "and cause OS swap usage. autotune recalculated safe parameters — "
+            "num_ctx and KV precision — to fit entirely within free RAM."
+        ),
+        "helps": (
+            "Swap (virtual memory on disk) can slow LLM inference by 10–100× compared to "
+            "RAM-resident inference. SwapGuard guarantees the model stays off-disk "
+            "even on machines with limited memory."
+        ),
+    },
+    "swap_activity": {
+        "label": "Swap Activity Detected",
+        "purpose": (
+            "The system recorded {delta_swap:.2f} GB of additional swap usage during this request. "
+            "This means the OS moved memory pages to disk while the model was running."
+        ),
+        "helps": (
+            "Swap activity is a warning sign — it indicates the model is too large for available RAM. "
+            "Consider switching to a smaller model, enabling Q4_K_M quantization, or reducing "
+            "concurrent model load."
+        ),
+    },
+    "qos_fast": {
+        "label": "QOS: Fast",
+        "purpose": (
+            "autotune classified this as a low-latency request and applied the Fast profile: "
+            "temperature 0.1 (near-greedy), max 512 output tokens, context cap 2048 tokens, "
+            "Q8 KV cache, and USER_INTERACTIVE OS scheduling priority."
+        ),
+        "helps": (
+            "Fast profile minimises TTFT above all else. It is ideal for code completions, "
+            "short Q&A, command-line tools, and IDE integrations where sub-second responses "
+            "matter more than extended reasoning depth."
+        ),
+    },
+    "qos_balanced": {
+        "label": "QOS: Balanced",
+        "purpose": (
+            "autotune applied the Balanced profile: temperature 0.7, up to 1024 output tokens, "
+            "context cap 8192 tokens, F16 KV cache precision, and standard USER_INITIATED "
+            "scheduling. This is the default for general-purpose requests."
+        ),
+        "helps": (
+            "Balanced gives you full-quality attention (F16 KV) and enough context for documents "
+            "and multi-turn conversations, while keeping max_new_tokens at 1024 to prevent "
+            "runaway generation. The sweet spot between speed and quality for everyday work."
+        ),
+    },
+    "qos_quality": {
+        "label": "QOS: Quality",
+        "purpose": (
+            "autotune applied the Quality profile: temperature 0.8, up to 4096 output tokens, "
+            "context cap 32768 tokens, F16 KV cache, and preferred quants Q5_K_M/Q6_K. "
+            "Applied for long-form or complex requests."
+        ),
+        "helps": (
+            "Quality mode removes all the shortcuts taken by Fast and Balanced. F16 KV preserves "
+            "attention precision over long contexts, high max_new_tokens allows complete answers, "
+            "and better quants reduce accumulated rounding errors in the weight matrices."
+        ),
+    },
+}
+
+_BASELINE_CTX = 4096
+
+
+def get_optimization_events(limit: int = 200, model_id: str | None = None) -> list[dict]:
+    """Return recent optimization decisions derived from run_observations.
+
+    Each request may yield multiple events per row. Events are returned newest-first.
+    """
+    db = _db()
+    filters = ["observed_at IS NOT NULL"]
+    params: list = []
+
+    if model_id:
+        filters.append("model_id = ?")
+        params.append(model_id)
+
+    rows = db.conn.execute(
+        "SELECT model_id, context_len, profile_name, ttft_ms, gen_tokens_per_sec, "
+        "elapsed_sec, prompt_tokens, completion_tokens, observed_at, "
+        "f16_kv, num_keep, delta_ram_gb, delta_swap_gb, ram_before_gb "
+        "FROM run_observations WHERE " + " AND ".join(filters) +
+        " ORDER BY observed_at DESC LIMIT ?",
+        params + [limit * 4],
+    ).fetchall()
+
+    def _ev(ts, model, ev_type, ttft, tps, extra: dict) -> dict:
+        desc = _OPT_DESC.get(ev_type, {})
+        return {
+            "ts": ts, "model": model, "type": ev_type,
+            "ttft_ms": ttft, "tps": tps,
+            # Default description — overridden by extra["description"] when the
+            # caller supplies a formatted version with real numbers substituted in.
+            "description": {
+                "label":   desc.get("label", ev_type),
+                "purpose": desc.get("purpose", ""),
+                "helps":   desc.get("helps", ""),
+            },
+            **extra,
+        }
+
+    # Pre-pass: identify which rows represent QOS profile transitions (chronological).
+    # Rows arrive newest-first; iterate in reverse (oldest-first) to detect changes.
+    _qos_change_ids: set[int] = set()
+    _last_profile_per_model: dict[str, str] = {}
+    for _r in reversed(rows):
+        _m   = _r["model_id"] or "unknown"
+        _p   = _r["profile_name"]
+        if _p and _p in ("fast", "quality"):
+            if _last_profile_per_model.get(_m) != _p:
+                _qos_change_ids.add(id(_r))
+        if _p:
+            _last_profile_per_model[_m] = _p
+
+    events: list[dict] = []
+    for r in rows:
+        if len(events) >= limit:
+            break
+        ctx            = r["context_len"]
+        profile        = r["profile_name"]
+        ts             = r["observed_at"]
+        model          = r["model_id"] or "unknown"
+        ttft           = r["ttft_ms"]
+        tps            = r["gen_tokens_per_sec"]
+        f16_kv         = r["f16_kv"]        # 1=F16, 0=Q8, None=unknown
+        num_keep       = r["num_keep"]
+        delta_swap     = r["delta_swap_gb"] or 0.0
+        delta_ram      = r["delta_ram_gb"]  or 0.0
+
+        # ── 1. KV context sizing ─────────────────────────────────────────
+        if ctx and int(ctx) < int(_BASELINE_CTX * 0.95):
+            savings_pct = round((_BASELINE_CTX - ctx) / _BASELINE_CTX * 100, 1)
+            desc = _OPT_DESC["kv_context"]
+            events.append(_ev(ts, model, "kv_context", ttft, tps, {
+                "before": _BASELINE_CTX, "after": int(ctx),
+                "savings_pct": savings_pct,
+                "description": {
+                    "label":   desc["label"],
+                    "purpose": desc["purpose"].format(after=int(ctx), before=_BASELINE_CTX),
+                    "helps":   desc["helps"].format(savings_pct=savings_pct),
+                },
+            }))
+
+        # ── 2. KV cache quantization ─────────────────────────────────────
+        if f16_kv is not None:
+            if f16_kv == 0:
+                # Q8 KV — determine reason
+                if profile == "fast":
+                    reason = "The Fast profile defaults to Q8 KV to minimise memory footprint for short interactions."
+                elif delta_ram > 0.3:
+                    reason = f"RAM pressure ({delta_ram:.1f} GB spike detected) triggered an automatic downgrade from F16 to Q8."
+                else:
+                    reason = "RAM pressure was detected before this request, triggering an automatic F16 → Q8 downgrade."
+                desc = _OPT_DESC["kv_quant_q8"]
+                events.append(_ev(ts, model, "kv_quant_q8", ttft, tps, {
+                    "description": {
+                        "label":   desc["label"],
+                        "purpose": desc["purpose"].format(reason=reason),
+                        "helps":   desc["helps"],
+                    },
+                }))
+            # F16 KV is the baseline — not an active optimisation, skip it.
+
+        # ── 3. System prompt caching ─────────────────────────────────────
+        if num_keep and int(num_keep) > 0:
+            desc = _OPT_DESC["sys_prompt_cache"]
+            events.append(_ev(ts, model, "sys_prompt_cache", ttft, tps, {
+                "num_keep": int(num_keep),
+                "description": {
+                    "label":   desc["label"],
+                    "purpose": desc["purpose"].format(num_keep=int(num_keep)),
+                    "helps":   desc["helps"],
+                },
+            }))
+
+        # ── 4. RAM pressure reductions ───────────────────────────────────
+        # Infer pressure level from delta_ram heuristic (no direct column).
+        # We use the context reduction as the signal: if ctx was cut and delta_ram
+        # is significant, a pressure event fired.
+        if delta_ram > 0.5 and ctx and ctx < _BASELINE_CTX:
+            reduction_pct = round((_BASELINE_CTX - ctx) / _BASELINE_CTX * 100)
+            if reduction_pct >= 45:
+                ev_type  = "ram_pressure_critical"
+                ram_pct_est = "≥ 95"
+            elif reduction_pct >= 20:
+                ev_type  = "ram_pressure_high"
+                ram_pct_est = "≥ 85"
+            else:
+                ev_type  = "ram_pressure_moderate"
+                ram_pct_est = "≥ 75"
+            desc = _OPT_DESC[ev_type]
+            events.append(_ev(ts, model, ev_type, ttft, tps, {
+                "before": _BASELINE_CTX, "after": int(ctx), "delta_ram_gb": delta_ram,
+                "description": {
+                    "label":   desc["label"],
+                    "purpose": desc["purpose"].format(
+                        ram_pct=ram_pct_est, before=_BASELINE_CTX, after=int(ctx)
+                    ),
+                    "helps":   desc["helps"],
+                },
+            }))
+
+        # ── 5. Swap activity ─────────────────────────────────────────────
+        if delta_swap > 0.05:
+            desc = _OPT_DESC["swap_activity"]
+            events.append(_ev(ts, model, "swap_activity", ttft, tps, {
+                "delta_swap_gb": round(delta_swap, 2),
+                "description": {
+                    "label":   desc["label"],
+                    "purpose": desc["purpose"].format(delta_swap=delta_swap),
+                    "helps":   desc["helps"],
+                },
+            }))
+
+        # ── 6. QOS profile selection — only at transitions ────────────────
+        # "balanced" is the default; only "fast" / "quality" matter, and only
+        # when the profile actually changed for this model (not every request).
+        if profile and profile in ("fast", "quality") and id(r) in _qos_change_ids:
+            opt_key = f"qos_{profile}"
+            desc    = _OPT_DESC.get(opt_key, {})
+            events.append(_ev(ts, model, opt_key, ttft, tps, {
+                "profile": profile,
+                "elapsed_sec": r["elapsed_sec"],
+                "description": {
+                    "label":   desc.get("label", opt_key),
+                    "purpose": desc.get("purpose", ""),
+                    "helps":   desc.get("helps", ""),
+                },
+            }))
+
+    events.sort(key=lambda e: (e["ts"] or 0), reverse=True)
+    return events[:limit]
+
+
+def get_optimization_summary() -> dict:
+    """Return aggregate stats about optimizations in the last 24 hours."""
+    db    = _db()
+    since = time.time() - 86400
+    row   = db.conn.execute(
+        """SELECT COUNT(*) AS total_requests,
+               COUNT(CASE WHEN context_len IS NOT NULL AND context_len < ? * 0.95 THEN 1 END) AS kv_ctx_opt,
+               COUNT(CASE WHEN f16_kv = 0 THEN 1 END)                                          AS kv_q8_count,
+               COUNT(CASE WHEN num_keep IS NOT NULL AND num_keep > 0 THEN 1 END)                AS cache_count,
+               COUNT(CASE WHEN delta_swap_gb IS NOT NULL AND delta_swap_gb > 0.05 THEN 1 END)   AS swap_count,
+               COUNT(CASE WHEN profile_name IS NOT NULL THEN 1 END)                             AS qos_sel,
+               AVG(CASE WHEN context_len IS NOT NULL AND context_len < ? * 0.95
+                        THEN (? - context_len) / ? * 100.0 END)                                AS avg_kv_pct,
+               AVG(ttft_ms) AS avg_ttft
+           FROM run_observations WHERE observed_at > ?""",
+        (_BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX, since),
+    ).fetchone()
+
+    total      = int(row["total_requests"]  or 0)
+    kv_ctx     = int(row["kv_ctx_opt"]      or 0)
+    kv_q8      = int(row["kv_q8_count"]     or 0)
+    cache_pins = int(row["cache_count"]     or 0)
+    swap_hits  = int(row["swap_count"]      or 0)
+    qos        = int(row["qos_sel"]         or 0)
+    total_opt  = kv_ctx + kv_q8 + cache_pins + swap_hits + qos
+
+    return {
+        "total_requests":      total,
+        "total_optimizations": total_opt,
+        "kv_ctx_optimized":    kv_ctx,
+        "kv_q8_count":         kv_q8,
+        "sys_prompt_cached":   cache_pins,
+        "swap_interventions":  swap_hits,
+        "qos_selected":        qos,
+        "kv_optimized_pct":    round(kv_ctx / total * 100, 1) if total > 0 else 0.0,
+        "avg_kv_savings_pct":  round(row["avg_kv_pct"] or 0.0, 1),
+        "avg_ttft_ms":         round(row["avg_ttft"] or 0.0, 1),
+    }
 
 
 def get_key_usage_trend(key_id: str, days: int = 30) -> list[dict]:

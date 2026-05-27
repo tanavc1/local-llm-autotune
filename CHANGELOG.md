@@ -7,6 +7,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.5.0] — 2026-05-27
+
+### Added
+
+- **Settings tab in the dashboard** — live read/write panel for all 6 configurable keys:
+  - `max_context_tokens` (512–131 072): global context window ceiling
+  - `kv_cache_quant` (`f16` / `q8` / `q4`): KV precision override
+  - `keep_alive_secs` (0–86 400): model resident-memory duration
+  - `telemetry_enabled` (`true`/`false`): opt-in anonymous telemetry
+  - `retention_days` (7–3 650): local run-observation history window
+  - `log_slow_threshold_ms` (100–60 000): slow-request alerting threshold
+  - Batch-save with a single POST; individual updates reject unknown keys
+  - Cleanup endpoint to prune observations older than `retention_days`
+- **Production-grade SQLite hardening** — new columns in `run_observations`: `backend`, `request_id`, `conversation_id`, `stress_retry`, `thinking_tokens`, `error_code`; new columns in `hardware_profiles`: `metal_gpu_cores`, `cpu_freq_mhz`, `storage_type`; new columns in `models`: `ollama_tag`, `tier`, `is_local`; three new partial indexes (`idx_runs_backend`, `idx_runs_request_id`, `idx_runs_model_time`); all additions applied safely via `_migrate()` and idempotent on existing databases
+- **Comprehensive test suite** — 1 186 tests total (146 new this release): `test_db_settings.py` (67 tests covering all 6 settings defaults, CRUD, migration idempotency, schema completeness, thread-safety) and `test_dashboard_settings.py` (79 tests covering all boundary values, API auth, whitelist enforcement, rate-limiter isolation)
+
+### Fixed
+
+- `ThinkingStreamFilter` assertion in integration tests — now skips gracefully when a model returns only reasoning tokens with no answer text
+
+---
+
+## [1.4.0] — 2026-05-27
+
+### Added
+
+- **Dashboard authentication** — session cookie login via `AUTOTUNE_ADMIN_KEY`; `itsdangerous` HMAC-signed tokens; revoked-session table backed by SQLite; configurable session TTL; `POST /api/dashboard/logout` invalidation endpoint
+- **API key management UI** — create, list, and revoke `sk-at-*` keys directly from the dashboard without curl; proxied through `/api/dashboard/keys/*` so the admin key never leaves the server
+- **Security hardening** — HTTP security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options); sliding-window rate limiters (write: 30/h, read: 300/min, refresh: 60/min); `_WRITABLE_SETTINGS` whitelist blocks arbitrary key injection
+- **Auto-refreshing model catalog** — 43-model registry with HuggingFace + Ollama metadata; `autotune models --registry` shows tier, parameter count, and recommended hardware; catalog updates automatically in the background; dashboard "Model Catalog" panel lists all known models with fit scores for the current hardware
+
+---
+
 ## [1.3.0] — 2026-05-24
 
 ### Added
@@ -309,6 +342,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+[1.5.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/tanavc1/local-llm-autotune/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tanavc1/local-llm-autotune/compare/v1.1.2...v1.2.0

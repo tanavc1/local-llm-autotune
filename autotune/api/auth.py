@@ -118,7 +118,14 @@ def verify_api_key_sync(raw_key: str) -> Optional[dict[str, Any]]:
     if key_hash in _key_cache:
         r = _key_cache[key_hash]
         # Sentinel: id=None means the key was looked up before and not found
-        return None if r.get("id") is None else r
+        if r.get("id") is None:
+            return None
+        # Check expiry even on cached records (cache doesn't expire automatically)
+        expires_at = r.get("expires_at")
+        if expires_at and time.time() > expires_at:
+            _cache_invalidate(key_hash)
+            return {**r, "is_active": False, "_reason": "expired"}
+        return r
 
     # Slow path: SQLite
     try:
@@ -134,6 +141,12 @@ def verify_api_key_sync(raw_key: str) -> Optional[dict[str, Any]]:
         return None
 
     _cache_put(key_hash, record)
+
+    # Check expiry before returning
+    expires_at = record.get("expires_at")
+    if expires_at and time.time() > expires_at:
+        return {**record, "is_active": False, "_reason": "expired"}
+
     return record
 
 

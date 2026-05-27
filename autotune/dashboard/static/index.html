@@ -199,6 +199,21 @@
     .chart-body { padding: 16px; }
     .chart-wrap { position: relative; height: 210px; }
 
+    .charts-expand-bar {
+      display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
+    }
+    .charts-expand-btn {
+      padding: 5px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all .15s;
+    }
+    .charts-expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .charts-expand-btn.open { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,.08); }
+    .charts-extra { display: none; margin-top: 14px; }
+    .charts-extra.open { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media(max-width:900px) { .charts-extra.open { grid-template-columns: 1fr; } }
+    .chart-note { font-size: 10px; color: var(--muted); padding: 4px 16px 8px; }
+
     /* ── Comparison card ─────────────────────────────────────────────── */
     .cmp-grid {
       display: grid;
@@ -557,6 +572,129 @@
     .feasibility-bar.blocked { color: var(--red);    background: rgba(248,81,73,.06); }
     .feasibility-bar .feas-stats { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
+    /* ── Conversation groups (search grouping) ──────────────────────── */
+    .conv-group {
+      border-bottom: 1px solid var(--border);
+    }
+    .conv-group-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 18px; cursor: pointer;
+      background: var(--surface2);
+      user-select: none;
+      transition: background .12s;
+    }
+    .conv-group-header:hover { background: rgba(88,166,255,.06); }
+    .conv-group-chevron { font-size: 10px; color: var(--muted); transition: transform .15s; }
+    .conv-group.open .conv-group-chevron { transform: rotate(90deg); }
+    .conv-group-name { font-size: 12px; font-weight: 600; color: var(--text); font-family: 'SF Mono','Fira Code',monospace; }
+    .conv-group-count { font-size: 11px; color: var(--muted); margin-left: auto; }
+    .conv-group-body { display: none; }
+    .conv-group.open .conv-group-body { display: block; }
+
+    /* Date bucket headers (when not searching) */
+    .conv-date-header {
+      padding: 6px 18px 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: .7px;
+      color: var(--muted); text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    /* ── Settings tab ────────────────────────────────────────────────── */
+    .settings-section { margin-bottom: 24px; }
+    .settings-section-title {
+      font-size: 11px; font-weight: 700; letter-spacing: .8px;
+      text-transform: uppercase; color: var(--muted);
+      margin: 0 0 12px; padding: 0 0 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-row {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 20px; padding: 14px 0;
+      border-bottom: 1px solid rgba(48,54,61,.5);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-row-left { flex: 1; min-width: 0; }
+    .settings-label { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+    .settings-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .settings-right { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+
+    /* Toggle switch */
+    .toggle-wrap { display: flex; align-items: center; gap: 8px; }
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 22px; transition: .2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      height: 16px; width: 16px; left: 2px; bottom: 2px;
+      background: var(--muted); border-radius: 50%; transition: .2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); background: #0d1117; }
+    .toggle-label { font-size: 12px; color: var(--muted); }
+
+    /* Settings text input */
+    .settings-input {
+      padding: 7px 10px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 13px;
+      outline: none; transition: border-color .15s;
+      min-width: 200px; max-width: 300px;
+    }
+    .settings-input:focus { border-color: var(--accent); }
+    .settings-input::placeholder { color: var(--muted); }
+    .settings-input:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Settings select */
+    .settings-select {
+      padding: 7px 28px 7px 10px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 13px;
+      outline: none; cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b949e'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center;
+      transition: border-color .15s;
+    }
+    .settings-select:focus { border-color: var(--accent); }
+
+    /* Settings save button */
+    .settings-save-btn {
+      padding: 7px 16px; background: var(--accent); color: #0d1117;
+      border: none; border-radius: 6px; font-weight: 700; font-size: 13px;
+      cursor: pointer; transition: opacity .15s;
+    }
+    .settings-save-btn:hover { opacity: .85; }
+    .settings-save-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Readonly badge */
+    .settings-readonly {
+      font-size: 11px; font-weight: 600; padding: 2px 8px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--muted);
+    }
+    .settings-env-val {
+      font-family: 'SF Mono','Fira Code',monospace;
+      font-size: 12px; color: var(--text);
+      background: var(--surface2); padding: 4px 10px;
+      border-radius: 6px; border: 1px solid var(--border);
+    }
+    .settings-status-ok   { color: var(--green); font-size: 12px; font-weight: 600; }
+    .settings-status-warn { color: var(--yellow); font-size: 12px; font-weight: 600; }
+
+    /* DB stats row */
+    .db-stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px; margin-top: 12px;
+    }
+    .db-stat-card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px;
+    }
+    .db-stat-val { font-size: 20px; font-weight: 700; color: var(--text); }
+    .db-stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
     /* ── Conversations / Sessions ────────────────────────────────────── */
     .conv-session {
       border-bottom: 1px solid var(--border); cursor: pointer;
@@ -682,6 +820,76 @@
       font-weight: 700; background: rgba(63,185,80,.2); color: var(--green);
       border: 1px solid rgba(63,185,80,.3); vertical-align: middle; margin-left: 4px;
     }
+    /* ── Recommended For You cards ──────────────────────────── */
+    .tier-chip.rec { border-color: var(--purple); color: var(--purple); }
+    .tier-chip.rec.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+    .rec-hw-banner {
+      padding: 10px 18px; background: rgba(88,166,255,.05); border-bottom: 1px solid var(--border);
+      font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .rec-hw-chip {
+      background: rgba(188,140,255,.15); color: var(--purple); padding: 2px 9px;
+      border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap;
+    }
+    .rec-cards-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 18px;
+    }
+    @media(max-width:860px) { .rec-cards-grid { grid-template-columns: 1fr; } }
+    .rec-mode-card {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .rec-mode-card.fastest      { border-top: 3px solid var(--green); }
+    .rec-mode-card.balanced     { border-top: 3px solid var(--accent); }
+    .rec-mode-card.best_quality { border-top: 3px solid var(--purple); }
+    .rec-mode-header { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+    .rec-mode-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .9px;
+    }
+    .rec-mode-card.fastest      .rec-mode-label { color: var(--green); }
+    .rec-mode-card.balanced     .rec-mode-label { color: var(--accent); }
+    .rec-mode-card.best_quality .rec-mode-label { color: var(--purple); }
+    .rec-model-name { font-size: 15px; font-weight: 700; color: var(--text); margin-top: 4px; }
+    .rec-model-sub  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .rec-body { padding: 12px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .rec-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .rec-stat-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rec-stat {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 9px; font-size: 11px; color: var(--muted);
+    }
+    .rec-stat b { color: var(--text); font-weight: 600; }
+    .rec-bench-section { display: flex; flex-direction: column; gap: 5px; }
+    .rec-bench-label-row { font-size: 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+    .rec-bench-item { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+    .rec-bench-name { color: var(--muted); width: 72px; flex-shrink: 0; }
+    .rec-bench-bar  { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
+    .rec-bench-fill { height: 100%; border-radius: 2px; }
+    .rec-bench-val  { color: var(--text); font-weight: 600; width: 34px; text-align: right; flex-shrink: 0; }
+    .rec-rationale  { font-size: 11px; color: var(--muted); line-height: 1.5; flex: 1; }
+    .rec-pull-cmd {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 10px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px;
+      color: var(--green); cursor: pointer; user-select: all; overflow: hidden;
+      white-space: nowrap; text-overflow: ellipsis; transition: background .15s;
+      position: relative;
+    }
+    .rec-pull-cmd:hover { background: rgba(63,185,80,.08); border-color: rgba(63,185,80,.4); }
+    .rec-alts { padding: 0 14px 12px; border-top: 1px solid var(--border); }
+    .rec-alts-label { font-size: 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 8px 0 4px; }
+    .rec-alt-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 0; font-size: 11px; border-top: 1px solid var(--border);
+    }
+    .rec-alt-name { color: var(--text); font-weight: 500; }
+    .rec-alt-meta { color: var(--muted); }
+    .rec-loading { padding: 40px 18px; text-align: center; color: var(--muted); font-size: 13px; }
+    .rec-error   { padding: 16px 18px; color: var(--yellow); font-size: 12px; }
+    .rec-score-badge {
+      display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px;
+      font-weight: 700; background: rgba(63,185,80,.12); color: var(--green); margin-left: 6px;
+    }
+
     .catalog-footer {
       padding: 8px 18px; font-size: 11px; color: var(--muted);
       border-top: 1px solid var(--border);
@@ -712,6 +920,209 @@
       display: flex; align-items: center; gap: 10px;
     }
     .key-chart-canvas-wrap { position: relative; height: 140px; }
+
+    /* ── Optimization feed ──────────────────────────────────────────── */
+    /* ── Optimizations panel ─────────────────────────────────────────── */
+    .opt-card-accent { border-top: 2px solid var(--accent); }
+    .opt-summary {
+      display: flex; gap: 0; flex-wrap: wrap;
+      padding: 0; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .opt-kpi {
+      display: flex; flex-direction: column; gap: 3px;
+      padding: 14px 20px; border-right: 1px solid var(--border);
+      flex: 1; min-width: 110px;
+    }
+    .opt-kpi:last-child { border-right: none; }
+    .opt-kpi-val { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; font-variant-numeric: tabular-nums; }
+    .opt-kpi-val.c-green  { color: var(--green); }
+    .opt-kpi-val.c-blue   { color: var(--accent); }
+    .opt-kpi-val.c-purple { color: var(--purple); }
+    .opt-kpi-val.c-yellow { color: var(--yellow); }
+    .opt-kpi-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
+    .opt-event {
+      border-bottom: 1px solid rgba(48,54,61,.5);
+      cursor: pointer;
+      transition: background .1s;
+    }
+    .opt-event:last-child { border-bottom: none; }
+    .opt-event:hover { background: rgba(88,166,255,.04); }
+    .opt-event-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 18px;
+    }
+    .opt-type-badge {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; padding: 3px 8px; border-radius: 10px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .opt-type-badge.kv      { background: rgba(88,166,255,.15); color: var(--accent);  border: 1px solid rgba(88,166,255,.3); }
+    .opt-type-badge.fast    { background: rgba(63,185,80,.15);  color: var(--green);   border: 1px solid rgba(63,185,80,.3); }
+    .opt-type-badge.quality { background: rgba(210,153,34,.15); color: var(--yellow);  border: 1px solid rgba(210,153,34,.3); }
+    .opt-type-badge.warn    { background: rgba(248,81,73,.15);  color: var(--red);     border: 1px solid rgba(248,81,73,.3); }
+    .opt-model { font-size: 12px; font-family: 'SF Mono','Fira Code',monospace; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* Impact pill — the key number shown inline in the row */
+    .opt-impact {
+      font-size: 12px; font-weight: 700; white-space: nowrap; padding: 2px 9px;
+      border-radius: 99px; background: var(--surface2); color: var(--text);
+      font-variant-numeric: tabular-nums; border: 1px solid var(--border);
+    }
+    .opt-impact.positive { color: var(--green);  background: rgba(63,185,80,.1);  border-color: rgba(63,185,80,.25); }
+    .opt-impact.warning  { color: var(--yellow); background: rgba(210,153,34,.1); border-color: rgba(210,153,34,.25); }
+    .opt-impact.critical { color: var(--red);    background: rgba(248,81,73,.1);  border-color: rgba(248,81,73,.25); }
+    .opt-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .opt-chevron { font-size: 10px; color: var(--muted); transition: transform .15s; flex-shrink: 0; }
+    .opt-event.open .opt-chevron { transform: rotate(90deg); color: var(--accent); }
+
+    .opt-detail {
+      display: none;
+      padding: 2px 18px 16px 42px;
+      border-top: 1px solid rgba(48,54,61,.5);
+      background: rgba(88,166,255,.025);
+    }
+    .opt-event.open .opt-detail { display: block; }
+    .opt-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+    @media (max-width: 700px) { .opt-detail-grid { grid-template-columns: 1fr; } }
+    .opt-detail-block { }
+    .opt-detail-heading {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--accent); margin-bottom: 5px;
+    }
+    .opt-detail-text { font-size: 12px; color: var(--text); line-height: 1.65; }
+    .opt-detail-metric { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .opt-detail-metric strong { color: var(--green); font-size: 13px; }
+
+    /* ── Top-level tabs ─────────────────────────────────────────────── */
+    .tab-nav {
+      display: flex; gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin: 0 0 24px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tab-nav::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      padding: 10px 18px; font-size: 13px; font-weight: 500;
+      color: var(--muted); background: none;
+      border: none; border-bottom: 2px solid transparent;
+      cursor: pointer; white-space: nowrap;
+      transition: color .15s, border-color .15s;
+      margin-bottom: -1px; outline: none;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* ── Security tab ────────────────────────────────────────────────── */
+    #sec-tab-btn { position: relative; }
+    .sec-score-banner {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 20px 24px; margin-bottom: 24px;
+      display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+    }
+    .sec-grade-circle {
+      width: 76px; height: 76px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 34px; font-weight: 800; border: 3px solid;
+    }
+    .sec-grade-loading { border-color: var(--border); color: var(--muted); background: transparent; }
+    .sec-grade-Aplus { border-color: #f59e0b; color: #f59e0b; background: rgba(245,158,11,.09); box-shadow: 0 0 18px rgba(245,158,11,.18); }
+    .sec-grade-A { border-color: var(--green); color: var(--green); background: rgba(34,197,94,.09); }
+    .sec-grade-B { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,.09); }
+    .sec-grade-C { border-color: var(--yellow); color: var(--yellow); background: rgba(234,179,8,.09); }
+    .sec-grade-D, .sec-grade-F { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.09); }
+    /* Gateway status bar */
+    .sec-gateway-bar { display: flex; align-items: center; gap: 12px; padding: 11px 16px;
+      border-radius: 8px; border: 1px solid var(--border); margin-bottom: 18px;
+      background: var(--card); }
+    .sec-gw-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--muted); transition: background .3s; }
+    .sec-gw-dot.active { background: var(--green); box-shadow: 0 0 0 3px rgba(34,197,94,.2); animation: blink 2s infinite; }
+    .sec-gw-dot.idle { background: var(--yellow); }
+    .sec-gw-dot.offline { background: var(--red); }
+    .sec-gw-info { flex: 1; min-width: 0; }
+    .sec-gw-primary { font-size: 13px; font-weight: 500; color: var(--text); }
+    .sec-gw-secondary { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .sec-gw-auth { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+      border: 1px solid currentColor; white-space: nowrap; flex-shrink: 0; }
+    .sec-gw-auth.enforced { color: var(--green); }
+    .sec-gw-auth.open { color: var(--yellow); }
+    .sec-score-info { flex: 0 0 auto; min-width: 140px; }
+    .sec-score-lbl  { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+    .sec-score-frac { font-size: 30px; font-weight: 700; line-height: 1; }
+    .sec-score-sub  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .sec-score-bar-wrap { height: 5px; background: var(--border); border-radius: 3px; margin-top: 10px; width: 120px; }
+    .sec-score-bar  { height: 100%; border-radius: 3px; transition: width .5s ease; }
+    .sec-protections-col { flex: 1; }
+    .sec-prot-lbl   { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+    .sec-badges-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sec-prot-badge {
+      padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 500;
+      background: rgba(34,197,94,.1); color: var(--green);
+      border: 1px solid rgba(34,197,94,.25); white-space: nowrap;
+    }
+    .sec-prot-badge.off {
+      background: rgba(239,68,68,.09); color: var(--red);
+      border-color: rgba(239,68,68,.25);
+    }
+    /* posture grid */
+    .sec-posture-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 10px; margin-bottom: 4px;
+    }
+    .sec-posture-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 13px 15px; display: flex; align-items: flex-start; gap: 11px;
+      border-left: 3px solid transparent;
+    }
+    .sec-posture-card.ok    { border-left-color: var(--green); }
+    .sec-posture-card.warn  { border-left-color: var(--yellow); }
+    .sec-posture-card.error { border-left-color: var(--red); }
+    .sec-posture-card.info  { border-left-color: var(--accent); }
+    .sec-posture-icon { font-size: 17px; flex-shrink: 0; line-height: 1.3; }
+    .sec-posture-name { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+    .sec-posture-msg  { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+    .sec-posture-act  {
+      margin-top: 6px; font-size: 10.5px; font-family: monospace;
+      background: rgba(99,102,241,.08); color: var(--accent);
+      padding: 2px 7px; border-radius: 4px; display: inline-block;
+      word-break: break-all;
+    }
+    /* 24h stat row — reuse existing .kpi classes, just add sub-labels */
+    .kpi-sub-label { font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+    /* event log */
+    .sec-log-controls { display: flex; gap: 8px; align-items: center; }
+    .sec-filter-select {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 5px 10px;
+      font-size: 12px; cursor: pointer; outline: none;
+    }
+    .sec-filter-select:focus { border-color: var(--accent); }
+    .sec-event-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .sec-event-tbl th {
+      padding: 8px 14px; text-align: left; font-size: 10.5px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1px solid var(--border);
+    }
+    .sec-event-tbl td { padding: 7px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .sec-event-tbl tr:last-child td { border-bottom: none; }
+    .sec-event-tbl tr:hover td { background: rgba(255,255,255,.02); }
+    .sec-evt-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 20px;
+      font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    }
+    .sec-evt-warn    { background: rgba(239,68,68,.12); color: var(--red); }
+    .sec-evt-info    { background: rgba(99,102,241,.12); color: var(--accent); }
+    .sec-evt-ok      { background: rgba(34,197,94,.12); color: var(--green); }
+    .sec-evt-neutral { background: rgba(148,163,184,.1); color: var(--muted); }
+    .sec-evt-time    { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11px; }
+    .sec-evt-ip      { font-family: monospace; font-size: 11px; color: var(--muted); }
+    .sec-evt-detail  { color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    .sec-live-dot    { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); margin-right: 5px; animation: pulse 2s infinite; }
+    .sec-refresh-note { font-size: 11px; color: var(--muted); }
+    .sec-empty-log { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 13px; }
   </style>
 </head>
 <body>
@@ -744,6 +1155,18 @@
 
 <!-- ─────────────────── MAIN ─────────────────── -->
 <main class="main">
+
+  <nav class="tab-nav" id="main-tab-nav">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="performance">Performance</button>
+    <button class="tab-btn" data-tab="models">Models</button>
+    <button class="tab-btn" data-tab="keys">Keys</button>
+    <button class="tab-btn" data-tab="conversations">Conversations</button>
+    <button class="tab-btn" data-tab="security" id="sec-tab-btn">Security</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <div id="tab-overview" class="tab-pane active">
 
   <!-- KPI row -->
   <div class="section-label">System Overview</div>
@@ -833,25 +1256,43 @@
           </tbody>
         </table>
       </div>
+      <div id="feed-more-wrap" style="display:none;padding:10px 18px;border-top:1px solid var(--border);">
+        <button class="btn-ghost" id="feed-show-more">Show more &darr;</button>
+      </div>
     </div>
 
   </div>
 
-  <!-- Gateway Health -->
-  <div class="section-label">Gateway Health</div>
-  <div class="card">
+  <!-- Optimizations -->
+  <div class="section-label">Optimizations</div>
+  <div class="card opt-card-accent">
     <div class="card-header">
       <div>
-        <div class="card-title">Security &amp; Health Checks</div>
-        <div class="card-subtitle">Refreshes every 10 s</div>
+        <div class="card-title">What autotune did &amp; why</div>
+        <div class="card-subtitle">Real decisions per request — KV context, quantization, RAM relief, QOS. Click any row to expand.</div>
       </div>
-      <div class="card-badge" id="security-badge">—</div>
+      <div class="card-badge" id="opt-badge">—</div>
     </div>
-    <div id="security-list"><div class="empty">Loading…</div></div>
+    <div class="opt-summary">
+      <div class="opt-kpi"><div class="opt-kpi-val c-blue" id="opt-total">—</div><div class="opt-kpi-lbl">Optimizations (24h)</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val c-green" id="opt-kv-pct">—</div><div class="opt-kpi-lbl">KV context hits</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val c-green" id="opt-kv-savings">—</div><div class="opt-kpi-lbl">Avg KV saved</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val c-purple" id="opt-cache-count">—</div><div class="opt-kpi-lbl">Prompt cache pins</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val c-yellow" id="opt-qos-count">—</div><div class="opt-kpi-lbl">Fast/quality profiles</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val" id="opt-avg-ttft">—</div><div class="opt-kpi-lbl">Avg TTFT (24h)</div></div>
+    </div>
+    <div id="opt-feed"><div class="empty" style="padding:16px 18px;">Loading…</div></div>
   </div>
 
+  </div><!-- /tab-overview -->
+
+  <div id="tab-performance" class="tab-pane">
+
   <!-- Charts -->
-  <div class="section-label">Performance Trends</div>
+  <div class="section-label" style="display:flex;align-items:center;justify-content:space-between;">
+    <span>Performance Trends</span>
+    <button class="charts-expand-btn" id="charts-expand-btn">Expand Charts ↓</button>
+  </div>
   <div class="charts-grid">
 
     <div class="card">
@@ -868,10 +1309,57 @@
       <div class="card-header">
         <div>
           <div class="card-title">TTFT Over Time</div>
-          <div class="card-subtitle">Last 100 requests · ms · green &lt;400 ms · blue &lt;1200 ms · yellow &lt;2500 ms · red ≥2500 ms</div>
+          <div class="card-subtitle" id="ttft-subtitle">Last 100 requests · green &lt;400 ms · blue &lt;1200 ms · yellow &lt;2500 ms · red ≥2500 ms</div>
         </div>
       </div>
       <div class="chart-body"><div class="chart-wrap"><canvas id="chart-ttft"></canvas></div></div>
+    </div>
+
+  </div>
+
+  <!-- Expanded charts — RAM, KV cache, TPS -->
+  <div class="charts-extra" id="charts-extra">
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">RAM Usage Over Time</div>
+          <div class="card-subtitle">Peak RAM per request (GB) · high values indicate memory pressure</div>
+        </div>
+      </div>
+      <div class="chart-body"><div class="chart-wrap"><canvas id="chart-ram"></canvas></div></div>
+      <div class="chart-note" id="chart-ram-note"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">KV Cache Size Over Time</div>
+          <div class="card-subtitle">Estimated KV cache per request (GB) · lower = autotune optimization working</div>
+        </div>
+      </div>
+      <div class="chart-body"><div class="chart-wrap"><canvas id="chart-kv"></canvas></div></div>
+      <div class="chart-note" id="chart-kv-note"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Token Throughput (tok/s)</div>
+          <div class="card-subtitle">Generation speed · lower values when multiple models share memory</div>
+        </div>
+      </div>
+      <div class="chart-body"><div class="chart-wrap"><canvas id="chart-tps"></canvas></div></div>
+      <div class="chart-note" id="chart-tps-note"></div>
+    </div>
+
+    <div class="card" style="align-self:start;">
+      <div class="card-header"><div class="card-title">What These Charts Show</div></div>
+      <div style="padding:12px 18px;font-size:12px;color:var(--muted);line-height:1.7;">
+        <div><b style="color:var(--text);">RAM Usage</b> — peak memory consumed per request. Spikes above your system's threshold trigger autotune optimizations.</div>
+        <div style="margin-top:8px;"><b style="color:var(--text);">KV Cache</b> — estimated memory used by the attention cache. autotune's dynamic sizing keeps this proportional to actual prompt length.</div>
+        <div style="margin-top:8px;"><b style="color:var(--text);">Throughput</b> — generation speed in tokens/sec. Drops when multiple models are loaded simultaneously or RAM pressure is high. Data points are <span style="color:var(--yellow);">highlighted</span> when &gt;1 model was loaded concurrently.</div>
+      </div>
     </div>
 
   </div>
@@ -941,6 +1429,42 @@
     </div>
   </div>
 
+  <!-- Slow Requests -->
+  <div class="section-label" style="margin-top:28px">Slow Requests</div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Requests Over 5 s</div>
+        <div class="card-subtitle">High-latency calls — investigate model size, RAM pressure, or context length</div>
+      </div>
+      <div class="card-badge" id="slow-badge">—</div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Elapsed</th>
+            <th>TTFT</th>
+            <th>Context</th>
+            <th>Profile</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="slow-tbody">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="slow-more-wrap" style="display:none;padding:10px 18px;border-top:1px solid var(--border);">
+      <button class="btn-ghost" id="slow-show-more">Show more &darr;</button>
+    </div>
+  </div>
+
+  </div><!-- /tab-performance -->
+
+  <div id="tab-models" class="tab-pane">
+
   <!-- Model Library -->
   <div class="section-label">Model Library</div>
   <div class="card">
@@ -1004,8 +1528,10 @@
       </div>
     </div>
     <div class="catalog-filter-bar" id="catalog-tier-bar">
-      <span style="font-size:11px;color:var(--muted);margin-right:4px;">Tier:</span>
-      <button class="tier-chip active" data-tier="">All</button>
+      <button class="tier-chip rec active" data-tier="recommended">Recommended</button>
+      <span style="width:1px;height:16px;background:var(--border);margin:0 2px;"></span>
+      <span style="font-size:11px;color:var(--muted);margin-right:2px;">Tier:</span>
+      <button class="tier-chip" data-tier="">All</button>
       <button class="tier-chip" data-tier="tiny">Tiny</button>
       <button class="tier-chip" data-tier="small">Small</button>
       <button class="tier-chip" data-tier="medium">Medium</button>
@@ -1016,7 +1542,10 @@
         <span id="catalog-tag-filter" style="cursor:pointer;"></span>
       </span>
     </div>
-    <div class="catalog-tbl-wrap">
+    <div id="catalog-rec-section">
+      <div class="rec-loading">Analyzing your hardware…</div>
+    </div>
+    <div class="catalog-tbl-wrap" id="catalog-tbl-wrap" style="display:none">
       <table class="catalog-tbl">
         <thead>
           <tr>
@@ -1041,69 +1570,48 @@
     </div>
   </div>
 
-  <!-- API keys + slow requests -->
-  <div class="section-label">API Keys &amp; Slow Requests</div>
-  <div class="two-col">
+  </div><!-- /tab-models -->
 
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Active API Keys</div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="card-badge" id="keys-badge">—</div>
-          <button class="btn-add" id="new-key-btn">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2.5" stroke-linecap="round">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New Key
-          </button>
-        </div>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Key Prefix</th>
-              <th>Req Today</th>
-              <th>Tokens Today</th>
-              <th>Last Used</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="keys-tbody">
-            <tr><td colspan="6" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
+  <div id="tab-keys" class="tab-pane">
+
+  <div class="section-label">API Keys</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Active API Keys</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="card-badge" id="keys-badge">—</div>
+        <button class="btn-add" id="new-key-btn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Key
+        </button>
       </div>
     </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Slow Requests <span style="font-weight:400;color:var(--muted);font-size:12px;">&gt; 5 s elapsed</span></div>
-        <div class="card-badge" id="slow-badge">—</div>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Elapsed</th>
-              <th>TTFT</th>
-              <th>Context</th>
-              <th>Profile</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody id="slow-tbody">
-            <tr><td colspan="6" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Key Prefix</th>
+            <th>Req Today</th>
+            <th>Tokens Today</th>
+            <th>Last Used</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="keys-tbody">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
     </div>
-
   </div>
+
+  </div><!-- /tab-keys -->
+
+  <div id="tab-conversations" class="tab-pane">
 
   <!-- Conversations -->
   <div class="section-label">Conversation History</div>
@@ -1129,6 +1637,296 @@
   <div class="suggestions" id="suggestions">
     <div class="empty">Loading…</div>
   </div>
+
+  </div><!-- /tab-conversations -->
+
+  <!-- ═══════════════════════ SETTINGS TAB ════════════════════════════ -->
+  <div id="tab-settings" class="tab-pane">
+
+    <div class="section-label">Settings</div>
+
+    <!-- Data & Privacy -->
+    <div class="card settings-section">
+      <div class="card-header"><div class="card-title">Data &amp; Privacy</div></div>
+      <div style="padding:0 18px 4px;">
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Local Storage</div>
+            <div class="settings-desc">Write performance data and telemetry events to the local SQLite database. Disabling this stops run_observations, telemetry_events, and hardware_profiles from being written. Model catalog data is always stored regardless.</div>
+          </div>
+          <div class="settings-right">
+            <label class="toggle"><input type="checkbox" id="set-local-storage"><span class="toggle-slider"></span></label>
+            <span class="toggle-label" id="set-local-storage-lbl">—</span>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Remote Telemetry</div>
+            <div class="settings-desc">Send anonymised performance metrics to the autotune Supabase project. Data includes: model ID, hardware fingerprint, throughput, TTFT, and context size. No conversation content is ever sent.</div>
+          </div>
+          <div class="settings-right">
+            <label class="toggle"><input type="checkbox" id="set-remote-tel"><span class="toggle-slider"></span></label>
+            <span class="toggle-label" id="set-remote-tel-lbl">—</span>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Data Retention</div>
+            <div class="settings-desc">Days to keep run_observations rows before pruning. Set to 0 to keep forever. Use "Clean Up Now" to immediately remove rows beyond this limit.</div>
+          </div>
+          <div class="settings-right" style="gap:8px;">
+            <input type="number" class="settings-input" id="set-retention-days" min="0" max="3650" style="min-width:90px;max-width:100px;">
+            <span style="font-size:12px;color:var(--muted);">days</span>
+            <button class="settings-save-btn" id="set-retention-save" style="padding:6px 12px;">Save</button>
+            <button class="btn-ghost" id="set-cleanup-now" style="font-size:12px;">Clean Up Now</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Gateway -->
+    <div class="card settings-section">
+      <div class="card-header"><div class="card-title">Gateway</div></div>
+      <div style="padding:0 18px 4px;">
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Default QOS Profile</div>
+            <div class="settings-desc">Profile applied when no X-Autotune-Profile header is present. fast = low latency; balanced = general use; quality = best output.</div>
+          </div>
+          <div class="settings-right">
+            <select class="settings-select" id="set-qos-profile">
+              <option value="fast">Fast</option>
+              <option value="balanced">Balanced</option>
+              <option value="quality">Quality</option>
+            </select>
+            <button class="settings-save-btn" id="set-qos-save" style="padding:6px 12px;">Save</button>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Ollama URL Override</div>
+            <div class="settings-desc">Custom Ollama base URL. Leave blank to use the AUTOTUNE_OLLAMA_URL env var or the default localhost:11434. Takes effect on next server restart.</div>
+          </div>
+          <div class="settings-right">
+            <input type="url" class="settings-input" id="set-ollama-url" placeholder="http://localhost:11434">
+            <button class="settings-save-btn" id="set-ollama-save" style="padding:6px 12px;">Save</button>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Model Catalog Refresh Interval</div>
+            <div class="settings-desc">How often (in hours) the model catalog is automatically refreshed from HuggingFace in the background.</div>
+          </div>
+          <div class="settings-right" style="gap:8px;">
+            <input type="number" class="settings-input" id="set-catalog-refresh" min="1" max="720" style="min-width:90px;max-width:100px;">
+            <span style="font-size:12px;color:var(--muted);">hours</span>
+            <button class="settings-save-btn" id="set-catalog-save" style="padding:6px 12px;">Save</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Security (read-only) -->
+    <div class="card settings-section">
+      <div class="card-header"><div class="card-title">Security — Environment Variables <span class="settings-readonly">read-only</span></div></div>
+      <div style="padding:0 18px 4px;">
+        <div style="padding:10px 0 6px;font-size:12px;color:var(--muted);">These settings are configured via environment variables or the <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:11px;">.env</code> file. Restart the server after changing them.</div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Dashboard Admin Key</div>
+            <div class="settings-desc">AUTOTUNE_ADMIN_KEY — required to log into the dashboard.</div>
+          </div>
+          <div class="settings-right"><span id="set-env-admin-key" class="settings-env-val">—</span></div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">API Key Enforcement</div>
+            <div class="settings-desc">AUTOTUNE_REQUIRE_API_KEY — when on, all /v1/* inference requests require a valid API key.</div>
+          </div>
+          <div class="settings-right"><span id="set-env-api-key-enf" class="settings-env-val">—</span></div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Request Body Limit</div>
+            <div class="settings-desc">AUTOTUNE_MAX_BODY_BYTES — oversized requests are rejected with HTTP 413.</div>
+          </div>
+          <div class="settings-right"><span id="set-env-body-limit" class="settings-env-val">—</span></div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">CORS Extra Origins</div>
+            <div class="settings-desc">AUTOTUNE_CORS_ORIGINS — comma-separated extra allowed origins. Blank = localhost only.</div>
+          </div>
+          <div class="settings-right"><span id="set-env-cors" class="settings-env-val">—</span></div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-left">
+            <div class="settings-label">Supabase Remote Telemetry URL</div>
+            <div class="settings-desc">AUTOTUNE_SUPABASE_URL — custom Supabase project for telemetry. Leave unset to use the built-in autotune project.</div>
+          </div>
+          <div class="settings-right"><span id="set-env-supa" class="settings-env-val">—</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Database Stats -->
+    <div class="card settings-section">
+      <div class="card-header">
+        <div class="card-title">Database</div>
+        <button class="btn-ghost" id="set-db-refresh" style="font-size:12px;">Refresh stats</button>
+      </div>
+      <div style="padding:0 18px 18px;">
+        <div class="db-stats-grid" id="set-db-stats">
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-runs">—</div><div class="db-stat-label">Run observations</div></div>
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-models">—</div><div class="db-stat-label">Model catalog entries</div></div>
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-hw">—</div><div class="db-stat-label">Hardware profiles</div></div>
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-tel">—</div><div class="db-stat-label">Telemetry events</div></div>
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-sec">—</div><div class="db-stat-label">Security events</div></div>
+          <div class="db-stat-card"><div class="db-stat-val" id="db-stat-size">—</div><div class="db-stat-label">DB size</div></div>
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:var(--muted);" id="db-path-display"></div>
+      </div>
+    </div>
+
+  </div><!-- /tab-settings -->
+
+  <!-- ═══════════════════════ SECURITY TAB ═══════════════════════════ -->
+  <div id="tab-security" class="tab-pane">
+
+    <!-- Gateway status bar -->
+    <div class="sec-gateway-bar" id="sec-gateway-bar">
+      <div class="sec-gw-dot" id="sec-gw-dot"></div>
+      <div class="sec-gw-info">
+        <div class="sec-gw-primary" id="sec-gw-primary">Checking gateway…</div>
+        <div class="sec-gw-secondary" id="sec-gw-secondary"></div>
+      </div>
+      <span class="sec-gw-auth" id="sec-gw-auth-badge">—</span>
+    </div>
+
+    <!-- Score banner -->
+    <div class="sec-score-banner">
+      <div class="sec-grade-circle sec-grade-loading" id="sec-grade-circle">—</div>
+
+      <div class="sec-score-info">
+        <div class="sec-score-lbl">Security Score</div>
+        <div class="sec-score-frac">
+          <span id="sec-earned">—</span><span style="color:var(--muted);font-size:20px">/<span id="sec-total">—</span></span>
+        </div>
+        <div class="sec-score-sub" id="sec-grade-label">Loading security posture…</div>
+        <div class="sec-score-bar-wrap">
+          <div class="sec-score-bar" id="sec-score-bar" style="width:0%;background:var(--green)"></div>
+        </div>
+      </div>
+
+      <div class="sec-protections-col">
+        <div class="sec-prot-lbl">Always-on Protections</div>
+        <div class="sec-badges-wrap">
+          <span class="sec-prot-badge">Login Rate Limiting</span>
+          <span class="sec-prot-badge">Body Size Limit</span>
+          <span class="sec-prot-badge">Session Revocation</span>
+          <span class="sec-prot-badge">Audit Log</span>
+          <span class="sec-prot-badge">CORS Locked</span>
+          <span class="sec-prot-badge">Server Header Removed</span>
+          <span class="sec-prot-badge">Cache-Control: no-store</span>
+          <span class="sec-prot-badge">Dashboard Rate Limiting</span>
+          <span class="sec-prot-badge">Permissions-Policy</span>
+          <span class="sec-prot-badge">DB File: 600</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Posture grid -->
+    <div class="section-label">Security Posture</div>
+    <div class="sec-posture-grid" id="sec-posture-grid">
+      <div class="empty" style="padding:20px">Loading…</div>
+    </div>
+
+    <!-- 24h activity stats -->
+    <div class="section-label" style="margin-top:24px">Activity — Last 24 h</div>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Login Failures</div>
+        <div class="kpi-val" id="stat-login-fail" style="color:var(--red)">—</div>
+        <div class="kpi-sub">brute-force attempts</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Invalid Keys</div>
+        <div class="kpi-val" id="stat-key-invalid" style="color:var(--red)">—</div>
+        <div class="kpi-sub">rejected /v1/* calls</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Rate Limit Hits</div>
+        <div class="kpi-val" id="stat-rate-limited" style="color:var(--yellow)">—</div>
+        <div class="kpi-sub">IP lockouts triggered</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Successful Logins</div>
+        <div class="kpi-val" id="stat-login-ok" style="color:var(--green)">—</div>
+        <div class="kpi-sub">dashboard sessions</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Keys Created</div>
+        <div class="kpi-val" id="stat-key-created" style="color:var(--accent)">—</div>
+        <div class="kpi-sub">new API keys issued</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Keys Revoked</div>
+        <div class="kpi-val" id="stat-key-revoked">—</div>
+        <div class="kpi-sub">invalidated</div>
+      </div>
+    </div>
+
+    <!-- Event log -->
+    <div class="section-label" style="margin-top:24px">Security Event Log</div>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">
+            <span class="sec-live-dot"></span>Audit Trail
+          </div>
+          <div class="card-subtitle sec-refresh-note" id="sec-last-refresh">
+            Persisted across restarts · auto-refreshes every 30 s
+          </div>
+        </div>
+        <div class="sec-log-controls">
+          <select class="sec-filter-select" id="sec-event-filter">
+            <option value="">All events</option>
+            <option value="warning">⚠ Warnings only</option>
+            <option value="login_failure">Login failures</option>
+            <option value="login_rate_limited">Rate limited</option>
+            <option value="api_key_invalid">Invalid keys</option>
+            <option value="api_key_revoked_used">Revoked key used</option>
+            <option value="api_key_expired">Expired key used</option>
+            <option value="body_too_large">Oversized requests</option>
+            <option value="dashboard_rate_limited">Dashboard rate limits</option>
+            <option value="login_success">Successful logins</option>
+            <option value="key_created">Key created</option>
+            <option value="key_revoked">Key revoked</option>
+            <option value="session_logout">Logouts</option>
+          </select>
+          <button class="btn-ghost" id="sec-refresh-btn">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="sec-event-log">
+        <div class="sec-empty-log">Loading security events…</div>
+      </div>
+    </div>
+
+  </div><!-- /tab-security -->
 
 </main>
 
@@ -1183,6 +1981,29 @@
 <script>
 (function () {
   'use strict';
+
+  // ── Tab switching ──────────────────────────────────────────────────────
+  function showTab(id) {
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    const pane = document.getElementById('tab-' + id);
+    if (pane) pane.classList.add('active');
+    const btn = document.querySelector('.tab-btn[data-tab="' + id + '"]');
+    if (btn) btn.classList.add('active');
+    try { sessionStorage.setItem('autotune_tab', id); } catch (_) {}
+  }
+
+  document.getElementById('main-tab-nav').addEventListener('click', e => {
+    const btn = e.target.closest('.tab-btn');
+    if (!btn) return;
+    showTab(btn.dataset.tab);
+  });
+
+  // Restore last active tab
+  try {
+    const saved = sessionStorage.getItem('autotune_tab');
+    if (saved) showTab(saved);
+  } catch (_) {}
 
   // ── Chart instances ────────────────────────────────────────────────────
   let reqChart  = null;
@@ -1362,6 +2183,13 @@
     const ptSizes     = values.map(v => v > 0 ? 3 : 0);
     const ctx         = document.getElementById('chart-ttft').getContext('2d');
 
+    // Show concurrent-model note if any request had >1 model loaded
+    const multiModelCount = data.filter(d => (d.concurrent_models || 1) > 1).length;
+    const subtitle = document.getElementById('ttft-subtitle');
+    if (subtitle && multiModelCount > 0) {
+      subtitle.innerHTML = `Last 100 requests · green &lt;400 ms · blue &lt;1200 ms · yellow &lt;2500 ms · red ≥2500 ms &nbsp;<span style="color:var(--yellow);font-weight:600;">${multiModelCount} request${multiModelCount !== 1 ? 's' : ''} had multiple models loaded — TTFT may be elevated</span>`;
+    }
+
     if (ttftChart) {
       ttftChart.data.labels = labels;
       ttftChart.data.datasets[0].data = values;
@@ -1394,7 +2222,11 @@
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: ctx => `${Math.round(ctx.parsed.y)} ms`,
+              label: ctx => {
+                const d = data[ctx.dataIndex];
+                const n = d && d.concurrent_models > 1 ? ` (${d.concurrent_models} models loaded)` : '';
+                return `${Math.round(ctx.parsed.y)} ms TTFT${n}`;
+              },
               title: (items) => {
                 const i = items[0].dataIndex;
                 const d = data[i];
@@ -1407,6 +2239,87 @@
       },
     });
   }
+
+  // ── Expanded performance charts ────────────────────────────────────────
+  let _ramChart = null, _kvChart = null, _tpsChart = null;
+
+  async function loadPerfTrends() {
+    try {
+      const r = await fetch('/api/dashboard/perf-trends');
+      if (!r.ok) return;
+      const d = await r.json();
+      _initRamChart(d.ram || []);
+      _initKvChart(d.kv || []);
+      _initTpsChart(d.tps || []);
+    } catch (_) {}
+  }
+
+  function _initRamChart(series) {
+    const ctx = document.getElementById('chart-ram');
+    if (!ctx) return;
+    const labels = series.map(d => d.t);
+    const vals   = series.map(d => d.v);
+    const note   = document.getElementById('chart-ram-note');
+    if (note && series.length) {
+      const peak = Math.max(...vals).toFixed(1);
+      const avg  = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+      note.textContent = `Peak ${peak} GB · Avg ${avg} GB across ${series.length} requests`;
+    }
+    if (_ramChart) { _ramChart.data.labels = labels; _ramChart.data.datasets[0].data = vals; _ramChart.update('none'); return; }
+    _ramChart = new Chart(ctx.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ data: vals, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.07)', borderWidth: 1.5, pointRadius: 2, fill: true, tension: 0.25 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y.toFixed(2)} GB RAM`, title: i => series[i[0].dataIndex]?.model || '' } } }, scales: { ...SCALE_DEFAULTS, y: { ...SCALE_DEFAULTS.y, ticks: { ...SCALE_DEFAULTS.y.ticks, callback: v => v + ' GB' } } } },
+    });
+  }
+
+  function _initKvChart(series) {
+    const ctx = document.getElementById('chart-kv');
+    if (!ctx) return;
+    const labels = series.map(d => d.t);
+    const vals   = series.map(d => d.v);
+    const note   = document.getElementById('chart-kv-note');
+    if (note && series.length) {
+      const avg_ctx = Math.round(series.reduce((a, d) => a + d.ctx, 0) / series.length).toLocaleString();
+      note.textContent = `Avg context window ${avg_ctx} tokens · lower = more optimization`;
+    }
+    if (_kvChart) { _kvChart.data.labels = labels; _kvChart.data.datasets[0].data = vals; _kvChart.update('none'); return; }
+    _kvChart = new Chart(ctx.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ data: vals, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,.07)', borderWidth: 1.5, pointRadius: 2, fill: true, tension: 0.25 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y.toFixed(2)} GB KV · ${(series[c.dataIndex]?.ctx || 0).toLocaleString()} ctx tokens`, title: i => series[i[0].dataIndex]?.model || '' } } }, scales: { ...SCALE_DEFAULTS, y: { ...SCALE_DEFAULTS.y, ticks: { ...SCALE_DEFAULTS.y.ticks, callback: v => v + ' GB' } } } },
+    });
+  }
+
+  function _initTpsChart(series) {
+    const ctx = document.getElementById('chart-tps');
+    if (!ctx) return;
+    const labels    = series.map(d => d.t);
+    const vals      = series.map(d => d.v);
+    const ptColors  = series.map(d => (d.concurrent || 1) > 1 ? '#d29922' : '#3fb950');
+    const note      = document.getElementById('chart-tps-note');
+    if (note && series.length) {
+      const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+      const multi = series.filter(d => (d.concurrent || 1) > 1).length;
+      note.textContent = `Avg ${avg} tok/s${multi > 0 ? ` · ${multi} requests with multiple models loaded (highlighted)` : ''}`;
+    }
+    if (_tpsChart) { _tpsChart.data.labels = labels; _tpsChart.data.datasets[0].data = vals; _tpsChart.data.datasets[0].pointBackgroundColor = ptColors; _tpsChart.update('none'); return; }
+    _tpsChart = new Chart(ctx.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ data: vals, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.07)', borderWidth: 1.5, pointRadius: 3, pointBackgroundColor: ptColors, fill: true, tension: 0.25 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const d = series[c.dataIndex]; const n = (d?.concurrent||1)>1?` (${d.concurrent} models loaded)`:''; return `${c.parsed.y.toFixed(1)} tok/s${n}`; }, title: i => series[i[0].dataIndex]?.model || '' } } }, scales: SCALE_DEFAULTS },
+    });
+  }
+
+  // Expand/collapse chart panel
+  document.getElementById('charts-expand-btn').addEventListener('click', () => {
+    const extra = document.getElementById('charts-extra');
+    const btn   = document.getElementById('charts-expand-btn');
+    const open  = extra.classList.toggle('open');
+    btn.classList.toggle('open', open);
+    btn.textContent = open ? 'Collapse Charts ↑' : 'Expand Charts ↓';
+    if (open) loadPerfTrends();
+  });
 
   // ── Render functions ───────────────────────────────────────────────────
   function renderOverview(d) {
@@ -1498,6 +2411,12 @@
     return 'kc-' + keyId.replace(/[^a-zA-Z0-9]/g, '_');
   }
 
+  function _keyRowChevron(keyId, open) {
+    const tr = document.querySelector(`.key-row[data-keyid="${CSS.escape(keyId)}"]`);
+    const ic = tr && tr.querySelector('.key-expand-icon');
+    if (ic) ic.textContent = open ? '▾' : '▸';
+  }
+
   async function _toggleKeyChart(keyId, keyName) {
     const expandRow = document.getElementById('kexp-' + _keyChartId(keyId));
     if (!expandRow) return;
@@ -1505,11 +2424,13 @@
     if (_openKeyIds.has(keyId)) {
       _openKeyIds.delete(keyId);
       expandRow.classList.add('hidden');
+      _keyRowChevron(keyId, false);
       return;
     }
 
     _openKeyIds.add(keyId);
     expandRow.classList.remove('hidden');
+    _keyRowChevron(keyId, true);
 
     const canvasId = _keyChartId(keyId);
     const canvas = document.getElementById(canvasId);
@@ -1593,8 +2514,8 @@
       const cid    = _keyChartId(k.id);
       const isOpen = _openKeyIds.has(k.id);
       return `
-        <tr class="key-row" data-keyid="${esc(k.id)}" data-keyname="${esc(k.name)}" title="Click to view 30-day usage chart">
-          <td>${esc(k.name)}</td>
+        <tr class="key-row" data-keyid="${esc(k.id)}" data-keyname="${esc(k.name)}" title="Click to expand 30-day usage chart">
+          <td><span class="key-expand-icon" style="color:var(--muted);margin-right:6px;font-size:10px;">${isOpen ? '▾' : '▸'}</span>${esc(k.name)}</td>
           <td><span class="mono">${esc(k.key_prefix)}…</span></td>
           <td>${k.requests_today}</td>
           <td>${fmtTokens(k.tokens_today)}</td>
@@ -1631,14 +2552,50 @@
     });
   }
 
-  function renderSlow(requests) {
-    document.getElementById('slow-badge').textContent = requests.length + (requests.length === 1 ? ' request' : ' requests');
-    const tbody = document.getElementById('slow-tbody');
-    if (!requests.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No slow requests — everything is running fast.</td></tr>';
-      return;
+  const _FEED_INITIAL = 8;
+  let _feedAll = false;
+  let _feedData = [];
+
+  function _renderFeedTable() {
+    const tbody   = document.getElementById('activity-tbody');
+    const moreWrap = document.getElementById('feed-more-wrap');
+    const moreBtn  = document.getElementById('feed-show-more');
+    if (!tbody) return;
+    const visible = _feedAll ? _feedData : _feedData.slice(0, _FEED_INITIAL);
+    tbody.innerHTML = visible.map(r => `
+      <tr>
+        <td><span class="mono">${esc(r.model)}</span></td>
+        <td class="${latClass(r.ttft_ms)}">${fmtMs(r.ttft_ms)}</td>
+        <td class="dim">${r.elapsed_sec > 0 ? r.elapsed_sec.toFixed(2) + ' s' : '—'}</td>
+        <td>${fmtTokens(r.total_tokens)}</td>
+        <td>${r.profile ? `<span class="pill ${esc(r.profile)}">${esc(r.profile)}</span>` : '<span class="dim">—</span>'}</td>
+        <td class="dim" style="font-size:11px;">${fmtDateShort(r.ts)}</td>
+      </tr>
+    `).join('');
+    if (moreWrap) {
+      if (_feedData.length <= _FEED_INITIAL) {
+        moreWrap.style.display = 'none';
+      } else {
+        moreWrap.style.display = '';
+        if (moreBtn) moreBtn.textContent = _feedAll
+          ? 'Show less ↑'
+          : `Show ${_feedData.length - _FEED_INITIAL} more ↓`;
+      }
     }
-    tbody.innerHTML = requests.map(r => `
+  }
+
+  const _SLOW_INITIAL = 8;
+  let _slowAll = false;
+  let _slowData = [];
+
+  function _renderSlowTable() {
+    const tbody = document.getElementById('slow-tbody');
+    const moreWrap = document.getElementById('slow-more-wrap');
+    const moreBtn  = document.getElementById('slow-show-more');
+    if (!tbody) return;
+    const visible = _slowAll ? _slowData : _slowData.slice(0, _SLOW_INITIAL);
+    const remaining = _slowData.length - visible.length;
+    tbody.innerHTML = visible.map(r => `
       <tr>
         <td><span class="mono">${esc(r.model_id)}</span></td>
         <td class="c-yellow">${r.elapsed_sec.toFixed(2)} s</td>
@@ -1648,6 +2605,37 @@
         <td class="dim" style="font-size:11px;">${fmtDateShort(r.observed_at_ts)}</td>
       </tr>
     `).join('');
+    if (moreWrap) {
+      if (remaining > 0) {
+        moreWrap.style.display = '';
+        if (moreBtn) moreBtn.textContent = `Show ${remaining} more ↓`;
+      } else if (_slowAll && _slowData.length > _SLOW_INITIAL) {
+        moreWrap.style.display = '';
+        if (moreBtn) { moreBtn.textContent = 'Show less ↑'; }
+      } else {
+        moreWrap.style.display = 'none';
+      }
+    }
+  }
+
+  function renderSlow(requests) {
+    const badge = document.getElementById('slow-badge');
+    if (badge) badge.textContent = requests.length + (requests.length === 1 ? ' request' : ' requests');
+    const tbody = document.getElementById('slow-tbody');
+    if (!tbody) return;
+    _slowData = requests;
+    if (!requests.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No slow requests — everything is running fast.</td></tr>';
+      const mw = document.getElementById('slow-more-wrap');
+      if (mw) mw.style.display = 'none';
+      return;
+    }
+    _renderSlowTable();
+    const btn = document.getElementById('slow-show-more');
+    if (btn) btn.onclick = () => {
+      _slowAll = !_slowAll;
+      _renderSlowTable();
+    };
   }
 
   const ICONS     = { ok: '✅', warning: '⚠️', error: '🚨', info: 'ℹ️' };
@@ -1670,6 +2658,7 @@
   function renderSecurity(checks) {
     const list   = document.getElementById('security-list');
     const badge  = document.getElementById('security-badge');
+    if (!list) return;  // Gateway Health panel removed from Overview
     if (!checks || !checks.length) {
       list.innerHTML = '<div class="empty">No checks returned.</div>';
       return;
@@ -1698,6 +2687,228 @@
     `).join('');
   }
 
+  // ── Security tab ────────────────────────────────────────────────────
+
+  const SEC_STATUS_ICON = { ok: '✅', warn: '⚠️', error: '❌', info: 'ℹ️' };
+  const SEC_BADGE_CLASS = {
+    login_failure: 'sec-evt-warn', login_rate_limited: 'sec-evt-warn',
+    api_key_invalid: 'sec-evt-warn', api_key_revoked_used: 'sec-evt-warn',
+    api_key_expired: 'sec-evt-warn', body_too_large: 'sec-evt-warn',
+    dashboard_rate_limited: 'sec-evt-warn', cors_rejected: 'sec-evt-warn',
+    login_success: 'sec-evt-ok', key_created: 'sec-evt-info',
+    key_revoked: 'sec-evt-neutral', session_logout: 'sec-evt-neutral',
+  };
+
+  let _secData = null;  // cached last fetch
+
+  function renderSecurityTab(data) {
+    if (!data) return;
+    _secData = data;
+
+    // Backward-compat: old server returns only {checks:[...]} without score/posture/gateway.
+    // Compute everything client-side so the tab works even before a server restart.
+    if (!data.score && Array.isArray(data.checks)) {
+      const posture = data.checks.filter(c => (c.category || 'security') === 'security');
+      const earned  = posture.filter(c => c.status === 'ok' || c.status === 'info').length;
+      const total   = posture.length;
+      const pct     = total > 0 ? earned / total * 100 : 100;
+      const grade   = pct === 100 ? 'A+' : pct >= 90 ? 'A' : pct >= 75 ? 'B' : pct >= 60 ? 'C' : pct >= 40 ? 'D' : 'F';
+      data.score   = { earned, total, pct: Math.round(pct * 10) / 10, grade };
+      data.posture = posture;
+    }
+    // Backward-compat gateway: synthesize from running model names if needed
+    if (!data.gateway) {
+      data.gateway = {
+        model_count: _runningModelNames.length,
+        running_models: _runningModelNames.map(n => ({ name: n, backend: 'unknown' })),
+        api_key_enforcement: false,
+      };
+    }
+
+    _renderGatewayStatus(data.gateway);
+    _renderSecurityScore(data.score, data.posture);
+    _renderSecurityPosture(data.posture || data.checks || []);
+    _renderSecurityStats(data.stats_24h || {});
+    _renderSecurityEvents(data.events || []);
+    document.getElementById('sec-last-refresh').textContent =
+      'Last refreshed ' + fmtTime(Date.now() / 1000) + ' · auto-refreshes every 30 s';
+  }
+
+  function _renderGatewayStatus(gateway) {
+    const dot      = document.getElementById('sec-gw-dot');
+    const primary  = document.getElementById('sec-gw-primary');
+    const secondary = document.getElementById('sec-gw-secondary');
+    const authBadge = document.getElementById('sec-gw-auth-badge');
+    if (!gateway) {
+      primary.textContent = 'Gateway status unavailable';
+      return;
+    }
+    const n = gateway.model_count || 0;
+    const models = gateway.running_models || [];
+
+    if (n === 0) {
+      dot.className = 'sec-gw-dot idle';
+      primary.textContent = 'No models loaded — gateway is secure but not serving inference';
+      secondary.textContent = 'Load a model via Ollama or MLX to start accepting requests.';
+    } else {
+      dot.className = 'sec-gw-dot active';
+      const names = models.map(m => m.name).join(', ');
+      primary.textContent = `${n} model${n !== 1 ? 's' : ''} active — gateway serving requests`;
+      secondary.textContent = names;
+    }
+
+    if (gateway.api_key_enforcement) {
+      authBadge.textContent = 'Auth enforced';
+      authBadge.className = 'sec-gw-auth enforced';
+    } else {
+      authBadge.textContent = 'Auth open';
+      authBadge.className = 'sec-gw-auth open';
+    }
+  }
+
+  function _renderSecurityScore(score, posture) {
+    if (!score) return;
+    const grade = score.grade || '—';
+    const pct   = score.pct   ?? 0;
+    const circle = document.getElementById('sec-grade-circle');
+    circle.textContent = grade;
+    circle.className = 'sec-grade-circle sec-grade-' + grade.replace('+', 'plus');
+    document.getElementById('sec-earned').textContent = score.earned ?? '—';
+    document.getElementById('sec-total').textContent  = score.total  ?? '—';
+    const bar = document.getElementById('sec-score-bar');
+    bar.style.width = pct + '%';
+    bar.style.background =
+      pct === 100 ? '#f59e0b' :
+      pct >= 90 ? 'var(--green)' : pct >= 75 ? 'var(--accent)' :
+      pct >= 60 ? 'var(--yellow)' : 'var(--red)';
+
+    const labels = {
+      'A+': 'Perfect score — maximum security posture',
+      'A':  'Excellent — all critical protections active',
+      'B':  'Good — minor gaps to address',
+      'C':  'Fair — important settings missing',
+      'D':  'Poor — multiple protections inactive',
+      'F':  'Critical — major vulnerabilities present',
+    };
+
+    // Show what's blocking A+ so the user knows exactly what to fix
+    let detail = labels[grade] || '';
+    if (grade !== 'A+' && posture) {
+      const blocking = posture.filter(c => c.status === 'warn' || c.status === 'error');
+      if (blocking.length) {
+        detail += ' · Fix: ' + blocking.map(c => c.check).join(', ');
+      }
+    }
+    document.getElementById('sec-grade-label').textContent = `Grade ${grade} · ${detail}`;
+
+    // Nav tab badge: show count of warn/error items
+    const btn = document.getElementById('sec-tab-btn');
+    const issues = (score.total - score.earned);
+    btn.textContent = issues > 0 ? `Security (${issues})` : 'Security';
+  }
+
+  function _renderSecurityPosture(posture) {
+    const grid = document.getElementById('sec-posture-grid');
+    if (!posture.length) {
+      grid.innerHTML = '<div class="empty">No posture data.</div>';
+      return;
+    }
+    grid.innerHTML = posture.map(c => `
+      <div class="sec-posture-card ${esc(c.status)}">
+        <div class="sec-posture-icon">${SEC_STATUS_ICON[c.status] || 'ℹ️'}</div>
+        <div style="min-width:0">
+          <div class="sec-posture-name">${esc(c.check)}</div>
+          <div class="sec-posture-msg">${esc(c.message)}</div>
+          ${c.action ? `<code class="sec-posture-act">${esc(c.action)}</code>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function _renderSecurityStats(stats) {
+    const s = (key) => (stats[key] || 0).toString();
+    document.getElementById('stat-login-fail').textContent    = s('login_failure');
+    document.getElementById('stat-key-invalid').textContent   =
+      (parseInt(s('api_key_invalid')) + parseInt(s('api_key_revoked_used')) +
+       parseInt(s('api_key_expired'))).toString();
+    document.getElementById('stat-rate-limited').textContent  =
+      (parseInt(s('login_rate_limited')) + parseInt(s('dashboard_rate_limited'))).toString();
+    document.getElementById('stat-login-ok').textContent     = s('login_success');
+    document.getElementById('stat-key-created').textContent  = s('key_created');
+    document.getElementById('stat-key-revoked').textContent  = s('key_revoked');
+  }
+
+  function _renderSecurityEvents(events) {
+    const log = document.getElementById('sec-event-log');
+    if (!events || !events.length) {
+      log.innerHTML = '<div class="sec-empty-log">No events recorded yet. Security activity will appear here as it happens.</div>';
+      return;
+    }
+    const rows = events.map(e => {
+      const d = e.ts ? new Date(e.ts * 1000) : null;
+      const time = d ? d.toLocaleTimeString('en-US', {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }) : '—';
+      const cls  = SEC_BADGE_CLASS[e.event] || (e.severity === 'warning' ? 'sec-evt-warn' : 'sec-evt-neutral');
+      let details = '';
+      if (e.details) {
+        try {
+          const d = typeof e.details === 'string' ? JSON.parse(e.details) : e.details;
+          details = Object.entries(d).map(([k, v]) => `${k}=${v}`).join(' · ');
+        } catch (_) { details = String(e.details); }
+      }
+      return `<tr>
+        <td class="sec-evt-time">${esc(time)}</td>
+        <td><span class="sec-evt-badge ${cls}">${esc(e.event)}</span></td>
+        <td class="sec-evt-ip">${esc(e.ip || '—')}</td>
+        <td class="sec-evt-detail" title="${esc(details)}">${esc(details) || '<span style="color:var(--muted)">—</span>'}</td>
+      </tr>`;
+    }).join('');
+    log.innerHTML = `
+      <table class="sec-event-tbl">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Event</th>
+            <th>IP</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  async function refreshSecurityTab() {
+    try {
+      const filter = document.getElementById('sec-event-filter')?.value || '';
+      const url    = '/api/dashboard/security' +
+        (filter && filter !== 'warning' ? `?event_filter=${encodeURIComponent(filter)}` :
+         filter === 'warning'           ? '?severity=warning' : '');
+      const data = await get(url);
+      if (data) renderSecurityTab(data);
+    } catch (_) {}
+  }
+
+  // Auto-refresh security tab every 30 s
+  setInterval(() => {
+    const pane = document.getElementById('tab-security');
+    if (pane && pane.classList.contains('active')) refreshSecurityTab();
+  }, 30000);
+
+  // Filter change → immediate re-fetch
+  document.getElementById('sec-event-filter')?.addEventListener('change', refreshSecurityTab);
+
+  // Manual refresh button
+  document.getElementById('sec-refresh-btn')?.addEventListener('click', refreshSecurityTab);
+
+  // Trigger a fresh load when user switches to the Security tab
+  document.getElementById('main-tab-nav').addEventListener('click', e => {
+    if (e.target.closest('.tab-btn')?.dataset?.tab === 'security') {
+      refreshSecurityTab();
+    }
+  });
+
   function renderActivity(data) {
     const now = Date.now() / 1000;
     // Active now banner
@@ -1716,12 +2927,16 @@
 
     // Sessions
     const sessEl = document.getElementById('sessions-list');
+    const _SESS_INIT = 5;
+    let _sessShowAll = sessEl.dataset.showAll === '1';
     document.getElementById('sessions-badge').textContent =
       data.sessions.length + (data.sessions.length === 1 ? ' session' : ' sessions');
     if (!data.sessions.length) {
       sessEl.innerHTML = '<div class="empty">No sessions yet. Start sending requests through autotune.</div>';
     } else {
-      sessEl.innerHTML = data.sessions.map(s => {
+      const visible = _sessShowAll ? data.sessions : data.sessions.slice(0, _SESS_INIT);
+      const remaining = data.sessions.length - visible.length;
+      const rowsHtml = visible.map(s => {
         const isRecent = (now - s.end_ts) < 600;
         const duration = s.end_ts - s.start_ts + (s.avg_elapsed_sec || 0);
         return `
@@ -1742,26 +2957,30 @@
             </div>
           </div>`;
       }).join('');
+      const moreHtml = remaining > 0
+        ? `<div style="padding:8px 14px;"><button class="btn-ghost" id="sess-show-more">Show ${remaining} more &darr;</button></div>`
+        : (data.sessions.length > _SESS_INIT ? `<div style="padding:8px 14px;"><button class="btn-ghost" id="sess-show-less">Show less &uarr;</button></div>` : '');
+      sessEl.innerHTML = rowsHtml + moreHtml;
+      const moreBtn = document.getElementById('sess-show-more');
+      if (moreBtn) moreBtn.addEventListener('click', () => { sessEl.dataset.showAll = '1'; renderActivity(data); });
+      const lessBtn = document.getElementById('sess-show-less');
+      if (lessBtn) lessBtn.addEventListener('click', () => { sessEl.dataset.showAll = '0'; renderActivity(data); });
     }
 
     // Request feed
-    const tbody = document.getElementById('activity-tbody');
     document.getElementById('feed-badge').textContent =
       data.requests.length + (data.requests.length === 1 ? ' request' : ' requests');
+    _feedData = data.requests;
     if (!data.requests.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No requests yet.</td></tr>';
-      return;
+      document.getElementById('activity-tbody').innerHTML =
+        '<tr><td colspan="6" class="empty">No requests yet.</td></tr>';
+      const mw = document.getElementById('feed-more-wrap');
+      if (mw) mw.style.display = 'none';
+    } else {
+      _renderFeedTable();
+      const btn = document.getElementById('feed-show-more');
+      if (btn) btn.onclick = () => { _feedAll = !_feedAll; _renderFeedTable(); };
     }
-    tbody.innerHTML = data.requests.slice(0, 50).map(r => `
-      <tr>
-        <td><span class="mono">${esc(r.model)}</span></td>
-        <td class="${latClass(r.ttft_ms)}">${fmtMs(r.ttft_ms)}</td>
-        <td class="dim">${r.elapsed_sec > 0 ? r.elapsed_sec.toFixed(2) + ' s' : '—'}</td>
-        <td>${fmtTokens(r.total_tokens)}</td>
-        <td>${r.profile ? `<span class="pill ${esc(r.profile)}">${esc(r.profile)}</span>` : '<span class="dim">—</span>'}</td>
-        <td class="dim" style="font-size:11px;">${fmtDateShort(r.ts)}</td>
-      </tr>
-    `).join('');
   }
 
   let _installedModels = [];
@@ -2024,10 +3243,45 @@
     return raw.length > 90 ? raw.slice(0, 87) + '…' : raw;
   }
 
+  const _CONV_INIT = 10;
+  let _convShowAll = false;
+
+  // Groups open state: group key → bool
+  let _openConvGroups = new Set();
+
+  function _convSessionRow(s) {
+    const sid      = String(s.session_id);
+    const isOpen   = _openConvSessions.has(sid);
+    const dur      = s.end_ts - s.start_ts > 5 ? fmtDuration(s.end_ts - s.start_ts) : null;
+    const title    = _convTitle(s);
+    const modelTag = s.models.slice(0, 2).map(m =>
+      `<span class="mono" style="font-size:11px;">${esc(m)}</span>`
+    ).join(', ');
+    return `
+      <div class="conv-session${isOpen ? ' open' : ''}" data-chsid="${esc(sid)}">
+        <div class="conv-session-header">
+          <div class="conv-session-chevron">&#9658;</div>
+          <div class="conv-session-meta">
+            <div class="conv-session-preview">${esc(title)}</div>
+            <div class="conv-session-sub">
+              <span>${fmtDateTime(s.start_ts)}</span>
+              ${dur ? `<span>${dur}</span>` : ''}
+              <span>${s.turn_count} turn${s.turn_count !== 1 ? 's' : ''}</span>
+              <span>${modelTag}</span>
+              ${s.api_key_id ? `<span class="dim">key&nbsp;${esc(String(s.api_key_id).slice(0,8))}…</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="conv-turns" id="ch-turns-${esc(sid)}">
+          <div style="padding:12px 18px;" class="empty dim">Click to expand…</div>
+        </div>
+      </div>`;
+  }
+
   function _renderConvList(query) {
     const list  = document.getElementById('conv-hist-list');
     const badge = document.getElementById('conv-hist-badge');
-    if (!list) return;  // guard: element not yet in DOM
+    if (!list) return;
 
     let filtered = _allConvSessions;
     if (query) {
@@ -2051,43 +3305,93 @@
       return;
     }
 
-    list.innerHTML = filtered.map(s => {
-      const sid      = String(s.session_id);
-      const isOpen   = _openConvSessions.has(sid);
-      const dur      = s.end_ts - s.start_ts > 5 ? fmtDuration(s.end_ts - s.start_ts) : null;
-      const title    = _convTitle(s);
-      const modelTag = s.models.slice(0, 2).map(m =>
-        `<span class="mono" style="font-size:11px;">${esc(m)}</span>`
-      ).join(', ');
+    let html = '';
 
-      return `
-        <div class="conv-session${isOpen ? ' open' : ''}" data-chsid="${esc(sid)}">
-          <div class="conv-session-header">
-            <div class="conv-session-chevron">&#9658;</div>
-            <div class="conv-session-meta">
-              <div class="conv-session-preview">${esc(title)}</div>
-              <div class="conv-session-sub">
-                <span>${fmtDateTime(s.start_ts)}</span>
-                ${dur ? `<span>${dur}</span>` : ''}
-                <span>${s.turn_count} turn${s.turn_count !== 1 ? 's' : ''}</span>
-                <span>${modelTag}</span>
-                ${s.api_key_id ? `<span class="dim">key&nbsp;${esc(String(s.api_key_id).slice(0,8))}…</span>` : ''}
-              </div>
+    if (query && filtered.length > 3) {
+      // ── Search with multiple results: group by model, each group collapsed ──
+      const groups = new Map();   // model → sessions[]
+      for (const s of filtered) {
+        const key = s.models[0] || 'unknown';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(s);
+      }
+      for (const [model, sessions] of groups) {
+        const gKey    = 'grp-' + model;
+        const isOpen  = _openConvGroups.has(gKey);
+        html += `
+          <div class="conv-group${isOpen ? ' open' : ''}" data-gkey="${esc(gKey)}">
+            <div class="conv-group-header">
+              <span class="conv-group-chevron">&#9658;</span>
+              <span class="conv-group-name">${esc(model)}</span>
+              <span class="conv-group-count">${sessions.length} conversation${sessions.length !== 1 ? 's' : ''}</span>
             </div>
-          </div>
-          <div class="conv-turns" id="ch-turns-${esc(sid)}">
-            <div style="padding:12px 18px;" class="empty dim">Click to expand…</div>
-          </div>
-        </div>`;
-    }).join('');
+            <div class="conv-group-body">${sessions.map(_convSessionRow).join('')}</div>
+          </div>`;
+      }
+    } else if (!query) {
+      // ── No search: group by date bucket, paginated ──
+      const now = Date.now() / 1000;
+      const DAY  = 86400;
+      const buckets = [
+        { key: 'today',     label: 'Today',      cutoff: now - DAY },
+        { key: 'yesterday', label: 'Yesterday',  cutoff: now - 2 * DAY },
+        { key: 'week',      label: 'This Week',  cutoff: now - 7 * DAY },
+        { key: 'earlier',   label: 'Earlier',    cutoff: 0 },
+      ];
+      let remaining = filtered;
+      for (const b of buckets) {
+        const inBucket = remaining.filter(s => s.end_ts >= b.cutoff);
+        remaining      = remaining.filter(s => s.end_ts < b.cutoff);
+        if (!inBucket.length) continue;
+        html += `<div class="conv-date-header">${b.label}</div>`;
+        // Within each date bucket, paginate at _CONV_INIT unless _convShowAll
+        const cap   = (_convShowAll || b.key === 'today') ? inBucket.length : Math.min(inBucket.length, _CONV_INIT);
+        const shown = inBucket.slice(0, cap);
+        html += shown.map(_convSessionRow).join('');
+        if (cap < inBucket.length) {
+          html += `<div style="padding:8px 18px;"><button class="btn-ghost conv-show-more-bucket" data-bucket="${esc(b.key)}" style="font-size:12px;">Show ${inBucket.length - cap} more in ${b.label} &darr;</button></div>`;
+        }
+      }
+      if (!_convShowAll && filtered.length > _CONV_INIT) {
+        html += `<div style="padding:10px 18px;border-top:1px solid var(--border);"><button class="btn-ghost" id="conv-show-more">Show all ${filtered.length} conversations &darr;</button></div>`;
+      } else if (_convShowAll && filtered.length > _CONV_INIT) {
+        html += `<div style="padding:10px 18px;border-top:1px solid var(--border);"><button class="btn-ghost" id="conv-show-less">Show less &uarr;</button></div>`;
+      }
+    } else {
+      // ── Search with ≤3 results: flat list ──
+      html = filtered.map(_convSessionRow).join('');
+    }
 
+    list.innerHTML = html;
+
+    // Wire group toggles
+    list.querySelectorAll('.conv-group').forEach(el => {
+      el.querySelector('.conv-group-header').addEventListener('click', () => {
+        const k = el.dataset.gkey;
+        if (_openConvGroups.has(k)) _openConvGroups.delete(k);
+        else _openConvGroups.add(k);
+        el.classList.toggle('open');
+      });
+    });
+
+    // Wire session row toggles
     list.querySelectorAll('.conv-session').forEach(el => {
-      el.querySelector('.conv-session-header').addEventListener('click', () => {
+      el.querySelector('.conv-session-header').addEventListener('click', e => {
+        e.stopPropagation();
         _toggleConvSession(el, el.dataset.chsid);
       });
     });
 
-    // Re-open any sessions that were open before re-render
+    const moreBtn = document.getElementById('conv-show-more');
+    if (moreBtn) moreBtn.addEventListener('click', () => { _convShowAll = true; _renderConvList(query); });
+    const lessBtn = document.getElementById('conv-show-less');
+    if (lessBtn) lessBtn.addEventListener('click', () => { _convShowAll = false; _renderConvList(query); });
+
+    list.querySelectorAll('.conv-show-more-bucket').forEach(btn => {
+      btn.addEventListener('click', () => { _convShowAll = true; _renderConvList(query); });
+    });
+
+    // Re-open sessions that were open before re-render
     _openConvSessions.forEach(sid => {
       const el = list.querySelector(`[data-chsid="${CSS.escape(sid)}"]`);
       if (el) {
@@ -2111,7 +3415,7 @@
       return;
     }
 
-    const container = document.getElementById('ch-turns-' + CSS.escape(sid));
+    const container = document.getElementById('ch-turns-' + sid);
     if (container) container.innerHTML = '<div style="padding:12px 18px;" class="empty dim">Loading…</div>';
 
     try {
@@ -2124,13 +3428,14 @@
         _renderConvTurns(sid, data.turns);
       }
     } catch (e) {
-      if (container) container.innerHTML =
+      const container2 = document.getElementById('ch-turns-' + sid);
+      if (container2) container2.innerHTML =
         '<div style="padding:12px 18px;" class="empty">Could not load — ' + esc(String(e)) + '</div>';
     }
   }
 
   function _renderConvTurns(sid, turns) {
-    const container = document.getElementById('ch-turns-' + CSS.escape(String(sid)));
+    const container = document.getElementById('ch-turns-' + String(sid));
     if (!container) return;
 
     if (!turns.length) {
@@ -2182,12 +3487,148 @@
     _renderConvList(e.target.value.toLowerCase());
   });
 
+  // ── Optimizations ──────────────────────────────────────────────────────
+  const _OPT_INITIAL = 10;
+  let _optShowAll  = false;
+  let _optOpenIdxs = new Set();   // persisted open rows across refreshes
+  let _optEvents   = [];          // last rendered events list
+
+  function _optTypeClass(type) {
+    if (type === 'kv_context')            return 'kv';
+    if (type === 'kv_quant_q8')           return 'kv';
+    if (type === 'sys_prompt_cache')      return 'fast';
+    if (type === 'ram_pressure_moderate') return 'warn';
+    if (type === 'ram_pressure_high')     return 'warn';
+    if (type === 'ram_pressure_critical') return 'warn';
+    if (type === 'swap_guard')            return 'warn';
+    if (type === 'swap_activity')         return 'warn';
+    if (type === 'qos_fast')              return 'fast';
+    if (type === 'qos_quality')           return 'quality';
+    return 'kv';
+  }
+
+  // Returns an .opt-impact pill with the key number — the most visible element in the row.
+  function _optImpact(ev) {
+    if (ev.type === 'kv_context') {
+      const pct = Math.round(ev.savings_pct || 0);
+      const after = (ev.after || 0).toLocaleString();
+      return `<span class="opt-impact positive">−${pct}% ctx &rarr; ${after} tok</span>`;
+    }
+    if (ev.type === 'kv_quant_q8')
+      return `<span class="opt-impact positive">KV F16 &rarr; Q8 &minus;50% mem</span>`;
+    if (ev.type === 'sys_prompt_cache') {
+      const n = (ev.num_keep || 0).toLocaleString();
+      return `<span class="opt-impact positive">${n} tokens cached</span>`;
+    }
+    if (ev.type === 'ram_pressure_moderate') {
+      const after = ev.after ? ev.after.toLocaleString() : '—';
+      return `<span class="opt-impact warning">ctx &rarr; ${after} tok (RAM &ge; 75%)</span>`;
+    }
+    if (ev.type === 'ram_pressure_high') {
+      const after = ev.after ? ev.after.toLocaleString() : '—';
+      return `<span class="opt-impact warning">ctx &rarr; ${after} + KV&rarr;Q8 (RAM &ge; 85%)</span>`;
+    }
+    if (ev.type === 'ram_pressure_critical') {
+      const after = ev.after ? ev.after.toLocaleString() : '—';
+      return `<span class="opt-impact critical">ctx &rarr; ${after} + KV&rarr;Q8 + batch (RAM &ge; 95%)</span>`;
+    }
+    if (ev.type === 'swap_guard')
+      return `<span class="opt-impact critical">swap prevented</span>`;
+    if (ev.type === 'swap_activity')
+      return `<span class="opt-impact critical">+${(ev.delta_swap_gb || 0).toFixed(2)} GB swapped</span>`;
+    if (ev.type === 'qos_fast')
+      return `<span class="opt-impact positive">fast profile active</span>`;
+    if (ev.type === 'qos_quality')
+      return `<span class="opt-impact positive">quality profile active</span>`;
+    return '';
+  }
+
+  function _renderOptFeed() {
+    const feed = document.getElementById('opt-feed');
+    if (!feed) return;
+    const visible = _optShowAll ? _optEvents : _optEvents.slice(0, _OPT_INITIAL);
+    const remaining = _optEvents.length - visible.length;
+
+    const html = visible.map((ev, i) => {
+      const tc      = _optTypeClass(ev.type);
+      const lbl     = (ev.description && ev.description.label) || ev.type;
+      const purpose = (ev.description && ev.description.purpose) || '';
+      const helps   = (ev.description && ev.description.helps)   || '';
+      const isOpen  = _optOpenIdxs.has(i);
+      const impact  = _optImpact(ev);
+      const ttftStr = ev.ttft_ms != null ? `<div class="opt-detail-metric">Measured TTFT: <strong>${fmtMs(ev.ttft_ms)}</strong>${ev.tps ? ` · ${ev.tps.toFixed(1)} tok/s` : ''}</div>` : '';
+      return `<div class="opt-event${isOpen ? ' open' : ''}" data-optidx="${i}">
+        <div class="opt-event-row">
+          <span class="opt-chevron">&#9658;</span>
+          <span class="opt-type-badge ${tc}">${esc(lbl)}</span>
+          ${impact}
+          <span class="opt-model">${esc(ev.model || '—')}</span>
+          <span class="opt-time">${fmtTime(ev.ts)}</span>
+        </div>
+        <div class="opt-detail">
+          <div class="opt-detail-grid">
+            ${purpose ? `<div class="opt-detail-block"><div class="opt-detail-heading">What happened</div><div class="opt-detail-text">${esc(purpose)}</div></div>` : ''}
+            ${helps   ? `<div class="opt-detail-block"><div class="opt-detail-heading">Why it helps</div><div class="opt-detail-text">${esc(helps)}</div></div>`   : ''}
+          </div>
+          ${ttftStr}
+        </div>
+      </div>`;
+    }).join('');
+
+    const moreBtn = remaining > 0
+      ? `<div style="padding:10px 18px;border-top:1px solid var(--border);">
+           <button class="btn-ghost" id="opt-show-more">Show ${remaining} more &darr;</button>
+         </div>`
+      : (_optEvents.length > _OPT_INITIAL
+          ? `<div style="padding:10px 18px;border-top:1px solid var(--border);">
+               <button class="btn-ghost" id="opt-show-less">Show less &uarr;</button>
+             </div>` : '');
+
+    feed.innerHTML = html + moreBtn;
+
+    feed.querySelectorAll('.opt-event').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.optidx, 10);
+        if (row.classList.toggle('open')) _optOpenIdxs.add(idx);
+        else _optOpenIdxs.delete(idx);
+      });
+    });
+
+    const moreEl = document.getElementById('opt-show-more');
+    if (moreEl) moreEl.addEventListener('click', e => { e.stopPropagation(); _optShowAll = true; _renderOptFeed(); });
+    const lessEl = document.getElementById('opt-show-less');
+    if (lessEl) lessEl.addEventListener('click', e => { e.stopPropagation(); _optShowAll = false; _renderOptFeed(); });
+  }
+
+  function renderOptimizations(data) {
+    if (!data) return;
+    const { events = [], summary = {} } = data;
+    _optEvents = events;
+
+    const el = id => document.getElementById(id);
+    if (el('opt-total'))       el('opt-total').textContent       = (summary.total_optimizations || 0).toLocaleString();
+    if (el('opt-kv-pct'))      el('opt-kv-pct').textContent      = (summary.kv_optimized_pct || 0).toFixed(1) + '%';
+    if (el('opt-kv-savings'))  el('opt-kv-savings').textContent  = (summary.avg_kv_savings_pct || 0).toFixed(1) + '%';
+    if (el('opt-cache-count')) el('opt-cache-count').textContent = (summary.sys_prompt_cached || 0).toLocaleString();
+    if (el('opt-qos-count'))   el('opt-qos-count').textContent   = (summary.qos_selected || 0).toLocaleString();
+    if (el('opt-avg-ttft'))    el('opt-avg-ttft').textContent    = fmtMs(summary.avg_ttft_ms);
+    if (el('opt-badge'))       el('opt-badge').textContent       = events.length + ' event' + (events.length !== 1 ? 's' : '');
+
+    const feed = el('opt-feed');
+    if (!feed) return;
+    if (!events.length) {
+      feed.innerHTML = '<div class="empty" style="padding:20px 18px;">No optimization events yet — send requests through autotune (port 8765) to see decisions here.</div>';
+      return;
+    }
+    _renderOptFeed();
+  }
+
   async function refresh() {
     try {
       const [
         overview, requests, ttft, models,
         comparison, keys, slow, suggestions, health, security, versionInfo,
-        activity, installedModels,
+        activity, installedModels, optimizations,
       ] = await Promise.all([
         get('/api/dashboard/overview'),
         get('/api/dashboard/requests'),
@@ -2202,6 +3643,7 @@
         fetch('/api/version').then(r => r.ok ? r.json() : null).catch(() => null),
         get('/api/dashboard/activity'),
         get('/api/dashboard/installed-models'),
+        get('/api/dashboard/optimizations'),
       ]);
 
       if (health && health.version) {
@@ -2217,8 +3659,9 @@
       if (keys)        renderKeys(keys.keys);
       if (slow)        renderSlow(slow.requests);
       if (suggestions) renderSuggestions(suggestions.suggestions);
-      if (security)    renderSecurity(security.checks);
+      if (security)  { renderSecurity(security.checks); renderSecurityTab(security); }
       if (activity)        renderActivity(activity);
+      if (optimizations)   renderOptimizations(optimizations);
       if (installedModels) { renderInstalledModels(installedModels.models); }
       if (overview) { _runningModelNames = overview.running_models.map(m => m.name); }
 
@@ -2400,9 +3843,9 @@
   // ── Model Catalog ──────────────────────────────────────────────────────
   // All IDs use the "catalog-" prefix; never touches conv-hist-* or sessions-* IDs.
 
-  let _catalogData    = [];       // all CatalogEntry dicts
-  let _catalogTier    = '';       // active tier filter
-  let _catalogTagFilt = '';       // active tag filter
+  let _catalogData    = [];               // all CatalogEntry dicts
+  let _catalogTier    = 'recommended';    // start on Recommended tab
+  let _catalogTagFilt = '';              // active tag filter
   let _catalogLoaded  = false;
 
   function _catTierColor(tier) {
@@ -2436,7 +3879,7 @@
     // Benchmarks: show MMLU (general) and HumanEval (code) if available
     const mmluBar = _catBenchBar(m.bench_mmlu);
     const heBar   = m.bench_humaneval != null
-      ? `<div style="margin-top:6px;"><span style="font-size:10px;color:var(--muted);">HumanEval </span>${_catBenchBar(m.bench_humaneval)}</div>`
+      ? `<div style="margin-top:6px;"><div style="font-size:10px;color:var(--muted);margin-bottom:2px;">HumanEval</div>${_catBenchBar(m.bench_humaneval)}</div>`
       : '';
 
     return `<tr data-catid="${esc(m.id)}" data-tier="${esc(m.tier)}" data-tags="${esc((m.tags||[]).join(','))}">
@@ -2459,6 +3902,9 @@
   }
 
   function _renderCatalog() {
+    // When "Recommended" is active the table is hidden — no-op to prevent badge/filter side-effects.
+    if (_catalogTier === 'recommended') return;
+
     const q    = (document.getElementById('catalog-search').value || '').toLowerCase().trim();
     const tbody = document.getElementById('catalog-tbody');
     const badge = document.getElementById('catalog-badge');
@@ -2545,6 +3991,133 @@
     } catch (_) {}
   }
 
+  // ── Model Recommendations ──────────────────────────────────────────────
+  let _recData    = null;
+  let _recLoading = false;
+
+  async function loadRecommendations() {
+    if (_recLoading) return;
+    _recLoading = true;
+    const sec = document.getElementById('catalog-rec-section');
+    if (sec) sec.innerHTML = '<div class="rec-loading">Analyzing your hardware…</div>';
+    try {
+      const r = await fetch('/api/dashboard/model-recommendations');
+      if (r.status === 401) { window.location.href = '/dashboard/login'; return; }
+      if (r.ok) {
+        _recData = await r.json();
+      } else if (r.status === 404) {
+        _recData = { error: 'Restart the autotune server to enable recommendations (new endpoint added).', modes: {} };
+      } else {
+        _recData = { error: `Server returned ${r.status} — try restarting autotune.`, modes: {} };
+      }
+    } catch (_) {
+      _recData = { error: 'Could not reach server.', modes: {} };
+    } finally {
+      _recLoading = false;
+    }
+    if (_catalogTier === 'recommended') _renderRecommendations();
+  }
+
+  function _renderRecommendations() {
+    const sec = document.getElementById('catalog-rec-section');
+    if (!sec) return;
+    if (!_recData) {
+      sec.innerHTML = '<div class="rec-loading">Loading recommendations…</div>';
+      return;
+    }
+    if (_recData.error && !Object.keys(_recData.modes || {}).length) {
+      sec.innerHTML = `<div class="rec-error">${esc(_recData.error)}</div>`;
+      return;
+    }
+
+    const hw    = _recData.hardware || {};
+    const modes = _recData.modes    || {};
+    const modeOrder  = ['fastest', 'balanced', 'best_quality'];
+    const modeLabels = { fastest: 'Fastest', balanced: 'Balanced', best_quality: 'Best Quality' };
+    const modeDesc   = {
+      fastest:      'Lowest latency — ideal for real-time chat, autocomplete, and quick queries',
+      balanced:     'Best speed/quality tradeoff for everyday coding and writing tasks',
+      best_quality: 'Highest accuracy — code review, analysis, and complex multi-step reasoning',
+    };
+
+    // Hardware context banner
+    const chipLabel = hw.chip ? `<span class="rec-hw-chip">${esc(hw.chip)}</span>` : '';
+    const budgetStr = hw.budget_gb != null
+      ? `${hw.budget_gb.toFixed(0)} GB effective budget`
+      : '';
+    const unifiedNote = hw.is_unified ? '· unified memory' : '';
+    const hwHtml = `
+      <div class="rec-hw-banner">
+        ${chipLabel}
+        <span>${budgetStr} ${unifiedNote}</span>
+        <span style="margin-left:auto;color:var(--muted);font-size:11px;">Scored on speed · quality · stability · benchmarks</span>
+      </div>`;
+
+    // Mode cards
+    const cardsHtml = modeOrder.filter(m => modes[m]).map(m => {
+      const r = modes[m];
+      const pullTag = r.ollama_tag || r.model_id || '';
+      const paramsStr = r.parameters_b >= 1 ? `${r.parameters_b.toFixed(1)}B params` : '';
+
+      const benchItems = [
+        { name: 'MMLU',      val: r.bench_mmlu,      color: 'var(--green)' },
+        { name: 'HumanEval', val: r.bench_humaneval,  color: 'var(--accent)' },
+        { name: 'GSM8K',     val: r.bench_gsm8k,      color: 'var(--purple)' },
+      ].filter(b => b.val != null).map(b => `
+        <div class="rec-bench-item">
+          <span class="rec-bench-name">${b.name}</span>
+          <div class="rec-bench-bar">
+            <div class="rec-bench-fill" style="width:${Math.round(b.val)}%;background:${b.color}"></div>
+          </div>
+          <span class="rec-bench-val">${Math.round(b.val)}%</span>
+        </div>`).join('');
+
+      const altsHtml = (r.alternatives || []).length ? `
+        <div class="rec-alts">
+          <div class="rec-alts-label">Alternatives</div>
+          ${r.alternatives.map(a => `
+            <div class="rec-alt-item">
+              <span class="rec-alt-name">${esc(a.model_name)} <span style="color:var(--muted);font-weight:400;">${esc(a.quant)}</span></span>
+              <span class="rec-alt-meta">${a.total_gb != null ? a.total_gb.toFixed(1) + ' GB' : ''}${a.bench_mmlu != null ? ' · ' + Math.round(a.bench_mmlu) + '% MMLU' : ''}</span>
+            </div>`).join('')}
+        </div>` : '';
+
+      const scoreVal = r.score != null ? Math.round(r.score * 100) : null;
+      return `
+        <div class="rec-mode-card ${esc(m)}">
+          <div class="rec-mode-header">
+            <div class="rec-mode-label">${esc(modeLabels[m] || m)}${scoreVal != null ? `<span class="rec-score-badge">${scoreVal}/100</span>` : ''}</div>
+            <div class="rec-model-name">${esc(r.model_name || '—')}</div>
+            <div class="rec-model-sub">${esc(r.quant || '')}${paramsStr ? ' · ' + paramsStr : ''}</div>
+          </div>
+          <div class="rec-body">
+            <div class="rec-desc">${esc(modeDesc[m] || '')}</div>
+            <div class="rec-stat-row">
+              <span class="rec-stat"><b>${r.total_gb != null ? r.total_gb.toFixed(1) : '—'} GB</b> RAM</span>
+              <span class="rec-stat"><b>${r.headroom_gb != null ? r.headroom_gb.toFixed(1) : '—'} GB</b> headroom</span>
+              ${r.context_len ? `<span class="rec-stat"><b>${Number(r.context_len).toLocaleString()}</b> ctx</span>` : ''}
+            </div>
+            <div class="rec-bench-section">
+              <div class="rec-bench-label-row">Benchmarks</div>
+              ${benchItems || '<span style="font-size:11px;color:var(--muted);">No benchmark data</span>'}
+            </div>
+            <div class="rec-rationale">${esc(r.rationale || '')}</div>
+            <div class="rec-pull-cmd"
+                 title="Click to copy pull command"
+                 onclick="navigator.clipboard.writeText('ollama pull ${pullTag}').catch(()=>{}); this.style.color='var(--green)'; setTimeout(()=>this.style.color='',800);">
+              ollama pull ${esc(pullTag)}
+            </div>
+          </div>
+          ${altsHtml}
+        </div>`;
+    }).join('');
+
+    sec.innerHTML = hwHtml + `
+      <div class="rec-cards-grid">
+        ${cardsHtml || '<div class="rec-loading">No recommendations available for your hardware configuration.</div>'}
+      </div>`;
+  }
+
   // Tier filter chips
   document.getElementById('catalog-tier-bar').addEventListener('click', e => {
     const chip = e.target.closest('.tier-chip');
@@ -2552,7 +4125,17 @@
     document.querySelectorAll('.tier-chip').forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
     _catalogTier = chip.dataset.tier || '';
-    _renderCatalog();
+    const isRec = _catalogTier === 'recommended';
+    const tblWrap = document.getElementById('catalog-tbl-wrap');
+    const recSec  = document.getElementById('catalog-rec-section');
+    if (tblWrap) tblWrap.style.display = isRec ? 'none' : '';
+    if (recSec)  recSec.style.display  = isRec ? '' : 'none';
+    if (isRec) {
+      if (!_recData && !_recLoading) loadRecommendations();
+      else _renderRecommendations();
+    } else {
+      _renderCatalog();
+    }
   });
 
   // Search input
@@ -2587,11 +4170,145 @@
     }
   });
 
+  // ── Settings Tab ──────────────────────────────────────────────────────
+  let _settingsData = null;
+
+  async function loadSettings() {
+    try {
+      const r = await fetch('/api/dashboard/settings');
+      if (r.status === 401) return;
+      if (!r.ok) return;
+      _settingsData = await r.json();
+      _applySettingsToUI(_settingsData);
+    } catch (_) {}
+  }
+
+  function _applySettingsToUI(d) {
+    if (!d) return;
+    const fp  = d.file_prefs   || {};
+    const db  = d.db_settings  || {};
+    const env = d.env_readonly || {};
+    const st  = d.db_stats    || {};
+
+    // Toggles
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const setLbl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ? 'On' : 'Off'; };
+    setChk('set-local-storage', fp.local_storage);   setLbl('set-local-storage-lbl', fp.local_storage);
+    setChk('set-remote-tel',    fp.remote_telemetry); setLbl('set-remote-tel-lbl', fp.remote_telemetry);
+
+    // DB settings
+    const getVal = k => (db[k] && db[k].value) || '';
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setVal('set-qos-profile',   getVal('default_qos_profile') || 'balanced');
+    setVal('set-ollama-url',    getVal('ollama_url'));
+    setVal('set-catalog-refresh', getVal('catalog_refresh_interval_h') || '24');
+    setVal('set-retention-days',  getVal('retention_days') || '90');
+
+    // Env readonly
+    const setEnv = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setEnv('set-env-admin-key',
+      env.admin_key_set ? `Set (${env.admin_key_len} chars)` : 'Not set — dashboard is open');
+    setEnv('set-env-api-key-enf', env.api_key_enforcement ? 'Enforced' : 'Open (no auth required)');
+    setEnv('set-env-body-limit',  env.max_body_mb != null ? `${env.max_body_mb} MB` : '—');
+    setEnv('set-env-cors', env.cors_extra_origins || 'localhost only');
+    setEnv('set-env-supa',
+      env.supabase_url_set ? (env.supabase_url_hint || 'Custom URL set') : 'Built-in autotune project');
+
+    // DB stats
+    const setStat = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v != null ? Number(v).toLocaleString() : '—'; };
+    setStat('db-stat-runs',    st.run_observations);
+    setStat('db-stat-models',  st.models);
+    setStat('db-stat-hw',      st.hardware_profiles);
+    setStat('db-stat-tel',     st.telemetry_events);
+    setStat('db-stat-sec',     st.security_events);
+    const sizeEl = document.getElementById('db-stat-size');
+    if (sizeEl && st.db_size_mb != null) sizeEl.textContent = st.db_size_mb.toFixed(2) + ' MB';
+    const pathEl = document.getElementById('db-path-display');
+    if (pathEl && st.db_path) pathEl.textContent = 'Path: ' + st.db_path;
+  }
+
+  async function _saveSetting(key, value) {
+    const r = await fetch('/api/dashboard/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ updates: [{ key, value: String(value) }] }),
+    });
+    const data = await r.json();
+    if (data.errors && data.errors[key]) {
+      alert('Error: ' + data.errors[key]);
+      return false;
+    }
+    return true;
+  }
+
+  function _wireSettingsToggle(inputId, settingKey) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.addEventListener('change', async () => {
+      const val = el.checked ? '1' : '0';
+      const ok  = await _saveSetting(settingKey, val);
+      const lbl = document.getElementById(inputId + '-lbl');
+      if (lbl) lbl.textContent = el.checked ? 'On' : 'Off';
+      if (!ok) el.checked = !el.checked;
+    });
+  }
+
+  function _wireSettingsSave(btnId, inputId, settingKey) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const inp = document.getElementById(inputId);
+      if (!inp) return;
+      btn.disabled = true; btn.textContent = '…';
+      const ok = await _saveSetting(settingKey, inp.value);
+      btn.disabled = false; btn.textContent = ok ? 'Saved' : 'Error';
+      setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+    });
+  }
+
+  function initSettings() {
+    _wireSettingsToggle('set-local-storage', 'local_storage');
+    _wireSettingsToggle('set-remote-tel',    'remote_telemetry');
+
+    _wireSettingsSave('set-qos-save',      'set-qos-profile',    'default_qos_profile');
+    _wireSettingsSave('set-ollama-save',   'set-ollama-url',     'ollama_url');
+    _wireSettingsSave('set-catalog-save',  'set-catalog-refresh','catalog_refresh_interval_h');
+    _wireSettingsSave('set-retention-save','set-retention-days', 'retention_days');
+
+    const cleanupBtn = document.getElementById('set-cleanup-now');
+    if (cleanupBtn) {
+      cleanupBtn.addEventListener('click', async () => {
+        cleanupBtn.disabled = true; cleanupBtn.textContent = 'Cleaning…';
+        try {
+          const r = await fetch('/api/dashboard/settings/cleanup', { method: 'POST' });
+          const d = await r.json();
+          const n = (d.deleted && d.deleted.run_observations) || 0;
+          cleanupBtn.textContent = `Deleted ${n.toLocaleString()} row${n !== 1 ? 's' : ''}`;
+          await loadSettings();  // refresh stats
+        } catch(_) { cleanupBtn.textContent = 'Error'; }
+        setTimeout(() => { cleanupBtn.disabled = false; cleanupBtn.textContent = 'Clean Up Now'; }, 3000);
+      });
+    }
+
+    const dbRefreshBtn = document.getElementById('set-db-refresh');
+    if (dbRefreshBtn) dbRefreshBtn.addEventListener('click', loadSettings);
+  }
+
+  // Load settings when Settings tab is first opened (lazy)
+  let _settingsLoaded = false;
+  document.querySelectorAll('.tab-btn[data-tab="settings"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!_settingsLoaded) { _settingsLoaded = true; loadSettings(); }
+    });
+  });
+
   // kick off
   initAuthUI();
+  initSettings();
   refresh();
-  refreshSessions();  // independent — never blocks main refresh cycle
-  loadCatalog();      // independent — never blocks main refresh cycle
+  refreshSessions();       // independent — never blocks main refresh cycle
+  loadCatalog();           // independent — never blocks main refresh cycle
+  loadRecommendations();   // eager-load so Recommended tab is ready immediately
   setInterval(refresh, 10000);
   setInterval(refreshSessions, 15000);  // sessions refresh at a slightly slower cadence
 })();

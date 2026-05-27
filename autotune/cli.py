@@ -198,8 +198,6 @@ def version_cmd() -> None:
     import pathlib
     import urllib.request
 
-    from rich.table import Table
-
     try:
         current = importlib.metadata.version("llm-autotune")
     except Exception:
@@ -226,24 +224,23 @@ def version_cmd() -> None:
         except Exception:
             latest = cached_latest or None
 
-    t = Table.grid(padding=(0, 2))
-    t.add_column(style="dim")
-    t.add_column()
-    t.add_row("installed", f"[bold cyan]v{current}[/bold cyan]")
     if latest:
         if _version_newer(latest, current):
-            t.add_row("latest", f"[yellow]v{latest}[/yellow]  [dim](update available)[/dim]")
-            console.print(t)
             console.print(
-                f"\n  Run [bold cyan]autotune upgrade[/bold cyan] or "
-                f"[bold cyan]pip install --upgrade llm-autotune[/bold cyan] to update.\n"
+                f"  [dim]current:[/dim] [bold cyan]v{current}[/bold cyan]"
+                f"  [dim]·[/dim]  [dim]latest:[/dim] [yellow]v{latest}[/yellow]  [dim]→[/dim]  "
+                f"[dim]run:[/dim] [bold cyan]autotune upgrade[/bold cyan]"
             )
         else:
-            t.add_row("latest", f"[green]v{latest}[/green]  [dim](up to date)[/dim]")
-            console.print(t)
+            console.print(
+                f"  [dim]current:[/dim] [bold cyan]v{current}[/bold cyan]"
+                f"  [dim]·[/dim]  [dim]latest:[/dim] [green]v{latest}[/green]  [green]✓[/green]"
+            )
     else:
-        t.add_row("latest", "[dim]unavailable (offline?)[/dim]")
-        console.print(t)
+        console.print(
+            f"  [dim]current:[/dim] [bold cyan]v{current}[/bold cyan]"
+            f"  [dim]·[/dim]  [dim]latest:[/dim] [dim]unavailable (offline?)[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3381,7 +3378,16 @@ def storage(action: Optional[str]) -> None:
         "Default is Ollama-only (~94 MB, full tool support)."
     ),
 )
-def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
+@click.option(
+    "--ssl-certfile", "ssl_certfile", default=None, envvar="AUTOTUNE_SSL_CERTFILE",
+    help="Path to TLS certificate (PEM). Enables HTTPS on the bound port.",
+)
+@click.option(
+    "--ssl-keyfile", "ssl_keyfile", default=None, envvar="AUTOTUNE_SSL_KEYFILE",
+    help="Path to TLS private key (PEM). Required when --ssl-certfile is set.",
+)
+def serve(host: str, port: int, reload: bool, enable_mlx: bool,
+          ssl_certfile: str | None, ssl_keyfile: str | None) -> None:
     """Start the autotune OpenAI-compatible API server.
 
     Any OpenAI client can use it via base_url=http://HOST:PORT/v1
@@ -3390,20 +3396,29 @@ def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
     if not enable_mlx:
         _os.environ["AUTOTUNE_DISABLE_MLX"] = "1"
 
-    # Warn when binding to a non-loopback address: the server has no built-in
-    # auth and CORS allow_origins=["*"], so any machine on the network (or any
-    # website, via CORS) can drive local LLM inference.
+    # Validate TLS option pairing
+    if bool(ssl_certfile) != bool(ssl_keyfile):
+        console.print("[bold red]✗  --ssl-certfile and --ssl-keyfile must be used together.[/bold red]")
+        raise SystemExit(1)
+
+    tls_enabled = bool(ssl_certfile)
+
+    # Warn when binding to a non-loopback address without TLS
     if host not in ("127.0.0.1", "::1", "localhost"):
-        console.print(
-            f"\n[bold yellow]⚠  Security warning[/bold yellow]\n"
-            f"  Binding to [bold]{host}[/bold] exposes the autotune API to all "
-            f"network interfaces.\n"
-            f"  The server has no authentication — any client on your network "
-            f"can send inference requests.\n"
-            f"  Use [bold]--host 127.0.0.1[/bold] (default) for local-only access.\n"
-            f"  If LAN access is intentional, consider a firewall rule or a reverse\n"
-            f"  proxy (nginx/caddy) with TLS and an API key.\n"
-        )
+        if tls_enabled:
+            console.print(
+                f"\n[bold green]✓  TLS enabled[/bold green] — traffic is encrypted "
+                f"on [bold]{host}:{port}[/bold] (HTTPS).\n"
+            )
+        else:
+            console.print(
+                f"\n[bold yellow]⚠  Security warning[/bold yellow]\n"
+                f"  Binding to [bold]{host}[/bold] over plain HTTP — "
+                f"API keys and prompts travel unencrypted.\n"
+                f"  Use [bold]--ssl-certfile cert.pem --ssl-keyfile key.pem[/bold] for native TLS, or\n"
+                f"  put autotune behind an nginx/Caddy reverse proxy with TLS.\n"
+                f"  See [bold]docs/team-tls.md[/bold] for a 5-minute setup guide.\n"
+            )
 
     # Opt-in telemetry prompt — shown exactly once on first run
     from autotune.telemetry import maybe_prompt_consent
@@ -3473,6 +3488,10 @@ def serve(host: str, port: int, reload: bool, enable_mlx: bool) -> None:
         port=port,
         reload=reload,
         log_level="warning",
+        server_header=False,      # don't advertise uvicorn in Server: response header
+        access_log=False,         # main app logger handles structured request logging
+        ssl_certfile=ssl_certfile or None,
+        ssl_keyfile=ssl_keyfile or None,
     )
 
 

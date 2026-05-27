@@ -151,12 +151,12 @@ export default function Home() {
       {/* ── Nav ── */}
       <nav className="fixed top-0 z-50 w-full border-b border-white/5 bg-[#09090f]/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
+          <a href="/" className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-tight text-white">autotune</span>
             <span className="hidden rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-medium text-violet-300 sm:block">
-              v1.1.2
+              v1.5.0
             </span>
-          </div>
+          </a>
           <div className="flex items-center gap-6 text-sm text-white/60">
             <a href="#how-it-works" className="hidden hover:text-white transition-colors sm:block">
               How it works
@@ -189,7 +189,7 @@ export default function Home() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 text-center pt-16">
+      <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 text-center pt-16 pb-20">
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -top-32 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-violet-600/10 blur-[100px]" />
           <div className="absolute bottom-0 left-0 h-[400px] w-[400px] rounded-full bg-blue-600/8 blur-[80px]" />
@@ -251,7 +251,7 @@ export default function Home() {
         </div>
 
         {/* Stats row */}
-        <div className="relative z-10 mt-20 grid grid-cols-2 gap-4 sm:grid-cols-4 max-w-4xl w-full animate-fade-up delay-400">
+        <div className="relative z-10 mt-32 grid grid-cols-2 gap-4 sm:grid-cols-4 max-w-4xl w-full animate-fade-up delay-400">
           {stats.map((s) => (
             <StatCard key={s.label} {...s} />
           ))}
@@ -1017,7 +1017,7 @@ export default function Home() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.1.2 — MIT License</span>
+            <span>autotune v1.5.0 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">

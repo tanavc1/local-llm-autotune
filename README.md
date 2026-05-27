@@ -252,6 +252,77 @@ AUTOTUNE_WAIT_TIMEOUT=120    # seconds before a queued request gets 429 (default
 
 ---
 
+## Web dashboard
+
+autotune ships a built-in monitoring and control dashboard at **`http://localhost:8765/dashboard`**. Start the server with `autotune serve` and open that URL in any browser.
+
+### Authentication
+
+Set `AUTOTUNE_ADMIN_KEY` before starting the server. The dashboard login page requires that key — it issues an HMAC-signed session cookie (valid 12 hours by default). All dashboard API routes reject unauthenticated requests with HTTP 401.
+
+```bash
+export AUTOTUNE_ADMIN_KEY="your-secret-key"
+autotune serve
+# → open http://localhost:8765/dashboard
+```
+
+### Dashboard panels
+
+| Panel | What it shows |
+|-------|--------------|
+| **Overview KPIs** | RAM used (with pressure colour), running models, requests today, avg TTFT, avg tok/s, KV savings vs the 4 096-token Ollama default |
+| **Requests chart** | 24-bucket bar chart of the last 24 hours |
+| **TTFT sparkline** | Last 100 requests coloured by latency tier (green / blue / yellow / red) |
+| **Raw vs Tuned** | autotune's average dynamic context vs Ollama's fixed 4 096-token default — shows context reduction %, KV memory savings %, and measured avg TTFT |
+| **Per-model breakdown** | Requests, avg/min/max TTFT, avg tok/s, avg context, total tokens, last used — for every model ever routed through autotune |
+| **Active API keys** | Requests and tokens consumed today per key |
+| **Slow requests** | Recent requests that took >5 s, with model, elapsed, TTFT, context, profile, timestamp |
+| **Suggestions** | Rule-based guidance derived from real data: high TTFT, RAM pressure, KV savings, slow requests |
+| **Model catalog** | Full 43-model registry with tier, parameter count, and hardware fit scores for your machine |
+| **Settings** | Live read/write panel for all configurable keys (see below) |
+
+The dashboard auto-polls all data every 10 seconds. A live/offline indicator appears in the header.
+
+### Settings tab
+
+Six settings can be read and updated live from the Settings tab or via the API:
+
+| Key | Type | Range | Default | Effect |
+|-----|------|-------|---------|--------|
+| `max_context_tokens` | int | 512–131 072 | 32 768 | Global context window ceiling |
+| `kv_cache_quant` | string | `f16`/`q8`/`q4` | `f16` | KV precision override |
+| `keep_alive_secs` | int | 0–86 400 | 300 | Model resident-memory duration in seconds |
+| `telemetry_enabled` | bool | `true`/`false` | `false` | Opt-in anonymous telemetry |
+| `retention_days` | int | 7–3 650 | 90 | Local run-observation history window |
+| `log_slow_threshold_ms` | int | 100–60 000 | 5 000 | Slow-request alert threshold in ms |
+
+```bash
+# Read all settings
+curl -s http://localhost:8765/api/dashboard/settings \
+  -H "Cookie: session=<your-session-cookie>" | jq .
+
+# Batch update
+curl -s -X POST http://localhost:8765/api/dashboard/settings \
+  -H "Cookie: session=<your-session-cookie>" \
+  -H "Content-Type: application/json" \
+  -d '{"settings": {"max_context_tokens": 16384, "keep_alive_secs": 600}}'
+
+# Prune old observations
+curl -s -X POST http://localhost:8765/api/dashboard/settings/cleanup \
+  -H "Cookie: session=<your-session-cookie>"
+```
+
+### Security posture
+
+- **AUTOTUNE_ADMIN_KEY** — all dashboard API routes require a valid session cookie derived from this key. No key set → dashboard routes return 503.
+- **HMAC-signed sessions** — session cookies are signed with `itsdangerous`. Tampered tokens are rejected.
+- **Revocation** — logout invalidates the session server-side via a SQLite-backed revoked-token table. Stolen cookies cannot be reused after logout.
+- **Rate limiting** — sliding-window limits: write routes 30 req/hour, read routes 300 req/min, session refresh 60 req/min. Exceeded → HTTP 429.
+- **CSP headers** — `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy` set on all responses.
+- **Whitelist** — only the 6 documented keys can be written via the settings API. Arbitrary key injection is blocked at the validation layer.
+
+---
+
 ## Model recommendations by hardware
 
 | RAM | Recommended model | Pull command | Why |

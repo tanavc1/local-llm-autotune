@@ -63,6 +63,24 @@ def _build_app() -> FastAPI:
 def auth_client(monkeypatch):
     """Client with AUTOTUNE_ADMIN_KEY set — auth is enforced."""
     monkeypatch.setenv("AUTOTUNE_ADMIN_KEY", TEST_KEY)
+    import autotune.dashboard.router as _router
+
+    # Reset module-level revocation state and prevent the real DB from being
+    # consulted.  itsdangerous tokens are second-resolution, so a logout in one
+    # test persists hash(token) to the real DB; the next test (same second) gets
+    # the same token and is incorrectly rejected as revoked.
+    monkeypatch.setattr(_router, "_revoked_loaded", False)
+    monkeypatch.setattr(_router, "_revoked_sessions", set())
+    # Make _load_revoked_from_db a no-op so it never queries the real DB.
+    monkeypatch.setattr(_router, "_load_revoked_from_db", lambda: None)
+    # Reset rate limiters — they are module-level and accumulate across tests.
+    monkeypatch.setattr(_router, "_write_limiter",
+                        _router._SlidingWindowLimiter(100_000, 3600))
+    monkeypatch.setattr(_router, "_read_limiter",
+                        _router._SlidingWindowLimiter(100_000, 60))
+    monkeypatch.setattr(_router, "_refresh_limiter",
+                        _router._SlidingWindowLimiter(100_000, 60))
+
     with patch.multiple("autotune.dashboard.metrics", **{
         k.split(".")[-1]: v for k, v in _METRICS_PATCHES.items()
     }):
@@ -343,6 +361,8 @@ class TestKeyManagementProxy:
             "id": "key-abc-123", "name": "test-key", "is_active": True,
         })
         db.revoke_api_key = MagicMock(return_value=True)
+        # Return a real empty set so session revocation checks work correctly.
+        db.load_revoked_session_hashes.return_value = set()
         return db
 
     def test_create_key_requires_session(self, auth_client):

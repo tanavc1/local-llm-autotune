@@ -50,7 +50,16 @@ def _run_security(monkeypatch, *, env: dict | None = None,
     mock_disk.free = int(disk_free_gb * 1024**3)
 
     mock_db = MagicMock()
-    mock_db.conn.execute.return_value.fetchone.return_value = {"n": db_active_keys}
+    # First call returns the active key count; second call (expires_at check) returns 0
+    _call_count = {"n": 0}
+    def _fetchone():
+        _call_count["n"] += 1
+        if _call_count["n"] == 1:
+            return {"n": db_active_keys}
+        return {"n": 0}  # no keys expiring soon
+    mock_db.conn.execute.return_value.fetchone.side_effect = _fetchone
+    # Also needed for path.stat() used in DB file check
+    mock_db.path = MagicMock()
 
     with (
         patch.dict("os.environ", base_env, clear=True),
@@ -123,27 +132,27 @@ class TestAdminKeyCheck:
     def test_error_when_no_admin_key(self, monkeypatch):
         checks = _run_security(monkeypatch, env={"AUTOTUNE_ADMIN_KEY": ""})
         by_name = _checks_by_name(checks)
-        assert by_name["Admin Key"]["status"] == "error"
+        assert by_name["Dashboard Auth"]["status"] == "error"
 
     def test_warn_when_short_admin_key(self, monkeypatch):
         checks = _run_security(monkeypatch, env={"AUTOTUNE_ADMIN_KEY": "short"})
         by_name = _checks_by_name(checks)
-        assert by_name["Admin Key"]["status"] == "warn"
-        assert "5" in by_name["Admin Key"]["message"]  # char count in message
+        assert by_name["Dashboard Auth"]["status"] == "warn"
+        assert "5" in by_name["Dashboard Auth"]["message"]  # char count in message
 
     def test_ok_when_strong_admin_key(self, monkeypatch):
         long_key = "a" * 48
         checks = _run_security(monkeypatch, env={"AUTOTUNE_ADMIN_KEY": long_key})
         by_name = _checks_by_name(checks)
-        assert by_name["Admin Key"]["status"] == "ok"
+        assert by_name["Dashboard Auth"]["status"] == "ok"
 
     def test_boundary_31_chars_warns(self, monkeypatch):
         checks = _run_security(monkeypatch, env={"AUTOTUNE_ADMIN_KEY": "x" * 31})
-        assert _checks_by_name(checks)["Admin Key"]["status"] == "warn"
+        assert _checks_by_name(checks)["Dashboard Auth"]["status"] == "warn"
 
     def test_boundary_32_chars_ok(self, monkeypatch):
         checks = _run_security(monkeypatch, env={"AUTOTUNE_ADMIN_KEY": "x" * 32})
-        assert _checks_by_name(checks)["Admin Key"]["status"] == "ok"
+        assert _checks_by_name(checks)["Dashboard Auth"]["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -154,38 +163,44 @@ class TestActiveKeysCheck:
     def test_present_only_when_enforcement_is_on(self, monkeypatch):
         checks_off = _run_security(monkeypatch, env={"AUTOTUNE_REQUIRE_API_KEY": "0"})
         names_off = [c["check"] for c in checks_off]
-        assert "Active Keys" not in names_off
+        assert "Active API Keys" not in names_off
 
     def test_warn_when_no_active_keys(self, monkeypatch):
         checks = _run_security(monkeypatch, db_active_keys=0)
-        assert _checks_by_name(checks)["Active Keys"]["status"] == "warn"
+        assert _checks_by_name(checks)["Active API Keys"]["status"] == "warn"
 
     def test_ok_when_keys_exist(self, monkeypatch):
         checks = _run_security(monkeypatch, db_active_keys=3)
-        assert _checks_by_name(checks)["Active Keys"]["status"] == "ok"
-        assert "3" in _checks_by_name(checks)["Active Keys"]["message"]
+        assert _checks_by_name(checks)["Active API Keys"]["status"] == "ok"
+        assert "3" in _checks_by_name(checks)["Active API Keys"]["message"]
 
 
 # ---------------------------------------------------------------------------
 # RAM check
 # ---------------------------------------------------------------------------
 
+def _ram_check(checks: list) -> dict:
+    """Get the RAM health check by either name variant (RAM or RAM Pressure)."""
+    by = _checks_by_name(checks)
+    return by.get("RAM Pressure") or by.get("RAM") or {}
+
+
 class TestRamCheck:
     def test_ok_below_threshold(self, monkeypatch):
         checks = _run_security(monkeypatch, ram_pct=60.0)
-        assert _checks_by_name(checks)["RAM"]["status"] == "ok"
+        assert _ram_check(checks).get("status") == "ok"
 
     def test_warn_above_88_percent(self, monkeypatch):
         checks = _run_security(monkeypatch, ram_pct=90.0)
-        assert _checks_by_name(checks)["RAM"]["status"] == "warn"
+        assert _ram_check(checks).get("status") == "warn"
 
     def test_boundary_exactly_88_is_ok(self, monkeypatch):
         checks = _run_security(monkeypatch, ram_pct=88.0)
-        assert _checks_by_name(checks)["RAM"]["status"] == "ok"
+        assert _ram_check(checks).get("status") == "ok"
 
     def test_boundary_89_is_warn(self, monkeypatch):
         checks = _run_security(monkeypatch, ram_pct=89.0)
-        assert _checks_by_name(checks)["RAM"]["status"] == "warn"
+        assert _ram_check(checks).get("status") == "warn"
 
 
 # ---------------------------------------------------------------------------

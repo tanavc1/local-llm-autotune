@@ -70,6 +70,10 @@ def _db_path() -> Path:
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
+PRAGMA synchronous=NORMAL;
+PRAGMA cache_size=-32768;
+PRAGMA temp_store=MEMORY;
+PRAGMA mmap_size=268435456;
 
 -- ---------------------------------------------------------------------------
 -- models: HuggingFace architecture + memory data (always stored)
@@ -146,6 +150,11 @@ CREATE TABLE IF NOT EXISTS models (
     -- use cases
     use_cases               TEXT,               -- JSON array
 
+    -- catalog/display
+    ollama_tag              TEXT,               -- e.g. "qwen3:8b" — Ollama pull command
+    tier                    TEXT,               -- "tiny"|"small"|"medium"|"large"|"xl"
+    is_local                INTEGER DEFAULT 0,  -- 1 = currently installed on this machine
+
     -- metadata
     fetched_at              REAL NOT NULL,      -- unix timestamp
     raw_config              TEXT                -- full config.json as JSON string
@@ -167,6 +176,9 @@ CREATE TABLE IF NOT EXISTS hardware_profiles (
     gpu_backend             TEXT,               -- "cuda" | "metal" | "rocm" | "none"
     gpu_vram_gb             REAL,
     is_unified_memory       INTEGER DEFAULT 0,
+    metal_gpu_cores         INTEGER,            -- Apple Silicon GPU core count (NULL on non-Apple)
+    cpu_freq_mhz            REAL,               -- CPU base clock in MHz
+    storage_type            TEXT,               -- "ssd" | "hdd" | "nvme" | "unknown"
     first_seen              REAL NOT NULL,
     last_seen               REAL NOT NULL
 );
@@ -192,6 +204,12 @@ CREATE TABLE IF NOT EXISTS run_observations (
     bench_tag               TEXT,               -- label for bench run comparisons
     f16_kv                  INTEGER,            -- 1=F16 KV, 0=Q8 KV
     num_keep                INTEGER,            -- tokens pinned in KV prefix cache
+    backend                 TEXT,               -- "ollama" | "mlx" | "lmstudio"
+    request_id              TEXT,               -- UUID per request (dedup / correlation)
+    conversation_id         TEXT,               -- gateway_log conversation link
+    stress_retry            INTEGER DEFAULT 0,  -- 1 = request was retried due to RAM pressure
+    thinking_tokens         INTEGER,            -- scratchpad tokens for CoT/thinking models
+    error_code              TEXT,               -- structured error code on failure
 
     -- throughput
     tokens_per_sec          REAL,               -- prompt-eval throughput (tok/s)
@@ -273,14 +291,29 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
 );
 
 -- ---------------------------------------------------------------------------
--- Indexes
+-- settings: persistent user/admin preferences (key-value store)
 -- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  REAL NOT NULL,
+    description TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- Indexes (only on columns that exist in the base schema)
+-- Indexes on migrated/added columns are created in _migrate() after ALTER TABLE.
+-- ---------------------------------------------------------------------------
+
+-- run_observations — core lookup patterns
+CREATE INDEX IF NOT EXISTS idx_runs_observed    ON run_observations(observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_model       ON run_observations(model_id);
 CREATE INDEX IF NOT EXISTS idx_runs_hardware    ON run_observations(hardware_id);
 CREATE INDEX IF NOT EXISTS idx_runs_quant       ON run_observations(quant);
-CREATE INDEX IF NOT EXISTS idx_runs_observed    ON run_observations(observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_session     ON run_observations(session_id)
     WHERE session_id IS NOT NULL;
+
+-- telemetry_events
 CREATE INDEX IF NOT EXISTS idx_telemetry_run    ON telemetry_events(run_id)
     WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_telemetry_model  ON telemetry_events(model_id)
@@ -310,6 +343,14 @@ class Database:
         # async event loop and background threads; SQLite handles this safely
         # when operations are serialised via the transaction() context manager.
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        # Restrict the DB file to owner read/write only (rw-------, 0o600).
+        # This prevents other OS users on a shared system from reading API keys
+        # and conversation history.  Silently skipped on Windows.
+        try:
+            import stat
+            os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
+        except (OSError, NotImplementedError, AttributeError):
+            pass
         self._conn.row_factory = sqlite3.Row
         # Pre-migration: add any columns that the main SCHEMA script now indexes
         # but that older databases may not have.  Must run BEFORE executescript so
@@ -363,6 +404,7 @@ class Database:
         already exists.
         """
         new_cols = [
+            # run_observations — original migrations
             ("run_observations", "profile_name",      "TEXT"),
             ("run_observations", "bench_tag",          "TEXT"),
             ("run_observations", "f16_kv",             "INTEGER"),
@@ -380,6 +422,22 @@ class Database:
             ("run_observations", "prompt_tokens",      "INTEGER"),
             ("run_observations", "completion_tokens",  "INTEGER"),
             ("run_observations", "error_msg",          "TEXT"),
+            ("run_observations", "concurrent_models",  "INTEGER"),  # #models loaded at request time
+            # run_observations — v1.5+ additions
+            ("run_observations", "backend",            "TEXT"),
+            ("run_observations", "request_id",         "TEXT"),
+            ("run_observations", "conversation_id",    "TEXT"),
+            ("run_observations", "stress_retry",       "INTEGER"),
+            ("run_observations", "thinking_tokens",    "INTEGER"),
+            ("run_observations", "error_code",         "TEXT"),
+            # hardware_profiles — v1.5+ additions
+            ("hardware_profiles", "metal_gpu_cores",   "INTEGER"),
+            ("hardware_profiles", "cpu_freq_mhz",      "REAL"),
+            ("hardware_profiles", "storage_type",      "TEXT"),
+            # models — catalog additions
+            ("models", "ollama_tag",                   "TEXT"),
+            ("models", "tier",                         "TEXT"),
+            ("models", "is_local",                     "INTEGER"),
         ]
         for table, col, col_type in new_cols:
             try:
@@ -390,10 +448,13 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
-        # Indexes on new columns — created after the columns exist
+        # Indexes on new/migrated columns — created after the columns exist
         new_indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_runs_tag     ON run_observations(bench_tag)",
-            "CREATE INDEX IF NOT EXISTS idx_runs_profile ON run_observations(profile_name)",
+            "CREATE INDEX IF NOT EXISTS idx_runs_tag        ON run_observations(bench_tag)",
+            "CREATE INDEX IF NOT EXISTS idx_runs_profile    ON run_observations(profile_name)",
+            "CREATE INDEX IF NOT EXISTS idx_runs_backend    ON run_observations(backend) WHERE backend IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_runs_request_id ON run_observations(request_id) WHERE request_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_runs_model_time ON run_observations(model_id, observed_at DESC)",
         ]
         for idx_sql in new_indexes:
             try:
@@ -404,6 +465,8 @@ class Database:
 
         # API key tables (added in v1.2)
         self._migrate_api_key_tables()
+        # Settings table (added in v1.5)
+        self._migrate_settings_table()
 
     _API_KEY_SCHEMA = """
     CREATE TABLE IF NOT EXISTS api_keys (
@@ -413,6 +476,7 @@ class Database:
         key_hash        TEXT NOT NULL UNIQUE,
         is_active       INTEGER NOT NULL DEFAULT 1,
         created_at      REAL NOT NULL,
+        expires_at      REAL,
         last_used_at    REAL,
         revoked_at      REAL,
         revoked_reason  TEXT,
@@ -449,15 +513,80 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_aku_status
         ON api_key_usage(status, day DESC)
         WHERE status != 'success';
+
+    CREATE TABLE IF NOT EXISTS revoked_sessions (
+        token_hash  TEXT PRIMARY KEY,
+        revoked_at  REAL NOT NULL,
+        expires_at  REAL NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires
+        ON revoked_sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS security_events (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        event     TEXT    NOT NULL,
+        severity  TEXT    NOT NULL DEFAULT 'info',
+        ts        REAL    NOT NULL,
+        ip        TEXT,
+        path      TEXT,
+        details   TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sec_events_ts
+        ON security_events(ts DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_sec_events_event
+        ON security_events(event, ts DESC);
     """
 
     def _migrate_api_key_tables(self) -> None:
-        """Create API key tables if they don't exist (idempotent)."""
+        """Create API key tables if they don't exist, then apply column migrations."""
         try:
             self._conn.executescript(self._API_KEY_SCHEMA)
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+
+        # Column migrations for existing api_keys tables (added in v1.4+)
+        for col, col_type in (("expires_at", "REAL"),):
+            try:
+                self._conn.execute(f"ALTER TABLE api_keys ADD COLUMN {col} {col_type}")
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+    _SETTINGS_DEFAULTS: dict[str, tuple[str, str]] = {
+        # key: (default_value, description)
+        "default_qos_profile":          ("balanced", "Default QOS profile: fast | balanced | quality"),
+        "ollama_url":                    ("",         "Ollama base URL override (empty = use env var or localhost:11434)"),
+        "catalog_refresh_interval_h":   ("24",       "Hours between automatic catalog refreshes"),
+        "dashboard_session_timeout_h":  ("24",       "Dashboard session cookie lifetime in hours"),
+        "show_thinking_tokens":         ("0",        "Show CoT/thinking token count in UI (1=yes, 0=no)"),
+        "retention_days":               ("90",       "Days to keep run_observations rows (0 = keep forever)"),
+    }
+
+    def _migrate_settings_table(self) -> None:
+        """Ensure settings table exists and seed missing defaults."""
+        try:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS settings (
+                       key         TEXT PRIMARY KEY,
+                       value       TEXT NOT NULL,
+                       updated_at  REAL NOT NULL,
+                       description TEXT
+                   )"""
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        now = time.time()
+        for key, (default_val, desc) in self._SETTINGS_DEFAULTS.items():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value, updated_at, description) VALUES (?,?,?,?)",
+                (key, default_val, now, desc),
+            )
+        self._conn.commit()
 
     @contextmanager
     def transaction(self) -> Generator[sqlite3.Connection, None, None]:
@@ -793,6 +922,92 @@ class Database:
                 (time.time(), key_id),
             )
 
+    # ------------------------------------------------------------------ #
+    # Session revocation                                                   #
+    # ------------------------------------------------------------------ #
+
+    def add_revoked_session(self, token_hash: str, expires_at: float) -> None:
+        """Persist a revoked session hash so it survives restarts."""
+        with self.transaction():
+            self.conn.execute(
+                """INSERT OR IGNORE INTO revoked_sessions
+                   (token_hash, revoked_at, expires_at) VALUES (?, ?, ?)""",
+                (token_hash, time.time(), expires_at),
+            )
+
+    def load_revoked_session_hashes(self) -> set:
+        """Return all non-expired revoked session hashes and prune stale rows."""
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT token_hash FROM revoked_sessions WHERE expires_at > ?", (now,)
+        ).fetchall()
+        # Prune expired entries while we're here
+        with self.transaction():
+            self.conn.execute(
+                "DELETE FROM revoked_sessions WHERE expires_at <= ?", (now,)
+            )
+        return {r[0] for r in rows}
+
+    # ------------------------------------------------------------------ #
+    # Security event log                                                   #
+    # ------------------------------------------------------------------ #
+
+    def add_security_event(
+        self,
+        event: str,
+        severity: str,
+        ts: float,
+        ip: Optional[str],
+        path: Optional[str],
+        details: Optional[str],
+    ) -> None:
+        """Persist one audit event.  Trims the table to 10 000 rows automatically."""
+        with self.transaction():
+            self.conn.execute(
+                """INSERT INTO security_events
+                   (event, severity, ts, ip, path, details)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (event, severity, ts, ip, path, details),
+            )
+            # Keep table bounded: delete oldest rows beyond the cap
+            self.conn.execute(
+                """DELETE FROM security_events WHERE id NOT IN (
+                       SELECT id FROM security_events ORDER BY ts DESC LIMIT 10000
+                   )"""
+            )
+
+    def get_security_events(
+        self,
+        limit: int = 200,
+        event_filter: Optional[str] = None,
+        severity_filter: Optional[str] = None,
+    ) -> list[dict]:
+        """Return recent security events, newest first."""
+        conditions, params = [], []
+        if event_filter:
+            conditions.append("event = ?")
+            params.append(event_filter)
+        if severity_filter:
+            conditions.append("severity = ?")
+            params.append(severity_filter)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(max(1, min(limit, 1000)))
+        rows = self.conn.execute(
+            f"SELECT * FROM security_events {where} ORDER BY ts DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_security_stats_24h(self) -> dict:
+        """Return per-event counts for the last 24 hours."""
+        since = time.time() - 86400
+        rows = self.conn.execute(
+            """SELECT event, COUNT(*) as n FROM security_events
+               WHERE ts >= ? GROUP BY event""",
+            (since,),
+        ).fetchall()
+        return {r["event"]: r["n"] for r in rows}
+
     def log_api_key_usage(self, data: dict[str, Any]) -> int:
         """Append one usage record. Returns the new row ID."""
         data = dict(data)
@@ -855,6 +1070,80 @@ class Database:
             args.append(end_day)
         q += " GROUP BY u.key_id, u.day, u.model_id, u.backend ORDER BY u.day DESC, k.name"
         return [dict(r) for r in self.conn.execute(q, args).fetchall()]
+
+    # ------------------------------------------------------------------ #
+    # Settings CRUD                                                        #
+    # ------------------------------------------------------------------ #
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Return a setting value by key, or *default* if not found."""
+        row = self.conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str, description: Optional[str] = None) -> None:
+        """Upsert a setting; updates updated_at and description when provided."""
+        if description is not None:
+            with self.transaction():
+                self.conn.execute(
+                    """INSERT INTO settings (key, value, updated_at, description)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET
+                           value=excluded.value, updated_at=excluded.updated_at,
+                           description=COALESCE(excluded.description, settings.description)""",
+                    (key, value, time.time(), description),
+                )
+        else:
+            with self.transaction():
+                self.conn.execute(
+                    """INSERT INTO settings (key, value, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                    (key, value, time.time()),
+                )
+
+    def get_all_settings(self) -> dict[str, dict]:
+        """Return all settings as {key: {value, updated_at, description}}."""
+        rows = self.conn.execute(
+            "SELECT key, value, updated_at, description FROM settings ORDER BY key"
+        ).fetchall()
+        return {
+            r["key"]: {
+                "value":       r["value"],
+                "updated_at":  r["updated_at"],
+                "description": r["description"],
+            }
+            for r in rows
+        }
+
+    # ------------------------------------------------------------------ #
+    # Maintenance                                                          #
+    # ------------------------------------------------------------------ #
+
+    def cleanup_old_data(self, retention_days: int = 90) -> dict[str, int]:
+        """Prune old run_observations rows beyond retention_days. Returns deleted counts."""
+        if retention_days <= 0:
+            return {"run_observations": 0, "telemetry_events": 0, "security_events": 0}
+        cutoff = time.time() - retention_days * 86400
+        deleted: dict[str, int] = {}
+        with self.transaction():
+            cur = self.conn.execute(
+                "DELETE FROM run_observations WHERE observed_at < ?", (cutoff,)
+            )
+            deleted["run_observations"] = cur.rowcount
+            cur = self.conn.execute(
+                "DELETE FROM telemetry_events WHERE observed_at < ?", (cutoff,)
+            )
+            deleted["telemetry_events"] = cur.rowcount
+        # Security events already bounded to 10k rows by add_security_event()
+        deleted["security_events"] = 0
+        return deleted
+
+    def optimize(self) -> None:
+        """Run PRAGMA optimize and WAL checkpoint to keep the DB healthy."""
+        self.conn.execute("PRAGMA optimize")
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     # ------------------------------------------------------------------ #
     # Agent benchmark tables (migration + CRUD)                           #
@@ -1011,11 +1300,14 @@ class Database:
 
     def stats(self) -> dict[str, Any]:
         return {
-            "models": self.conn.execute("SELECT COUNT(*) FROM models").fetchone()[0],
+            "models":            self.conn.execute("SELECT COUNT(*) FROM models").fetchone()[0],
             "hardware_profiles": self.conn.execute("SELECT COUNT(*) FROM hardware_profiles").fetchone()[0],
-            "run_observations": self.conn.execute("SELECT COUNT(*) FROM run_observations").fetchone()[0],
-            "db_path": str(self.path),
-            "db_size_mb": round(self.path.stat().st_size / 1024**2, 3) if self.path.exists() else 0,
+            "run_observations":  self.conn.execute("SELECT COUNT(*) FROM run_observations").fetchone()[0],
+            "telemetry_events":  self.conn.execute("SELECT COUNT(*) FROM telemetry_events").fetchone()[0],
+            "security_events":   self.conn.execute("SELECT COUNT(*) FROM security_events").fetchone()[0],
+            "settings":          self.conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0],
+            "db_path":           str(self.path),
+            "db_size_mb":        round(self.path.stat().st_size / 1024**2, 3) if self.path.exists() else 0,
         }
 
 
