@@ -14,7 +14,12 @@ Stores richer data than the in-memory MODEL_REGISTRY:
 The catalog lives at ~/.autotune/model_catalog.json and auto-refreshes
 every update_interval_days (default 4). On first access it is seeded from
 the bundled baseline below, which is compiled from Open LLM Leaderboard,
-Ollama library downloads, and HuggingFace trending as of May 2026.
+Ollama library downloads, and HuggingFace trending as of June 2026.
+
+Tags are verified against the live Ollama library — every `ollama_tag`
+below is a real, pullable slug. Benchmark figures for the newest June-2026
+releases (gpt-oss, qwen3-coder, qwen3.5/3.6, gemma4, devstral) are the
+best available at publication and are refined as papers/leaderboards land.
 """
 from __future__ import annotations
 
@@ -29,7 +34,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 CATALOG_PATH: Path = Path.home() / ".autotune" / "model_catalog.json"
-_CATALOG_VERSION = "2"
+_CATALOG_VERSION = "3"   # bump → forces reseed from the June-2026 baseline
 DEFAULT_UPDATE_INTERVAL_DAYS = 4
 
 
@@ -78,7 +83,7 @@ class CatalogEntry:
 
 
 # ---------------------------------------------------------------------------
-# Baseline catalog — compiled May 2026
+# Baseline catalog — compiled June 2026
 # Sources: Open LLM Leaderboard, model papers, Ollama library, HF trending
 # ---------------------------------------------------------------------------
 
@@ -198,15 +203,25 @@ _BASELINE_ENTRIES: list[dict] = [
          bench_mmlu=0.700, bench_humaneval=0.580, bench_gsm8k=0.840,
          bench_math=None, speed_class="fast", source="ollama", added_at="2026-05-25"),
 
-    dict(id="gemma4:4b", name="Gemma 4 4B", family="gemma4", tier="small",
-         parameters_b=4.00, size_gb=2.5, ram_gb=3.1, context_k=128,
-         ollama_tag="gemma4:4b", hf_repo="google/gemma-4-4b-it",
-         mlx_repo="mlx-community/gemma-4-4b-it-4bit",
-         description="Google Gemma 4 4B — multimodal-capable, strong reasoning, 128k context",
-         highlight="Gemma4 compact — best sub-3GB general model",
-         tags=["general", "multilingual", "multimodal", "long-context"],
-         bench_mmlu=0.740, bench_humaneval=0.680, bench_gsm8k=0.870,
-         bench_math=None, speed_class="fast", source="ollama", added_at="2026-05-25"),
+    dict(id="qwen3.5:4b", name="Qwen 3.5 4B", family="qwen3.5", tier="small",
+         parameters_b=4.00, size_gb=2.6, ram_gb=3.3, context_k=256,
+         ollama_tag="qwen3.5:4b", hf_repo="Qwen/Qwen3.5-4B",
+         mlx_repo="mlx-community/Qwen3.5-4B-4bit",
+         description="Qwen 3.5 4B — newest small Qwen, hybrid thinking, 256k context, strong reasoning per GB",
+         highlight="⭐ Best new small model (June 2026)",
+         tags=["reasoning", "coding", "multilingual", "long-context", "chain-of-thought"],
+         bench_mmlu=0.700, bench_humaneval=0.620, bench_gsm8k=0.860,
+         bench_math=0.690, speed_class="fast", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="gemma3n:e4b", name="Gemma 3n E4B", family="gemma3n", tier="small",
+         parameters_b=4.00, size_gb=2.5, ram_gb=3.1, context_k=32,
+         ollama_tag="gemma3n:e4b", hf_repo="google/gemma-3n-E4B-it",
+         mlx_repo="mlx-community/gemma-3n-E4B-it-4bit",
+         description="Google Gemma 3n E4B — on-device multimodal (text+vision+audio), MatFormer, ~3GB RAM",
+         highlight="Best on-device multimodal under 4GB",
+         tags=["general", "multimodal", "vision", "audio", "edge"],
+         bench_mmlu=0.640, bench_humaneval=0.480, bench_gsm8k=0.700,
+         bench_math=None, speed_class="fast", source="ollama", added_at="2026-06-30", is_new=True),
 
     dict(id="deepseek-r1:7b", name="DeepSeek R1 Distill 7B", family="deepseek", tier="small",
          parameters_b=7.62, size_gb=4.7, ram_gb=5.9, context_k=128,
@@ -224,8 +239,8 @@ _BASELINE_ENTRIES: list[dict] = [
          parameters_b=8.00, size_gb=5.2, ram_gb=6.5, context_k=32,
          ollama_tag="qwen3:8b", hf_repo="Qwen/Qwen3-8B",
          mlx_repo="mlx-community/Qwen3-8B-4bit",
-         description="Qwen3 8B — near-frontier quality, hybrid thinking/non-thinking, best 8B available",
-         highlight="⭐ Best overall 8B model",
+         description="Qwen3 8B — near-frontier quality, hybrid thinking/non-thinking, proven 8B workhorse",
+         highlight="Proven 8B workhorse (try Qwen 3.5 9B for the newest)",
          tags=["reasoning", "coding", "multilingual", "chain-of-thought", "general"],
          bench_mmlu=0.740, bench_humaneval=0.680, bench_gsm8k=0.900,
          bench_math=0.780, speed_class="medium", source="ollama", added_at="2026-05-25"),
@@ -300,6 +315,36 @@ _BASELINE_ENTRIES: list[dict] = [
          bench_mmlu=0.778, bench_humaneval=0.710, bench_gsm8k=0.890,
          bench_math=None, speed_class="medium", source="ollama", added_at="2026-05-25"),
 
+    dict(id="qwen3.5:9b", name="Qwen 3.5 9B", family="qwen3.5", tier="medium",
+         parameters_b=9.0, size_gb=5.6, ram_gb=7.0, context_k=256,
+         ollama_tag="qwen3.5:9b", hf_repo="Qwen/Qwen3.5-9B",
+         mlx_repo="mlx-community/Qwen3.5-9B-4bit",
+         description="Qwen 3.5 9B — newest mid Qwen, hybrid thinking, 256k context, a clear upgrade over Qwen3 8B",
+         highlight="⭐ Best overall 8–9B model (June 2026)",
+         tags=["reasoning", "coding", "multilingual", "long-context", "chain-of-thought", "general"],
+         bench_mmlu=0.770, bench_humaneval=0.730, bench_gsm8k=0.930,
+         bench_math=0.810, speed_class="medium", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="gpt-oss:20b", name="GPT-OSS 20B (MoE)", family="gpt-oss", tier="medium",
+         parameters_b=21.0, size_gb=14.0, ram_gb=16.0, context_k=128,
+         ollama_tag="gpt-oss:20b", hf_repo="openai/gpt-oss-20b",
+         mlx_repo="mlx-community/gpt-oss-20b-MXFP4-Q4",
+         description="OpenAI GPT-OSS 20B — open-weight MoE (3.6B active), adjustable reasoning effort, ~o3-mini quality, MXFP4 fits 16GB",
+         highlight="⭐ Best reasoning model for a 16GB machine",
+         tags=["reasoning", "coding", "math", "chain-of-thought", "moe", "general"],
+         bench_mmlu=0.830, bench_humaneval=0.870, bench_gsm8k=0.950,
+         bench_math=0.910, speed_class="fast", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="gemma4:12b", name="Gemma 4 12B", family="gemma4", tier="medium",
+         parameters_b=12.0, size_gb=8.1, ram_gb=10.1, context_k=128,
+         ollama_tag="gemma4:12b", hf_repo="google/gemma-4-12b-it",
+         mlx_repo="mlx-community/gemma-4-12b-it-4bit",
+         description="Google Gemma 4 12B — multimodal with native audio, runs in 16GB, strong reasoning + vision",
+         highlight="⭐ Best multimodal model for 16GB",
+         tags=["general", "multimodal", "vision", "audio", "multilingual", "long-context"],
+         bench_mmlu=0.790, bench_humaneval=0.720, bench_gsm8k=0.890,
+         bench_math=None, speed_class="medium", source="ollama", added_at="2026-06-30", is_new=True),
+
     # ── Large (12–20 GB, 13–24B params) ────────────────────────────────────
 
     dict(id="qwen3:14b", name="Qwen3 14B", family="qwen3", tier="large",
@@ -362,15 +407,25 @@ _BASELINE_ENTRIES: list[dict] = [
          bench_mmlu=0.810, bench_humaneval=0.720, bench_gsm8k=0.870,
          bench_math=None, speed_class="slow", source="ollama", added_at="2026-05-25"),
 
-    dict(id="gemma4:27b", name="Gemma 4 27B", family="gemma4", tier="large",
-         parameters_b=27.0, size_gb=17.0, ram_gb=21.3, context_k=256,
-         ollama_tag="gemma4:27b", hf_repo="google/gemma-4-27b-it",
-         mlx_repo="mlx-community/gemma-4-27b-it-4bit",
-         description="Google Gemma 4 27B — 256k context, multimodal, top Google open model",
-         highlight="Longest context 27B (256k)",
-         tags=["general", "multimodal", "long-context", "reasoning"],
+    dict(id="devstral:24b", name="Devstral 24B", family="devstral", tier="large",
+         parameters_b=24.0, size_gb=14.0, ram_gb=17.5, context_k=128,
+         ollama_tag="devstral:24b", hf_repo="mistralai/Devstral-Small-2505",
+         mlx_repo="mlx-community/Devstral-Small-2505-4bit",
+         description="Mistral Devstral 24B — agentic coding specialist tuned for multi-file edits and tool use, strong SWE-Bench Verified",
+         highlight="⭐ Best agentic coding model at 24B",
+         tags=["coding", "agentic", "tool-use", "long-context"],
+         bench_mmlu=0.780, bench_humaneval=0.840, bench_gsm8k=0.840,
+         bench_math=None, speed_class="slow", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="gemma4:26b", name="Gemma 4 26B (MoE)", family="gemma4", tier="xl",
+         parameters_b=26.0, size_gb=17.0, ram_gb=21.3, context_k=256,
+         ollama_tag="gemma4:26b", hf_repo="google/gemma-4-26b-it",
+         mlx_repo="mlx-community/gemma-4-26b-it-4bit",
+         description="Google Gemma 4 26B MoE (~4B active) — multimodal, 256k context, ~85 tok/s on consumer GPUs",
+         highlight="Fastest 26B-class multimodal (MoE)",
+         tags=["general", "multimodal", "vision", "reasoning", "moe", "long-context"],
          bench_mmlu=0.852, bench_humaneval=0.890, bench_gsm8k=0.930,
-         bench_math=None, speed_class="slow", source="ollama", added_at="2026-05-25"),
+         bench_math=None, speed_class="medium", source="ollama", added_at="2026-06-30", is_new=True),
 
     dict(id="gemma3:27b", name="Gemma 3 27B", family="gemma3", tier="large",
          parameters_b=27.2, size_gb=17.0, ram_gb=21.3, context_k=128,
@@ -383,6 +438,26 @@ _BASELINE_ENTRIES: list[dict] = [
          bench_math=None, speed_class="slow", source="ollama", added_at="2026-05-25"),
 
     # ── XL (20–48 GB, 25–75B params) ───────────────────────────────────────
+
+    dict(id="qwen3.6:27b", name="Qwen 3.6 27B", family="qwen3.6", tier="xl",
+         parameters_b=27.0, size_gb=17.0, ram_gb=21.3, context_k=256,
+         ollama_tag="qwen3.6:27b", hf_repo="Qwen/Qwen3.6-27B",
+         mlx_repo="mlx-community/Qwen3.6-27B-4bit",
+         description="Qwen 3.6 27B dense — best overall model on consumer hardware, fits 24GB at Q4, 77.2% SWE-bench, hybrid thinking",
+         highlight="⭐⭐ Best overall on consumer hardware (June 2026)",
+         tags=["reasoning", "coding", "agentic", "multilingual", "long-context", "chain-of-thought", "general"],
+         bench_mmlu=0.860, bench_humaneval=0.900, bench_gsm8k=0.960,
+         bench_math=0.900, speed_class="slow", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="qwen3-coder:30b", name="Qwen3-Coder 30B (MoE)", family="qwen3", tier="xl",
+         parameters_b=30.5, size_gb=19.0, ram_gb=24.0, context_k=256,
+         ollama_tag="qwen3-coder:30b", hf_repo="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+         mlx_repo="mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+         description="Qwen3-Coder 30B MoE (3.3B active) — top open agentic coding model, 256k native context (1M extended), 7B-class speed",
+         highlight="⭐ Best open-source coding model (June 2026)",
+         tags=["coding", "agentic", "tool-use", "moe", "long-context"],
+         bench_mmlu=0.820, bench_humaneval=0.920, bench_gsm8k=0.910,
+         bench_math=None, speed_class="medium", source="ollama", added_at="2026-06-30", is_new=True),
 
     dict(id="qwen3:30b-a3b", name="Qwen3 30B-A3B (MoE)", family="qwen3", tier="xl",
          parameters_b=30.5, size_gb=17.0, ram_gb=21.3, context_k=128,
@@ -428,8 +503,8 @@ _BASELINE_ENTRIES: list[dict] = [
          parameters_b=32.5, size_gb=20.0, ram_gb=25.0, context_k=128,
          ollama_tag="qwen2.5-coder:32b", hf_repo="Qwen/Qwen2.5-Coder-32B-Instruct",
          mlx_repo="mlx-community/Qwen2.5-Coder-32B-Instruct-4bit",
-         description="Qwen 2.5 Coder 32B — top open-source coding model, near GPT-4o on all code benchmarks",
-         highlight="⭐ Best open-source coding model (32B)",
+         description="Qwen 2.5 Coder 32B — excellent dense coding model, near GPT-4o on code benchmarks",
+         highlight="Top dense coding model (32B) — see Qwen3-Coder for the newest",
          tags=["coding", "general"],
          bench_mmlu=0.830, bench_humaneval=0.920, bench_gsm8k=0.900,
          bench_math=None, speed_class="slow", source="ollama", added_at="2026-05-25"),
@@ -486,15 +561,25 @@ _BASELINE_ENTRIES: list[dict] = [
          bench_mmlu=0.865, bench_humaneval=0.861, bench_gsm8k=0.916,
          bench_math=None, speed_class="slow", source="ollama", added_at="2026-05-25"),
 
-    dict(id="qwen3:72b", name="Qwen3 72B", family="qwen3", tier="flagship",
-         parameters_b=72.0, size_gb=43.0, ram_gb=53.8, context_k=128,
-         ollama_tag="qwen3:72b", hf_repo="Qwen/Qwen3-72B",
-         mlx_repo="mlx-community/Qwen3-72B-4bit",
-         description="Qwen3 72B — hybrid thinking, top-tier quality, 64GB+ RAM",
-         highlight="⭐ Best balanced 70B+ model",
-         tags=["reasoning", "coding", "multilingual", "chain-of-thought", "general"],
-         bench_mmlu=0.875, bench_humaneval=0.890, bench_gsm8k=0.965,
-         bench_math=0.910, speed_class="slow", source="ollama", added_at="2026-05-25"),
+    dict(id="gpt-oss:120b", name="GPT-OSS 120B (MoE)", family="gpt-oss", tier="flagship",
+         parameters_b=120.0, size_gb=65.0, ram_gb=80.0, context_k=128,
+         ollama_tag="gpt-oss:120b", hf_repo="openai/gpt-oss-120b",
+         mlx_repo="mlx-community/gpt-oss-120b-MXFP4-Q4",
+         description="OpenAI GPT-OSS 120B — open-weight MoE flagship, adjustable reasoning effort, near-o3 quality, needs 80GB+ unified memory/VRAM",
+         highlight="⭐ Best open reasoning flagship you can self-host",
+         tags=["reasoning", "coding", "math", "chain-of-thought", "moe", "flagship"],
+         bench_mmlu=0.880, bench_humaneval=0.920, bench_gsm8k=0.970,
+         bench_math=0.950, speed_class="slow", source="ollama", added_at="2026-06-30", is_new=True),
+
+    dict(id="qwen3.5:35b", name="Qwen 3.5 35B", family="qwen3.5", tier="flagship",
+         parameters_b=35.0, size_gb=21.0, ram_gb=26.0, context_k=256,
+         ollama_tag="qwen3.5:35b", hf_repo="Qwen/Qwen3.5-35B",
+         mlx_repo="mlx-community/Qwen3.5-35B-4bit",
+         description="Qwen 3.5 35B dense — newest large Qwen, hybrid thinking, 256k context, frontier-class reasoning at 32GB+",
+         highlight="⭐ Best new dense model for 32GB rigs",
+         tags=["reasoning", "coding", "multilingual", "long-context", "chain-of-thought", "general"],
+         bench_mmlu=0.865, bench_humaneval=0.900, bench_gsm8k=0.965,
+         bench_math=0.905, speed_class="slow", source="ollama", added_at="2026-06-30", is_new=True),
 
     dict(id="qwen3:235b-a22b", name="Qwen3 235B-A22B (MoE)", family="qwen3", tier="flagship",
          parameters_b=235.0, size_gb=142.0, ram_gb=177.5, context_k=128,
@@ -540,7 +625,9 @@ def _make_default_catalog() -> dict:
         "last_updated": _fmt_ts(now),
         "next_update":  _fmt_ts(now + DEFAULT_UPDATE_INTERVAL_DAYS * 86400),
         "update_interval_days": DEFAULT_UPDATE_INTERVAL_DAYS,
-        "models": [dict(e, is_new=False) for e in _BASELINE_ENTRIES],
+        # Preserve a baseline entry's own is_new flag (defaults to False) so the
+        # latest releases surface a "NEW" badge in the CLI and dashboard.
+        "models": [dict(e, is_new=bool(e.get("is_new", False))) for e in _BASELINE_ENTRIES],
     }
 
 

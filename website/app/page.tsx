@@ -59,7 +59,7 @@ const benchmarks = [
     speed: "unchanged",
   },
   {
-    model: "gemma4:e2b",
+    model: "gemma3n:e4b",
     kvRaw: "96 MB",
     kvTuned: "30 MB",
     kvFreed: "66 MB",
@@ -69,7 +69,7 @@ const benchmarks = [
 ];
 
 const installSnippet = `pip install llm-autotune
-autotune chat --model qwen3:8b`;
+autotune start`;
 
 const dockerSnippet = `# Build once
 docker build -t autotune .
@@ -154,7 +154,7 @@ export default function Home() {
           <a href="/" className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-tight text-white">autotune</span>
             <span className="hidden rounded-full bg-violet-500/20 px-2 py-0.5 text-xs font-medium text-violet-300 sm:block">
-              v1.5.0
+              v1.6.0
             </span>
           </a>
           <div className="flex items-center gap-6 text-sm text-white/60">
@@ -163,6 +163,9 @@ export default function Home() {
             </a>
             <a href="#benchmarks" className="hidden hover:text-white transition-colors sm:block">
               Benchmarks
+            </a>
+            <a href="#dashboard" className="hidden hover:text-white transition-colors sm:block">
+              Dashboard
             </a>
             <a href="#quickstart" className="hidden hover:text-white transition-colors sm:block">
               Install
@@ -464,6 +467,179 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── Dashboard ── */}
+      <section id="dashboard" className="py-28 px-6">
+        <div className="mx-auto max-w-5xl">
+          <SectionLabel>Built-in dashboard</SectionLabel>
+          <h2 className="text-3xl font-bold text-white sm:text-4xl mb-4">
+            See every optimization, live.
+          </h2>
+          <p className="text-white/55 mb-10 max-w-2xl">
+            autotune ships a full monitoring and control dashboard — no extra install, no
+            external service, nothing sent to the cloud. Run{" "}
+            <code className="text-violet-300">autotune serve</code> and open{" "}
+            <code className="text-violet-300">localhost:8765/dashboard</code> in any browser.
+            It auto-refreshes every 10 seconds and shows exactly what autotune is doing to your
+            requests in real time.
+          </p>
+
+          {/* Browser-chrome mockup */}
+          <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden shadow-2xl shadow-violet-950/40">
+            {/* fake browser bar */}
+            <div className="flex items-center gap-2 border-b border-white/8 bg-white/[0.03] px-4 py-2.5">
+              <div className="flex gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-red-500/50" />
+                <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/50" />
+                <span className="h-2.5 w-2.5 rounded-full bg-green-500/50" />
+              </div>
+              <div className="ml-3 flex-1 rounded-md bg-black/40 px-3 py-1 text-[11px] font-mono text-white/40">
+                localhost:8765/dashboard
+              </div>
+              <span className="flex items-center gap-1.5 text-[11px] text-green-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" /> live
+              </span>
+            </div>
+
+            {/* dashboard body */}
+            <div className="p-5 sm:p-6">
+              {/* KPI row */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+                {[
+                  { label: "RAM used", val: "61%", tone: "text-green-300" },
+                  { label: "Running models", val: "2", tone: "text-white" },
+                  { label: "Requests today", val: "1,284", tone: "text-white" },
+                  { label: "Avg TTFT", val: "0.42s", tone: "text-violet-300" },
+                  { label: "Avg tok/s", val: "47.3", tone: "text-white" },
+                  { label: "KV saved", val: "67%", tone: "text-green-300" },
+                ].map((k) => (
+                  <div key={k.label} className="rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-white/35 mb-1">{k.label}</div>
+                    <div className={`font-mono text-lg font-bold ${k.tone}`}>{k.val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* panels */}
+              <div className="grid gap-3 lg:grid-cols-3">
+                {/* Requests — last 24h */}
+                <div className="rounded-xl border border-white/8 bg-white/[0.02] p-4">
+                  <div className="text-[10px] uppercase tracking-wider text-white/35 mb-3">Requests · last 24h</div>
+                  <div className="flex h-20 items-end gap-1">
+                    {[18, 26, 31, 22, 40, 55, 48, 62, 71, 58, 80, 67, 90, 76, 61, 49, 57, 44, 33, 41, 52, 38, 29, 24].map((h, i) => (
+                      <div key={i} className="flex-1 rounded-sm bg-violet-500/40" style={{ height: `${h}%` }} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* TTFT sparkline */}
+                <div className="rounded-xl border border-white/8 bg-white/[0.02] p-4">
+                  <div className="text-[10px] uppercase tracking-wider text-white/35 mb-3">TTFT · last 100 requests</div>
+                  <div className="flex h-20 items-end gap-[3px]">
+                    {[
+                      30, 22, 41, 28, 35, 52, 26, 19, 44, 31, 24, 38, 60, 29, 21, 33, 47, 25,
+                      18, 40, 27, 36, 55, 23, 30, 42, 20, 34, 48, 26,
+                    ].map((h, i) => (
+                      <div
+                        key={i}
+                        className={`flex-1 rounded-sm ${h > 50 ? "bg-yellow-400/60" : h > 35 ? "bg-blue-400/55" : "bg-green-400/55"}`}
+                        style={{ height: `${h}%` }}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-2 text-[10px] text-white/30">green &lt; 0.5s · blue &lt; 1s · yellow slower</div>
+                </div>
+
+                {/* Raw vs Tuned */}
+                <div className="rounded-xl border border-white/8 bg-white/[0.02] p-4">
+                  <div className="text-[10px] uppercase tracking-wider text-white/35 mb-3">Raw vs Tuned · qwen3:8b</div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
+                      <span className="text-[11px] text-white/50">Ollama default</span>
+                      <span className="font-mono text-sm font-bold text-white/60">576 MB</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
+                      <span className="text-[11px] text-white/50">autotune</span>
+                      <span className="font-mono text-sm font-bold text-green-300">195 MB</span>
+                    </div>
+                    <div className="text-[11px] text-white/35">−66% KV cache · 381 MB freed per request</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-model breakdown */}
+              <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.02] p-4">
+                <div className="text-[10px] uppercase tracking-wider text-white/35 mb-3">Per-model breakdown</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[12px]">
+                    <thead className="text-[10px] uppercase tracking-wider text-white/30">
+                      <tr>
+                        <th className="pb-2 pr-4 font-medium">Model</th>
+                        <th className="pb-2 pr-4 font-medium">Requests</th>
+                        <th className="pb-2 pr-4 font-medium">Avg TTFT</th>
+                        <th className="pb-2 pr-4 font-medium">Avg tok/s</th>
+                        <th className="pb-2 font-medium">Avg context</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-mono text-white/60">
+                      <tr className="border-t border-white/5">
+                        <td className="py-1.5 pr-4 text-white/80">qwen3:8b</td>
+                        <td className="py-1.5 pr-4">912</td>
+                        <td className="py-1.5 pr-4 text-violet-300">0.39s</td>
+                        <td className="py-1.5 pr-4">46.1</td>
+                        <td className="py-1.5">1,536</td>
+                      </tr>
+                      <tr className="border-t border-white/5">
+                        <td className="py-1.5 pr-4 text-white/80">qwen2.5-coder:7b</td>
+                        <td className="py-1.5 pr-4">372</td>
+                        <td className="py-1.5 pr-4 text-violet-300">0.48s</td>
+                        <td className="py-1.5 pr-4">51.7</td>
+                        <td className="py-1.5">2,048</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Panels included */}
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { title: "Overview KPIs", body: "RAM pressure, running models, requests today, avg TTFT, avg tok/s, and KV savings vs Ollama's 4,096-token default." },
+              { title: "Requests & TTFT charts", body: "24-hour request volume plus a 100-request TTFT sparkline coloured by latency tier — spot regressions at a glance." },
+              { title: "Raw vs Tuned", body: "autotune's average dynamic context against Ollama's fixed default, with live context-reduction and KV-memory savings." },
+              { title: "Per-model breakdown", body: "Requests, avg/min/max TTFT, tok/s, context and total tokens for every model routed through autotune." },
+              { title: "API keys & slow requests", body: "Per-key usage today, and a feed of recent requests over 5 s with model, context, and profile." },
+              { title: "Catalog & live Settings", body: "The full 43-model catalog scored for your machine, plus a read/write Settings panel for context, KV precision, keep-alive and more." },
+            ].map((p) => (
+              <div key={p.title} className="rounded-2xl border border-white/8 bg-white/[0.02] p-5">
+                <div className="text-sm font-semibold text-white mb-1.5">{p.title}</div>
+                <div className="text-xs text-white/50 leading-relaxed">{p.body}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Launch + security */}
+          <div className="mt-8 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-5">
+              <div className="text-xs font-semibold text-violet-300 mb-2">Launch it in one command</div>
+              <CodeBlock code={`export AUTOTUNE_ADMIN_KEY="your-secret-key"
+autotune serve
+# → open http://localhost:8765/dashboard`} language="bash" />
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-5">
+              <div className="text-xs font-semibold text-white mb-2">Secure by default</div>
+              <ul className="flex flex-col gap-1.5 text-xs text-white/55">
+                <li>· Login gated by <code className="text-white/70">AUTOTUNE_ADMIN_KEY</code> — no key, no dashboard.</li>
+                <li>· HMAC-signed session cookies with server-side revocation on logout.</li>
+                <li>· Sliding-window rate limits and CSP headers on every response.</li>
+                <li>· 100% local — all metrics come from your own SQLite, nothing leaves your machine.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Benchmarks ── */}
       <section id="benchmarks" className="py-28 px-6">
         <div className="mx-auto max-w-5xl">
@@ -698,36 +874,30 @@ export default function Home() {
               <SectionLabel>Quickstart</SectionLabel>
               <h2 className="text-3xl font-bold text-white mb-3">Up in 60 seconds</h2>
               <p className="text-sm text-white/50 mb-8">
-                No Ollama commands needed — autotune handles everything for you.
+                Two commands. No Ollama setup, no config — autotune handles everything.
               </p>
               <ol className="space-y-6">
                 {[
                   {
                     n: "1",
                     title: "Install autotune",
-                    body: "One pip install. Ollama is started automatically — no separate setup.",
+                    body: "One pip install. Nothing else to configure.",
                     code: "pip install llm-autotune",
                   },
                   {
                     n: "2",
-                    title: "Find the best model for your hardware",
-                    body: "Scans your CPU, RAM, and GPU. Recommends the optimal model and settings — no guessing.",
-                    code: "autotune recommend",
+                    title: "Run the guided setup",
+                    body: "Run this first. It verifies Ollama, picks and pulls the best model for your hardware, and proves the speedup — about 2 minutes.",
+                    code: "autotune start",
                   },
                   {
                     n: "3",
-                    title: "Download the recommended model",
-                    body: "autotune pulls the model and starts Ollama if it isn't already running.",
-                    code: "autotune pull qwen3:8b",
-                  },
-                  {
-                    n: "4",
                     title: "Start chatting with optimization",
                     body: "Every request is automatically right-sized. No flags, no config.",
                     code: "autotune chat --model qwen3:8b",
                   },
                   {
-                    n: "5",
+                    n: "4",
                     title: "Prove it on your own hardware",
                     body: "30-second benchmark using Ollama's own nanosecond timers. Saves a JSON you can share.",
                     code: "autotune proof -m qwen3:8b",
@@ -934,7 +1104,7 @@ export default function Home() {
             Best models for your hardware
           </h2>
           <p className="text-white/55 mb-8 max-w-2xl">
-            autotune works with any Ollama model. These are the best options as of April 2026.
+            autotune works with any Ollama model. These are the best options as of June 2026.
             Run <code className="text-white/70">autotune recommend</code> to get a
             hardware-specific recommendation.
           </p>
@@ -950,13 +1120,15 @@ export default function Home() {
               </thead>
               <tbody>
                 {[
-                  { ram: "8 GB",  model: "qwen3:4b",           size: "~2.6 GB", why: "Best 4B — hybrid thinking mode, strong reasoning" },
-                  { ram: "16 GB", model: "qwen3:8b",           size: "~5.2 GB", why: "Near-frontier quality; best 8B as of 2026" },
-                  { ram: "16 GB", model: "gemma4:e2b",         size: "~5.8 GB", why: "Google's newest; 128k native context" },
-                  { ram: "24 GB", model: "qwen3:14b",          size: "~9.0 GB", why: "Excellent reasoning and coding" },
-                  { ram: "32 GB", model: "qwen3:30b-a3b",      size: "~17 GB",  why: "MoE: flagship quality at 7B inference cost" },
-                  { ram: "Coding", model: "qwen2.5-coder:14b", size: "~9.0 GB", why: "Best open coding model" },
-                  { ram: "Reasoning", model: "deepseek-r1:14b", size: "~9.0 GB", why: "Chain-of-thought; math & logic" },
+                  { ram: "8 GB",   model: "qwen3.5:4b",       size: "~2.6 GB", why: "Newest small Qwen — hybrid thinking, 256k context" },
+                  { ram: "16 GB",  model: "qwen3.5:9b",       size: "~5.6 GB", why: "Best overall 8–9B model (June 2026)" },
+                  { ram: "16 GB",  model: "gpt-oss:20b",      size: "~14 GB",  why: "OpenAI MoE — ~o3-mini reasoning, fits 16 GB" },
+                  { ram: "16 GB",  model: "gemma4:12b",       size: "~8.1 GB", why: "Multimodal with native audio" },
+                  { ram: "24 GB",  model: "qwen3.6:27b",      size: "~17 GB",  why: "Best overall on consumer hardware — 77.2% SWE-bench" },
+                  { ram: "32 GB",  model: "qwen3-coder:30b",  size: "~19 GB",  why: "MoE: best open coder, agentic, 256k context" },
+                  { ram: "48 GB+", model: "gpt-oss:120b",     size: "~65 GB",  why: "Near-o3 reasoning you can self-host" },
+                  { ram: "Coding", model: "devstral:24b",     size: "~14 GB",  why: "Agentic coding — multi-file edits & tool use" },
+                  { ram: "Reasoning", model: "deepseek-r1:32b", size: "~20 GB", why: "Chain-of-thought; math & logic" },
                 ].map((r, i) => (
                   <tr
                     key={r.model}
@@ -1017,7 +1189,7 @@ export default function Home() {
       <footer className="border-t border-white/5 px-6 py-10">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.5.0 — MIT License</span>
+            <span>autotune v1.6.0 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex flex-wrap justify-center gap-6">

@@ -473,7 +473,7 @@ class TestDefaultModels:
     def test_target_models_in_defaults(self):
         assert "llama3.2:3b" in DEFAULT_MODELS
         assert "qwen3:8b"    in DEFAULT_MODELS
-        assert "gemma4:e2b"  in DEFAULT_MODELS
+        assert "gemma3n:e4b" in DEFAULT_MODELS
 
 
 # ─────────────────────────────────────────────────────────────────────────────

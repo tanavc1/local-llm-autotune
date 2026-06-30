@@ -147,9 +147,10 @@ export default function CommandsPage() {
           </p>
           <h1 className="text-4xl font-bold text-white mb-4">All autotune commands</h1>
           <p className="text-white/55 text-lg max-w-2xl">
-            Every command listed with examples and flags. New? Start with{" "}
-            <Code>autotune recommend</Code> to get a hardware-matched model,
-            then <Code>autotune proof</Code> to verify the improvement is real.
+            Every command listed with examples and flags. New? Run{" "}
+            <Code>autotune start</Code> first — it sets up the best model for your
+            hardware and unlocks the rest of the CLI. Then <Code>autotune chat</Code> to
+            start talking, or <Code>autotune proof</Code> to verify the improvement is real.
           </p>
         </div>
 
@@ -158,7 +159,7 @@ export default function CommandsPage() {
           <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-4">Jump to</p>
           <div className="flex flex-wrap gap-2">
             {[
-              "chat", "run", "hardware",
+              "start", "chat", "run", "hardware",
               "ls", "ps", "pull", "models", "unload",
               "serve", "recommend",
               "proof", "proof-suite", "bench", "user-bench", "agent-bench",
@@ -184,6 +185,26 @@ export default function CommandsPage() {
             Get started
           </h2>
           <div className="flex flex-col gap-6">
+
+            <CommandCard
+              name="start"
+              tagline="The one command to run first"
+              badge="Run this first"
+              badgeColor="violet"
+              description="Required guided setup after installing. In about 2 minutes it verifies Ollama (starting it for you if needed), profiles your hardware and picks the best model, pulls it, and proves the speedup on your machine. Every other command is locked until this finishes once — and when it's done it prints the exact `autotune chat` command for your model. Already set up? It just confirms and exits; an existing install is never blocked."
+              usage={`autotune start`}
+              examples={[
+                { label: "Guided auto-setup (recommended)", code: "autotune start" },
+                { label: "Set up with a specific model", code: "autotune start --model qwen3:8b" },
+                { label: "Skip the proof step", code: "autotune start --skip-proof" },
+                { label: "Re-run setup from scratch", code: "autotune start --force" },
+              ]}
+              flags={[
+                { flag: "--model, -m", desc: "Model to pull and test. Auto-selects the best fit for your hardware if omitted." },
+                { flag: "--skip-proof", desc: "Skip the speedup proof — just verify Ollama and set up the model." },
+                { flag: "--force", desc: "Re-run setup even if autotune is already set up." },
+              ]}
+            />
 
             <CommandCard
               name="chat"
@@ -335,11 +356,14 @@ export default function CommandsPage() {
 
             <CommandCard
               name="serve"
-              tagline="Start an OpenAI-compatible API server"
-              description="Starts a local API server that any OpenAI-compatible tool can connect to — Continue.dev, Open WebUI, LangChain, a Python script, anything. All autotune optimizations apply to every request automatically."
+              tagline="API server + live dashboard"
+              badge="Dashboard"
+              badgeColor="green"
+              description="Starts a local API server that any OpenAI-compatible tool can connect to — Continue.dev, Open WebUI, LangChain, a Python script, anything. All autotune optimizations apply to every request automatically. It also serves the built-in monitoring + control dashboard at localhost:8765/dashboard — live KPIs, request/TTFT charts, per-model breakdowns, the model catalog, and a Settings panel."
               usage={`autotune serve`}
               examples={[
                 { label: "Default (localhost:8765)", code: "autotune serve" },
+                { label: "Open the dashboard (set a key first)", code: `export AUTOTUNE_ADMIN_KEY="your-secret-key"\nautotune serve\n# → open http://localhost:8765/dashboard` },
                 { label: "Connect from Python", code: `from openai import OpenAI\nclient = OpenAI(base_url="http://localhost:8765/v1", api_key="autotune")` },
                 { label: "Connect via curl", code: `curl http://localhost:8765/v1/models` },
                 { label: "Apple Silicon — also enable MLX backend", code: "autotune serve --mlx" },
@@ -811,7 +835,7 @@ export default function CommandsPage() {
       <footer className="border-t border-white/5 px-6 py-8 mt-4">
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.1.2 — MIT License</span>
+            <span>autotune v1.6.0 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex gap-5">

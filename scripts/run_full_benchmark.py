@@ -48,7 +48,7 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
 OLLAMA_BASE = "http://localhost:11434"
-DEFAULT_MODELS = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
+DEFAULT_MODELS = ["llama3.2:3b", "gemma3n:e4b", "qwen3:8b"]
 OUTPUT_DIR = _ROOT / "benchmark_results"
 
 

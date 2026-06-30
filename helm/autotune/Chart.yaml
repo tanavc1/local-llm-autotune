@@ -1,0 +1,16 @@
+apiVersion: v2
+name: autotune
+description: autotune — local LLM inference optimizer for Ollama
+type: application
+version: 0.1.0
+appVersion: "1.5.0"
+home: https://autotunellm.com
+sources:
+  - https://github.com/tanavc1/local-llm-autotune
+maintainers:
+  - name: Tanav Chinthapatla
+keywords:
+  - llm
+  - ollama
+  - inference
+  - ai

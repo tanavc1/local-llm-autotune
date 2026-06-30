@@ -121,7 +121,7 @@ _MAX_TOOL_OUTPUT_LEN = 1800     # cap tool results to prevent runaway context
 _TOOL_EXEC_TIMEOUT   = 12       # seconds for run_python subprocess
 
 PROFILE_NAME    = "balanced"
-DEFAULT_MODELS  = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
+DEFAULT_MODELS  = ["llama3.2:3b", "gemma3n:e4b", "qwen3:8b"]
 ALL_TASK_IDS    = ["code_debugger", "research_synth", "step_planner",
                    "adversarial_context", "extended_session"]
 # Default: 2 focused tasks, 2 trials — ~8-12 min, cleanly shows the TTFT story

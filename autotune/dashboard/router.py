@@ -21,8 +21,8 @@ import uuid as _uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import collections as _collections
@@ -515,6 +515,60 @@ async def dashboard_keys():
     return {"keys": get_api_keys_summary()}
 
 
+@router.get("/api/dashboard/usage/export", dependencies=[Depends(_require_session_api)])
+async def dashboard_usage_export(
+    days:     int           = Query(30, ge=1, le=365, description="Trailing N days"),
+    key_id:   str           = Query("",  description="Filter to one key ID (optional)"),
+    model_id: str           = Query("",  description="Filter to one model ID (optional)"),
+):
+    """Download per-key usage as a CSV file — session-cookie authenticated."""
+    import csv
+    import io
+    from datetime import date, timedelta
+    from autotune.db.store import get_db
+
+    today   = date.today()
+    start_d = today - timedelta(days=days - 1)
+    rows = get_db().get_api_usage(
+        key_id=key_id or None,
+        model_id=model_id or None,
+        start_day=start_d.isoformat(),
+        end_day=today.isoformat(),
+    )
+
+    csv_rows = [
+        {
+            "day":               r.get("day"),
+            "key_name":          r.get("key_name"),
+            "key_prefix":        r.get("key_prefix"),
+            "model_id":          r.get("model_id"),
+            "backend":           r.get("backend"),
+            "request_count":     r.get("request_count", 0),
+            "prompt_tokens":     r.get("prompt_tokens", 0),
+            "completion_tokens": r.get("completion_tokens", 0),
+            "total_tokens":      (r.get("prompt_tokens") or 0) + (r.get("completion_tokens") or 0),
+            "avg_latency_ms":    r.get("avg_latency_ms"),
+            "avg_ttft_ms":       r.get("avg_ttft_ms"),
+            "error_count":       r.get("error_count", 0),
+        }
+        for r in rows
+    ]
+
+    buf = io.StringIO()
+    if csv_rows:
+        writer = csv.DictWriter(buf, fieldnames=list(csv_rows[0].keys()), lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(csv_rows)
+    buf.seek(0)
+
+    filename = f"autotune-usage-{start_d.isoformat()}-to-{today.isoformat()}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/api/dashboard/slow", dependencies=[Depends(_require_session_api)])
 async def dashboard_slow():
     from .metrics import get_slow_requests
@@ -525,6 +579,12 @@ async def dashboard_slow():
 async def dashboard_suggestions():
     from .metrics import get_suggestions
     return {"suggestions": get_suggestions()}
+
+
+@router.get("/api/dashboard/onboarding", dependencies=[Depends(_require_session_api)])
+async def dashboard_onboarding():
+    from .metrics import get_onboarding_state
+    return get_onboarding_state()
 
 
 @router.get("/api/dashboard/security", dependencies=[Depends(_require_session_api)])

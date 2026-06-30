@@ -123,10 +123,57 @@ def _show_upgrade_hint() -> None:
 # CLI group
 # ---------------------------------------------------------------------------
 
-def _is_initialized() -> bool:
-    """Return True if the user has completed first-run setup."""
+def _has_prior_use() -> bool:
+    """Detect whether autotune has been used on this machine before the first-run
+    gate existed, so upgrading never locks an already-set-up user out.
+
+    Looks for on-disk databases that only appear once autotune has actually run
+    inference, chatted, or stored an observation — never created by a bare
+    install or by `autotune version`. Pure ``.exists()`` checks: nothing is
+    created or opened here.
+    """
+    import os
     import pathlib
-    return (pathlib.Path.home() / ".autotune" / "initialized").exists()
+    import platform
+
+    home = pathlib.Path.home()
+    # Conversation memory — only written after a chat session has been saved.
+    if (home / ".autotune" / "recall.db").exists():
+        return True
+    # Run-observation / telemetry DB — written by serve/chat/proof runs.
+    system = platform.system()
+    if system == "Darwin":
+        obs = home / "Library" / "Application Support" / "autotune" / "autotune.db"
+    elif system == "Windows":
+        obs = pathlib.Path(os.environ.get("APPDATA", str(home))) / "autotune" / "autotune.db"
+    else:
+        obs = pathlib.Path(
+            os.environ.get("XDG_DATA_HOME", str(home / ".local" / "share"))
+        ) / "autotune" / "autotune.db"
+    return obs.exists()
+
+
+def _is_initialized() -> bool:
+    """Return True if the user has completed first-run setup.
+
+    The explicit signal is the ``~/.autotune/initialized`` sentinel written by
+    ``autotune start``. To avoid locking out anyone who installed autotune
+    before this gate existed, clear evidence of prior use (a recall or
+    observations DB on disk) also counts as set up — and we backfill the
+    sentinel so the check stays a single cheap stat on every later command.
+    """
+    import pathlib
+    sentinel = pathlib.Path.home() / ".autotune" / "initialized"
+    if sentinel.exists():
+        return True
+    if _has_prior_use():
+        # Grandfather in an existing user: never block someone already using autotune.
+        try:
+            _mark_initialized("(existing install — grandfathered)")
+        except Exception:
+            pass
+        return True
+    return False
 
 
 def _mark_initialized(model: str) -> None:
@@ -138,7 +185,65 @@ def _mark_initialized(model: str) -> None:
     sentinel.write_text(json.dumps({"model": model, "ts": time.time()}))
 
 
-@click.group(invoke_without_command=True)
+# Commands usable before first-run setup completes. Everything else is gated
+# behind `autotune start` until the machine has been set up once.
+#   • start / init  — the setup wizard itself (init is the legacy alias)
+#   • version / upgrade — check or update the install without setting up
+#   • --help / -h   — always allowed so the CLI stays discoverable
+_PRE_START_ALLOWED: set[str] = {"start", "init", "version", "upgrade"}
+
+
+def _print_start_gate(attempted: str) -> None:
+    """Tell the user they must run `autotune start` before doing anything else."""
+    from rich.panel import Panel
+    console.print()
+    console.print(Panel(
+        "[bold]autotune isn't set up yet.[/bold]\n\n"
+        "Run [bold cyan]autotune start[/bold cyan] first — it takes about 2 minutes:\n"
+        "  [dim]• verifies Ollama is installed and running[/dim]\n"
+        "  [dim]• picks & pulls the best model for your hardware[/dim]\n"
+        "  [dim]• proves the speedup on your machine[/dim]\n\n"
+        f"[dim]Then [bold]autotune {attempted}[/bold] (and every other command) will work.[/dim]",
+        title="[bold yellow]⚠  Run `autotune start` first[/bold yellow]",
+        border_style="yellow",
+        padding=(1, 2),
+    ))
+    console.print()
+
+
+class GatedGroup(click.Group):
+    """Root command group that blocks every subcommand until `autotune start`
+    has completed. `--help`, `start`/`init`, `version` and `upgrade` stay open
+    so the CLI is still discoverable and updatable before setup."""
+
+    def invoke(self, ctx: click.Context) -> object:
+        # Raw, unparsed subcommand tokens. `protected_args` holds the command
+        # name on Click 8 and is removed on Click 9 (where `args` holds it all),
+        # so read it defensively and quietly across both.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            protected = list(getattr(ctx, "protected_args", []) or [])
+        raw = protected + list(ctx.args)
+        # First non-flag token is the subcommand name (None ⇒ bare `autotune`).
+        sub = next((t for t in raw if not t.startswith("-")), None)
+        wants_help = ("--help" in raw) or ("-h" in raw)
+        if (
+            sub is not None
+            and not wants_help
+            and sub not in _PRE_START_ALLOWED
+            and not _is_initialized()
+        ):
+            _print_start_gate(sub)
+            ctx.exit(1)
+        return super().invoke(ctx)
+
+
+@click.group(
+    cls=GatedGroup,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(package_name="llm-autotune")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
@@ -162,15 +267,13 @@ def _no_subcommand(ctx: click.Context) -> None:
         console.print()
         console.print(Panel(
             f"[bold]Welcome to autotune[/bold]  [dim]v{version}[/dim]\n\n"
-            "Run [bold cyan]autotune init[/bold cyan] for a 2-minute guided setup:\n"
+            "[bold cyan]autotune start[/bold cyan] must be run first — a 2-minute guided setup:\n"
             "  [dim]• verifies Ollama is running[/dim]\n"
             "  [dim]• picks the best model for your hardware[/dim]\n"
             "  [dim]• pulls it and proves autotune is working[/dim]\n\n"
-            "[dim]Or jump straight in:[/dim]\n"
-            "  [dim]autotune pull qwen3:8b           # download a model[/dim]\n"
-            "  [dim]autotune chat --model qwen3:8b   # start chatting[/dim]\n"
-            "  [dim]autotune proof --model qwen3:8b  # verify improvements[/dim]\n"
-            "  [dim]autotune --help                  # all 23 commands[/dim]",
+            "[dim]Until then, the other commands are locked. Get going with:[/dim]\n"
+            "  [bold cyan]autotune start[/bold cyan]\n\n"
+            "[dim]autotune --help shows the full command list.[/dim]",
             title="[bold cyan]autotune[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
@@ -497,7 +600,42 @@ def upgrade(yes: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# `autotune init`  — first-run guided setup wizard
+# `autotune start`  — required first-run setup (gate for every other command)
+# ---------------------------------------------------------------------------
+
+@cli.command("start")
+@click.option(
+    "--model", "-m", default=None, metavar="MODEL",
+    help="Model to pull and test. Auto-selects the best fit for your hardware if omitted.",
+)
+@click.option(
+    "--skip-proof", is_flag=True, default=False,
+    help="Skip the proof step — useful if you just want model setup.",
+)
+@click.option(
+    "--force", is_flag=True, default=False,
+    help="Re-run setup even if autotune is already set up.",
+)
+@click.pass_context
+def start(ctx: click.Context, model: Optional[str], skip_proof: bool, force: bool) -> None:
+    """Set up autotune — run this first. Required before any other command.
+
+    On a fresh install every other command is locked until `autotune start`
+    completes. It verifies Ollama, picks and pulls the best model for your
+    hardware, proves the speedup, then unlocks the rest of the CLI.
+
+    \b
+    Examples:
+      autotune start                      # guided first-run setup
+      autotune start --model qwen3:8b     # set up with a specific model
+      autotune start --force              # redo setup
+      autotune start --skip-proof         # skip the proof step
+    """
+    ctx.invoke(init, model=model, skip_proof=skip_proof, force=force)
+
+
+# ---------------------------------------------------------------------------
+# `autotune init`  — alias of `autotune start` (kept for backwards compatibility)
 # ---------------------------------------------------------------------------
 
 @cli.command("init")
@@ -537,7 +675,7 @@ def init(model: Optional[str], skip_proof: bool, force: bool) -> None:
         console.print()
         console.print(
             "[green]✓[/green]  autotune is already set up.\n"
-            "[dim]  Run [bold]autotune init --force[/bold] to redo setup, "
+            "[dim]  Run [bold]autotune start --force[/bold] to redo setup, "
             "or [bold]autotune --help[/bold] to see all commands.[/dim]"
         )
         console.print()
@@ -777,7 +915,7 @@ def init(model: Optional[str], skip_proof: bool, force: bool) -> None:
         f"  [bold cyan]autotune recommend[/bold cyan]\n"
         f"  [dim]  Re-score all models for your hardware[/dim]\n\n"
         f"  [bold cyan]autotune --help[/bold cyan]\n"
-        f"  [dim]  All 23 commands[/dim]",
+        f"  [dim]  See every command[/dim]",
         title="[bold]autotune ready[/bold]",
         border_style="green",
         padding=(1, 2),
@@ -1268,7 +1406,7 @@ def pull(model: Optional[str], show_list: bool) -> None:
 def delete(model: Optional[str], yes: bool) -> None:
     """Delete a locally cached Ollama model.
 
-    MODEL is an Ollama model tag, e.g. qwen3:8b or gemma4:e4b.
+    MODEL is an Ollama model tag, e.g. qwen3:8b or gemma3n:e4b.
     Run without arguments to pick from a list of downloaded models.
 
     \b
@@ -4706,7 +4844,7 @@ def proof(
         return
 
     # ── Resolve model ─────────────────────────────────────────────────────────
-    _PREFERENCE = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
+    _PREFERENCE = ["llama3.2:3b", "gemma3n:e4b", "qwen3:8b"]
     if not model:
         try:
             r = _httpx.get(f"{_ollama_url}/api/tags", timeout=3.0)
@@ -4786,7 +4924,7 @@ def proof(
     help=(
         "Ollama model IDs to benchmark.  Repeat for multiple: "
         "-m llama3.2:3b -m qwen3:8b.  "
-        "Defaults to llama3.2:3b gemma4:e2b qwen3:8b."
+        "Defaults to llama3.2:3b gemma3n:e4b qwen3:8b."
     ),
 )
 @click.option("--runs", "-n", type=int, default=3, show_default=True,
@@ -4818,7 +4956,7 @@ def proof_suite(
     \b
     Examples:
       autotune proof-suite
-      autotune proof-suite -m llama3.2:3b -m gemma4:e2b -m qwen3:8b
+      autotune proof-suite -m llama3.2:3b -m gemma3n:e4b -m qwen3:8b
       autotune proof-suite -m qwen3:8b --runs 5 --output results.json
     """
     import argparse as _argparse

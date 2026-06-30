@@ -411,6 +411,16 @@
       cursor: pointer; transition: border-color .15s;
     }
     .btn-add:hover { border-color: var(--accent); }
+    /* ── Onboarding checklist ───────────────────────────────────────────── */
+    #onboarding-card { border-left: 3px solid var(--accent); margin-bottom: 16px; }
+    .ob-steps { padding: 4px 18px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .ob-step { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+    .ob-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+    .ob-label { flex: 1; }
+    .ob-label.done { color: var(--muted); text-decoration: line-through; }
+    .ob-action { font-size: 11px; padding: 2px 8px; }
+    .ob-code { font-family: monospace; font-size: 11px; background: var(--surface2);
+               padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
     .btn-revoke {
       padding: 3px 8px; background: transparent;
       border: 1px solid rgba(248,81,73,.25); border-radius: 4px;
@@ -1168,6 +1178,39 @@
 
   <div id="tab-overview" class="tab-pane active">
 
+  <!-- Onboarding checklist — hidden once dismissed or all steps complete -->
+  <div id="onboarding-card" class="card" style="display:none">
+    <div class="card-header">
+      <div class="card-title">Get started with autotune</div>
+      <button class="btn-ghost" id="onboarding-dismiss" style="font-size:11px">Dismiss ✕</button>
+    </div>
+    <div class="ob-steps">
+      <div class="ob-step" id="ob-1">
+        <span class="ob-icon">✅</span>
+        <span class="ob-label">autotune is running</span>
+      </div>
+      <div class="ob-step" id="ob-2">
+        <span class="ob-icon">⬜</span>
+        <span class="ob-label">Connect Ollama</span>
+        <button class="btn-ghost ob-action" onclick="document.querySelector('[data-tab=models]').click()">Open Models →</button>
+      </div>
+      <div class="ob-step" id="ob-3">
+        <span class="ob-icon">⬜</span>
+        <span class="ob-label">Pull a model</span>
+        <button class="btn-ghost ob-action" onclick="document.querySelector('[data-tab=models]').click()">Open Models →</button>
+      </div>
+      <div class="ob-step" id="ob-4">
+        <span class="ob-icon">⬜</span>
+        <span class="ob-label">Create an API key</span>
+        <button class="btn-ghost ob-action" onclick="document.querySelector('[data-tab=keys]').click()">Open Keys →</button>
+      </div>
+      <div class="ob-step" id="ob-5">
+        <span class="ob-icon">⬜</span>
+        <span class="ob-label">Make your first request — use <code class="ob-code">http://localhost:8765/v1</code> as your base URL</span>
+      </div>
+    </div>
+  </div>
+
   <!-- KPI row -->
   <div class="section-label">System Overview</div>
   <div class="kpi-row">
@@ -1200,7 +1243,7 @@
     <div class="kpi green">
       <div class="kpi-label">Avg Tok / s</div>
       <div class="kpi-val c-green" id="kv-tps">—</div>
-      <div class="kpi-sub">generation speed</div>
+      <div class="kpi-sub" id="kv-tps-sub">generation speed</div>
     </div>
 
     <div class="kpi green">
@@ -1274,12 +1317,12 @@
       <div class="card-badge" id="opt-badge">—</div>
     </div>
     <div class="opt-summary">
-      <div class="opt-kpi"><div class="opt-kpi-val c-blue" id="opt-total">—</div><div class="opt-kpi-lbl">Optimizations (24h)</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val c-blue" id="opt-total">—</div><div class="opt-kpi-lbl" id="opt-total-lbl">Optimizations (24h)</div></div>
       <div class="opt-kpi"><div class="opt-kpi-val c-green" id="opt-kv-pct">—</div><div class="opt-kpi-lbl">KV context hits</div></div>
       <div class="opt-kpi"><div class="opt-kpi-val c-green" id="opt-kv-savings">—</div><div class="opt-kpi-lbl">Avg KV saved</div></div>
       <div class="opt-kpi"><div class="opt-kpi-val c-purple" id="opt-cache-count">—</div><div class="opt-kpi-lbl">Prompt cache pins</div></div>
       <div class="opt-kpi"><div class="opt-kpi-val c-yellow" id="opt-qos-count">—</div><div class="opt-kpi-lbl">Fast/quality profiles</div></div>
-      <div class="opt-kpi"><div class="opt-kpi-val" id="opt-avg-ttft">—</div><div class="opt-kpi-lbl">Avg TTFT (24h)</div></div>
+      <div class="opt-kpi"><div class="opt-kpi-val" id="opt-avg-ttft">—</div><div class="opt-kpi-lbl" id="opt-ttft-lbl">Avg TTFT (24h)</div></div>
     </div>
     <div id="opt-feed"><div class="empty" style="padding:16px 18px;">Loading…</div></div>
   </div>
@@ -1580,6 +1623,15 @@
       <div class="card-title">Active API Keys</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <div class="card-badge" id="keys-badge">—</div>
+        <button class="btn-ghost" id="export-usage-btn" title="Download usage as CSV">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export CSV
+        </button>
         <button class="btn-add" id="new-key-btn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2.5" stroke-linecap="round">
@@ -1983,7 +2035,10 @@
   'use strict';
 
   // ── Tab switching ──────────────────────────────────────────────────────
-  function showTab(id) {
+  const _VALID_TABS = ['overview','performance','models','keys','conversations','security','settings'];
+
+  function showTab(id, updateHash = true) {
+    if (!_VALID_TABS.includes(id)) return;
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     const pane = document.getElementById('tab-' + id);
@@ -1991,6 +2046,10 @@
     const btn = document.querySelector('.tab-btn[data-tab="' + id + '"]');
     if (btn) btn.classList.add('active');
     try { sessionStorage.setItem('autotune_tab', id); } catch (_) {}
+    // Deep-link: keep the URL hash in sync so tabs are shareable & back-navigable.
+    if (updateHash && location.hash.slice(1) !== id) {
+      try { history.replaceState(null, '', '#' + id); } catch (_) { location.hash = id; }
+    }
   }
 
   document.getElementById('main-tab-nav').addEventListener('click', e => {
@@ -1999,10 +2058,20 @@
     showTab(btn.dataset.tab);
   });
 
-  // Restore last active tab
+  window.addEventListener('hashchange', () => {
+    const h = location.hash.slice(1);
+    if (_VALID_TABS.includes(h)) showTab(h, false);
+  });
+
+  // Initial tab: URL hash wins (shareable links), then last-used tab.
   try {
-    const saved = sessionStorage.getItem('autotune_tab');
-    if (saved) showTab(saved);
+    const hashTab = location.hash.slice(1);
+    if (_VALID_TABS.includes(hashTab)) {
+      showTab(hashTab, false);
+    } else {
+      const saved = sessionStorage.getItem('autotune_tab');
+      if (saved) showTab(saved);
+    }
   } catch (_) {}
 
   // ── Chart instances ────────────────────────────────────────────────────
@@ -2345,18 +2414,25 @@
     const tok = d.total_tokens_today;
     document.getElementById('kv-requests-sub').textContent = tok > 0 ? `${fmtTokens(tok)} tokens processed` : 'last 24 hours';
 
+    // When there's no traffic in the last 24 h, the capability cards fall back
+    // to all-time figures so the tool doesn't look idle/broken — label them.
+    const allTime = d.perf_window === 'all-time';
+    const winSuffix = allTime ? ' · all-time' : '';
+
     // TTFT
     const ttftEl = document.getElementById('kv-ttft');
     ttftEl.textContent = fmtMs(d.p50_ttft_ms || d.avg_ttft_ms);
     ttftEl.style.color = ttftColor(d.p50_ttft_ms || d.avg_ttft_ms);
-    document.getElementById('kv-ttft-sub').textContent = d.avg_elapsed_ms > 0 ? 'median · avg total ' + fmtMs(d.avg_elapsed_ms) : 'time-to-first-token';
+    document.getElementById('kv-ttft-sub').textContent =
+      (d.avg_elapsed_ms > 0 ? 'median · avg total ' + fmtMs(d.avg_elapsed_ms) : 'time-to-first-token') + winSuffix;
 
     // Tok/s
     document.getElementById('kv-tps').textContent        = d.avg_tps > 0 ? d.avg_tps.toFixed(1) : '—';
+    document.getElementById('kv-tps-sub').textContent    = 'generation speed' + winSuffix;
 
     // KV savings
     document.getElementById('kv-kvsave').textContent     = d.kv_savings_pct > 0 ? d.kv_savings_pct.toFixed(1) + '%' : '0%';
-    document.getElementById('kv-kvsave-sub').textContent = `avg ${Math.round(d.avg_context_len)} vs 4096 default`;
+    document.getElementById('kv-kvsave-sub').textContent = `avg ${Math.round(d.avg_context_len)} vs 4096 default` + winSuffix;
 
     // Running model chips
     const section = document.getElementById('chips-section');
@@ -3612,6 +3688,9 @@
     if (el('opt-cache-count')) el('opt-cache-count').textContent = (summary.sys_prompt_cached || 0).toLocaleString();
     if (el('opt-qos-count'))   el('opt-qos-count').textContent   = (summary.qos_selected || 0).toLocaleString();
     if (el('opt-avg-ttft'))    el('opt-avg-ttft').textContent    = fmtMs(summary.avg_ttft_ms);
+    const _win = summary.window === 'all-time' ? 'all-time' : '24h';
+    if (el('opt-total-lbl'))   el('opt-total-lbl').textContent   = 'Optimizations (' + _win + ')';
+    if (el('opt-ttft-lbl'))    el('opt-ttft-lbl').textContent    = 'Avg TTFT (' + _win + ')';
     if (el('opt-badge'))       el('opt-badge').textContent       = events.length + ' event' + (events.length !== 1 ? 's' : '');
 
     const feed = el('opt-feed');
@@ -3715,6 +3794,47 @@
     el.textContent = '';
     el.classList.remove('show');
   }
+
+  document.getElementById('export-usage-btn').addEventListener('click', () => {
+    window.location = '/api/dashboard/usage/export?days=30';
+  });
+
+  // ── Onboarding checklist ───────────────────────────────────────────────────
+  const OB_KEY = 'autotune-onboarding-dismissed';
+
+  function _obSetStep(id, done) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.querySelector('.ob-icon').textContent = done ? '✅' : '⬜';
+    const lbl = el.querySelector('.ob-label');
+    if (done) lbl.classList.add('done'); else lbl.classList.remove('done');
+  }
+
+  async function loadOnboarding() {
+    if (localStorage.getItem(OB_KEY)) return;
+    try {
+      const s = await get('/api/dashboard/onboarding');
+      _obSetStep('ob-2', s.ollama_connected);
+      _obSetStep('ob-3', s.model_pulled);
+      _obSetStep('ob-4', s.key_created);
+      _obSetStep('ob-5', s.first_request_made);
+      const card = document.getElementById('onboarding-card');
+      if (s.all_done) {
+        localStorage.setItem(OB_KEY, '1');
+        card.style.display = 'none';
+      } else {
+        card.style.display = '';
+      }
+    } catch (_) {}
+  }
+
+  document.getElementById('onboarding-dismiss').addEventListener('click', () => {
+    localStorage.setItem(OB_KEY, '1');
+    document.getElementById('onboarding-card').style.display = 'none';
+  });
+
+  loadOnboarding();
+  setInterval(loadOnboarding, 8000);
 
   document.getElementById('new-key-btn').addEventListener('click', () => {
     document.getElementById('new-key-name').value = '';
@@ -4067,9 +4187,9 @@
         <div class="rec-bench-item">
           <span class="rec-bench-name">${b.name}</span>
           <div class="rec-bench-bar">
-            <div class="rec-bench-fill" style="width:${Math.round(b.val)}%;background:${b.color}"></div>
+            <div class="rec-bench-fill" style="width:${Math.round(b.val * 100)}%;background:${b.color}"></div>
           </div>
-          <span class="rec-bench-val">${Math.round(b.val)}%</span>
+          <span class="rec-bench-val">${Math.round(b.val * 100)}%</span>
         </div>`).join('');
 
       const altsHtml = (r.alternatives || []).length ? `
@@ -4078,7 +4198,7 @@
           ${r.alternatives.map(a => `
             <div class="rec-alt-item">
               <span class="rec-alt-name">${esc(a.model_name)} <span style="color:var(--muted);font-weight:400;">${esc(a.quant)}</span></span>
-              <span class="rec-alt-meta">${a.total_gb != null ? a.total_gb.toFixed(1) + ' GB' : ''}${a.bench_mmlu != null ? ' · ' + Math.round(a.bench_mmlu) + '% MMLU' : ''}</span>
+              <span class="rec-alt-meta">${a.total_gb != null ? a.total_gb.toFixed(1) + ' GB' : ''}${a.bench_mmlu != null ? ' · ' + Math.round(a.bench_mmlu * 100) + '% MMLU' : ''}</span>
             </div>`).join('')}
         </div>` : '';
 

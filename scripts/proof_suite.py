@@ -22,7 +22,7 @@ KPIs measured (all per-condition, per-turn where applicable):
 Statistics: Wilcoxon signed-rank (n<10) or paired t-test (n≥10)
             + Cohen's d effect sizes + 95% CI on mean difference.
 
-Default models: llama3.2:3b  gemma4:e2b  qwen3:8b  (run one at a time)
+Default models: llama3.2:3b  gemma3n:e4b  qwen3:8b  (run one at a time)
 Override with --models or AUTOTUNE_PROOF_MODELS env var.
 
 Usage
@@ -94,7 +94,7 @@ _RELOAD_THRESHOLD_MS  = 400.0    # load_ms above this → model was actually evi
 # True model reloads (cold load from disk) are 500 ms+ for 3B models, 2000ms+ for 8B.
 _GROWTH_TURNS         = 4        # number of turns for memory-growth test
 
-DEFAULT_MODELS = ["llama3.2:3b", "gemma4:e2b", "qwen3:8b"]
+DEFAULT_MODELS = ["llama3.2:3b", "gemma3n:e4b", "qwen3:8b"]
 PROFILE_NAME   = "balanced"
 
 

@@ -210,23 +210,25 @@ pip install "llm-autotune[mlx]"`}</Code>
           </Step>
 
           {/* Step 5 */}
-          <Step n="5" title="Find the best model for your hardware">
+          <Step n="5" title="Run the guided setup (run this first)">
             <p className="text-sm text-white/60 mb-1">
-              autotune scans your CPU, RAM, and GPU and tells you exactly which model to run.
-              You don&apos;t need to guess — it calculates the optimal model and quantization for your exact setup.
+              This is the one command to run after installing. It verifies Ollama, scans your
+              CPU, RAM, and GPU, picks and pulls the best model for your hardware, and proves the
+              speedup — all in about 2 minutes. Every other command is locked until this finishes once.
             </p>
-            <Code block>{`autotune recommend`}</Code>
-            <p className="text-sm text-white/50 mt-3">
-              This prints the recommended model with an exact download command.
-              Copy the <Code>{`autotune pull`}</Code> command it shows and use it in the next step.
-            </p>
+            <Code block>{`autotune start`}</Code>
+            <Callout type="tip">
+              When it&apos;s done, autotune prints the exact <Code>{`autotune chat`}</Code> command for the
+              model it set up — copy it and you&apos;re chatting. Already set up? <Code>{`autotune start`}</Code> just
+              confirms and exits; it never blocks an install you&apos;ve already configured.
+            </Callout>
           </Step>
 
           {/* Step 6 */}
-          <Step n="6" title="Download your model">
+          <Step n="6" title="Add another model (optional)">
             <p className="text-sm text-white/60 mb-1">
-              Use the model name from <Code>{`autotune recommend`}</Code>, or pick from the table below.
-              autotune starts Ollama automatically — no separate <Code>{`ollama serve`}</Code> needed.
+              <Code>{`autotune start`}</Code> already pulled a model for you. To add a different one later,
+              pick from the table below — autotune starts Ollama automatically, no separate <Code>{`ollama serve`}</Code> needed.
             </p>
             <div className="mt-4 overflow-hidden rounded-xl border border-white/8">
               <table className="w-full text-sm">
@@ -327,7 +329,7 @@ autotune chat --model qwen3:8b
               },
               {
                 q: `"No models found"`,
-                a: `You need to download a model first. Run: autotune pull qwen3:8b`,
+                a: `You need to set up a model first. Run: autotune start (first-time setup), or autotune pull qwen3:8b to add another model afterwards.`,
               },
               {
                 q: `First message is very slow (5–10 seconds)`,
@@ -375,7 +377,7 @@ autotune chat --model qwen3:8b
       <footer className="border-t border-white/5 px-6 py-8 mt-4">
         <div className="mx-auto max-w-4xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
           <div className="flex flex-col items-center sm:items-start gap-1">
-            <span>autotune v1.1.2 — MIT License</span>
+            <span>autotune v1.6.0 — MIT License</span>
             <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex gap-5">

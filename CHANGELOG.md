@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [1.6.0] — 2026-06-30
+
+### Added
+
+- **`autotune start` — a required, guided first-run setup.** This is now the first command to run after installing. In about 2 minutes it verifies Ollama (starting it if needed), profiles your hardware and picks the best model, pulls it, proves the speedup on your machine, and then prints the exact `autotune chat` command for your model so you're ready to go immediately.
+- **First-run gate.** Until `autotune start` has completed once, every other command is blocked and redirected to it — a fresh install can't fail in confusing ways. `--help`/`-h`, `start`/`init`, `version`, and `upgrade` stay available so the CLI is still discoverable and updatable before setup.
+
+### Changed
+
+- README and website now lead with `pip install llm-autotune` followed immediately by `autotune start`, then `autotune chat --model <id>`.
+
+### Fixed
+
+- **Upgrades never lock out an existing install.** `_is_initialized()` now treats clear evidence of prior use — an on-disk recall or observations database — as "already set up" and backfills the setup sentinel, so users who installed autotune before the gate existed are grandfathered in and never blocked.
+
+---
+
 ## [1.5.0] — 2026-05-27
 
 ### Added

@@ -1,0 +1,89 @@
+# autotune Helm chart — default values
+#
+# Quick start (existing Ollama in the cluster):
+#   helm install autotune ./helm/autotune \
+#     --set ollama.url=http://ollama:11434 \
+#     --set adminKey=<your-secret>
+#
+# With bundled Ollama sidecar:
+#   helm install autotune ./helm/autotune \
+#     --set ollama.bundled=true \
+#     --set adminKey=<your-secret>
+
+image:
+  repository: tanavc1/llm-autotune
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8765
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: autotune.example.com
+  tls: []
+
+# Admin key for dashboard login and /admin/* API.
+# Set via --set adminKey=<value> or a values override file — never commit plaintext.
+adminKey: ""
+
+# Existing secret containing AUTOTUNE_ADMIN_KEY (alternative to adminKey above).
+# If set, adminKey is ignored.
+existingSecret: ""
+existingSecretKey: AUTOTUNE_ADMIN_KEY
+
+# Require API keys on all /v1/* inference routes.
+requireApiKey: true
+
+ollama:
+  # URL of an existing Ollama instance already running in the cluster.
+  url: "http://ollama:11434"
+
+  # Set to true to run Ollama as a sidecar container alongside autotune.
+  # Only useful when there is no existing Ollama deployment.
+  bundled: false
+  image: ollama/ollama:latest
+  # Mount path for model storage when bundled=true.
+  modelVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+
+persistence:
+  # SQLite DB (API keys, usage logs, run observations).
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8765
+  initialDelaySeconds: 15
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8765
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

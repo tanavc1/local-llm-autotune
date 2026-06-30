@@ -18,10 +18,26 @@ pip install llm-autotune                        # macOS / Windows
 pipx install llm-autotune                       # Linux (recommended — see install notes below)
 brew install tanavc1/autotune/llm-autotune      # Homebrew (macOS)
 docker pull tanavc1/llm-autotune                # Docker
-autotune chat --model qwen3:8b                  # that's it
+
+autotune start                                  # run this first — guided 2-min setup
+autotune chat --model qwen3:8b                  # then chat with any model
 ```
 
 Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of the box.
+
+---
+
+## 📊 Built-in live dashboard
+
+autotune ships a full **monitoring + control dashboard** — no extra install, no external service, and nothing sent to the cloud (every metric comes from your own machine). Run `autotune serve` and open **`http://localhost:8765/dashboard`** in any browser to watch every optimization in real time:
+
+- **Live KPIs** — RAM pressure, running models, requests today, average TTFT, tokens/sec, and KV-cache savings vs Ollama's fixed 4,096-token default
+- **Charts** — 24-hour request volume plus a 100-request TTFT sparkline coloured by latency tier, so regressions jump out at a glance
+- **Raw vs Tuned** — autotune's dynamic context against Ollama's default, with live context-reduction and KV-memory savings
+- **Per-model breakdown**, **per-key API usage**, and a **slow-request feed** (>5 s)
+- **43-model catalog** scored for your exact hardware, plus a live **Settings** panel (context ceiling, KV precision, keep-alive, retention…)
+
+Auth-gated by `AUTOTUNE_ADMIN_KEY` with HMAC-signed sessions; auto-refreshes every 10 seconds. **→ [Full dashboard reference below](#web-dashboard)**
 
 ---
 
@@ -29,7 +45,7 @@ Works with **Ollama**, **LM Studio**, and **MLX** (Apple Silicon native) out of 
 
 Benchmarked on Apple M2 16 GB using Ollama's own nanosecond-precision internal timers — not Python wall-clock estimates. Results are means across 3 runs × 5 prompt types, with Wilcoxon signed-rank statistical testing and Cohen's d effect sizes.
 
-| Metric | llama3.2:3b | gemma4:e2b | qwen3:8b | Average |
+| Metric | llama3.2:3b | gemma3n:e4b | qwen3:8b | Average |
 |--------|:-----------:|:----------:|:--------:|:-------:|
 | **Time to first word (TTFT)** | −35% | −29% | **−53%** | **−39%** |
 | **KV prefill time** | −66% | −64% | **−72%** | **−67%** |
@@ -79,15 +95,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 **Windows** — download the installer from [https://ollama.com/download](https://ollama.com/download).
 
-Once installed, pull a model:
-
-```bash
-autotune pull qwen3:8b         # 5.2 GB — best general model for 16 GB machines
-```
-
-autotune starts Ollama in the background automatically — no separate `ollama serve` needed.
-
-Not sure which model to use? Run `autotune recommend` after installing and it will pick the best model for your exact hardware.
+That's the only prerequisite — `autotune start` (step 3) starts Ollama in the background automatically and pulls a model for you, so there's nothing else to set up here.
 
 ### 2. Install autotune
 
@@ -131,15 +139,26 @@ git clone https://github.com/tanavc1/local-llm-autotune.git
 cd local-llm-autotune && pip install -e ".[dev]"
 ```
 
-### 3. Get a model recommendation for your hardware
+### 3. Run `autotune start` — do this first
 
 ```bash
-autotune recommend
+autotune start
 ```
 
-Profiles your CPU, RAM, and GPU, then scores every model in the registry against your hardware and recommends the best option with an exact `autotune pull` command to run.
+This is the first command to run after installing, and it's required before anything else. In about 2 minutes it:
+
+- verifies Ollama is installed and running (starting it for you if needed),
+- profiles your CPU, RAM, and GPU and picks the best model for your hardware,
+- pulls that model, and
+- proves the speedup on your own machine.
+
+Every other command is locked until `autotune start` completes once — so a fresh install can't fail in confusing ways. (If you're already set up, `autotune start` just confirms and exits, and you're never blocked.) When it finishes it prints the exact **`autotune chat`** command for your model so you can start chatting immediately.
+
+> Want a specific model instead of the auto-pick? `autotune start --model qwen3:8b`. Want a deeper hardware report? `autotune recommend` (available after setup).
 
 ### 4. Start chatting
+
+`autotune start` prints this command for your model when it finishes — here are the variations:
 
 ```bash
 autotune chat --model qwen3:8b                   # optimized chat, default profile
@@ -426,12 +445,24 @@ autotune ships pre-built images to Docker Hub for `linux/amd64` and `linux/arm64
 
 ### Quickstart from Docker Hub
 
+Point autotune at your existing Ollama instance with one command. The hostname differs by OS because Docker containers can't use `localhost` to reach the host machine:
+
 ```bash
-# autotune server only — point it at your existing Ollama instance
+# macOS / Windows
 docker run -p 8765:8765 \
   -e AUTOTUNE_OLLAMA_URL=http://host.docker.internal:11434 \
   tanavc1/llm-autotune:latest
 
+# Linux (Docker 20.10+)
+docker run -p 8765:8765 \
+  --add-host=host.docker.internal:host-gateway \
+  -e AUTOTUNE_OLLAMA_URL=http://host.docker.internal:11434 \
+  tanavc1/llm-autotune:latest
+```
+
+> **Why not `localhost`?** Inside a Docker container, `localhost` refers to the container itself — not your machine. `host.docker.internal` is Docker's built-in alias for the host. On Linux, `--add-host=host.docker.internal:host-gateway` registers that alias; on Mac and Windows it's available automatically.
+
+```bash
 # pin to a specific version
 docker pull tanavc1/llm-autotune:1.2.0
 ```
@@ -846,8 +877,9 @@ Or download the desktop app from [https://ollama.com/download](https://ollama.co
 
 | Command | What it does |
 |---------|-------------|
-| `autotune run <model>` | Pre-flight RAM check + chat in one step. Best first command for any new model. |
-| `autotune chat --model <id>` | Start an optimized chat session with a model already installed. |
+| `autotune start` | **Run this first.** Guided 2-minute setup: verifies Ollama, picks and pulls the best model for your hardware, proves the speedup, then unlocks the rest of the CLI. |
+| `autotune chat --model <id>` | Start an optimized chat session. `autotune start` prints the exact command for your model. |
+| `autotune run <model>` | Pre-flight RAM check + chat in one step. Handy for trying another model after setup. |
 | `autotune hardware` | Scan CPU/RAM/GPU, show which models fit, and suggest apps to close for more RAM. |
 | `autotune recommend` | Profile your hardware and recommend the best model+settings. Prints exact `autotune pull` commands. |
 

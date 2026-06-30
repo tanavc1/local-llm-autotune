@@ -17,6 +17,8 @@ GET    /admin/usage/summary     Aggregate totals across all keys
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import time
 import uuid
@@ -24,6 +26,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from .auth import (
@@ -236,6 +239,28 @@ async def revoke_key(
 # Usage analytics
 # ---------------------------------------------------------------------------
 
+def _rows_to_csv(rows: list[dict], filename: str) -> StreamingResponse:
+    if not rows:
+        buf = io.StringIO()
+        buf.write("")
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _aggregate_totals(rows: list[dict]) -> dict:
     total_req = sum(r.get("request_count", 0) for r in rows)
     total_prompt = sum(r.get("prompt_tokens", 0) for r in rows)
@@ -261,7 +286,8 @@ async def get_usage(
     end:      Optional[str] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     key_id:   Optional[str] = Query(None, description="Filter to a single key ID"),
     model_id: Optional[str] = Query(None, description="Filter to a single model ID"),
-) -> dict:
+    format:   Optional[str] = Query(None, description="Response format: json (default) or csv"),
+) -> Any:
     """
     Return per-key per-day consumption within the requested date window.
 
@@ -340,6 +366,27 @@ async def get_usage(
         kt["total_tokens"]      += r.get("prompt_tokens", 0) + r.get("completion_tokens", 0)
         kt["error_count"]       += r.get("error_count",       0)
 
+    if format == "csv":
+        csv_rows = [
+            {
+                "day":               r.get("day"),
+                "key_name":          r.get("key_name"),
+                "key_prefix":        r.get("key_prefix"),
+                "model_id":          r.get("model_id"),
+                "backend":           r.get("backend"),
+                "request_count":     r.get("request_count", 0),
+                "prompt_tokens":     r.get("prompt_tokens", 0),
+                "completion_tokens": r.get("completion_tokens", 0),
+                "total_tokens":      (r.get("prompt_tokens") or 0) + (r.get("completion_tokens") or 0),
+                "avg_latency_ms":    r.get("avg_latency_ms"),
+                "avg_ttft_ms":       r.get("avg_ttft_ms"),
+                "error_count":       r.get("error_count", 0),
+            }
+            for r in rows
+        ]
+        filename = f"autotune-usage-{start_d.isoformat()}-to-{end_d.isoformat()}.csv"
+        return _rows_to_csv(csv_rows, filename)
+
     return {
         "period": {
             "start": start_d.isoformat(),
@@ -355,8 +402,9 @@ async def get_usage(
 @router.get("/usage/summary")
 async def get_usage_summary(
     _: None = Depends(require_admin),
-    days: int = Query(30, ge=1, le=365, description="Trailing N days"),
-) -> dict:
+    days:   int            = Query(30, ge=1, le=365, description="Trailing N days"),
+    format: Optional[str]  = Query(None, description="Response format: json (default) or csv"),
+) -> Any:
     """
     High-level usage summary for the trailing N days.
 
@@ -408,6 +456,10 @@ async def get_usage_summary(
         })
 
     summary.sort(key=lambda x: -x["total_tokens"])
+
+    if format == "csv":
+        filename = f"autotune-usage-summary-{start_d.isoformat()}-to-{today.isoformat()}.csv"
+        return _rows_to_csv(summary, filename)
 
     all_rows_totals = _aggregate_totals(rows)
     return {

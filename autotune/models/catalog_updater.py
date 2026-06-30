@@ -41,10 +41,11 @@ _UA = "autotune-catalog-updater/2 (+https://github.com/tanav2202/local-llm-optim
 
 # Families to check for new tags on the Ollama registry
 _OLLAMA_FAMILIES = [
-    "qwen3", "qwen2.5", "qwen2.5-coder", "deepseek-r1",
+    "qwen3.6", "qwen3.5", "qwen3-coder", "qwen3", "qwen2.5", "qwen2.5-coder", "deepseek-r1",
     "llama3.3", "llama3.2", "llama3.1", "llama4",
     "phi4", "phi3.5", "phi4-mini",
-    "gemma3", "gemma4", "gemma2",
+    "gpt-oss", "devstral",
+    "gemma4", "gemma3n", "gemma3", "gemma2",
     "mistral", "mistral-small", "mistral-nemo",
     "smollm2", "qwq",
 ]
@@ -357,8 +358,9 @@ def _classify_tier(params_b: float) -> str:
 
 def _infer_family(model_id: str) -> str:
     lower = model_id.lower()
-    for fam in ["qwen3", "qwen2.5", "qwen2", "qwen", "llama4", "llama3",
-                "llama", "phi4", "phi3", "phi", "gemma4", "gemma3", "gemma2", "gemma",
+    for fam in ["qwen3.6", "qwen3.5", "qwen3-coder", "qwen3", "qwen2.5", "qwen2", "qwen",
+                "gpt-oss", "devstral", "llama4", "llama3",
+                "llama", "phi4", "phi3", "phi", "gemma4", "gemma3n", "gemma3", "gemma2", "gemma",
                 "mistral", "deepseek", "smollm", "falcon", "yi", "stablelm"]:
         if fam in lower:
             return fam

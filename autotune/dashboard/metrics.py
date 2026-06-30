@@ -62,40 +62,52 @@ def get_overview() -> dict[str, Any]:
     except Exception:
         pass
 
-    row = db.conn.execute(
-        """SELECT
+    _AGG_SQL = """SELECT
                COUNT(*)                         AS total_requests,
                AVG(ttft_ms)                     AS avg_ttft,
                AVG(gen_tokens_per_sec)          AS avg_tps,
                AVG(context_len)                 AS avg_ctx,
+               AVG(elapsed_sec)                 AS avg_elapsed,
                SUM(COALESCE(prompt_tokens, 0))      AS total_prompt_tokens,
                SUM(COALESCE(completion_tokens, 0))  AS total_comp_tokens
            FROM run_observations
-           WHERE observed_at > ?""",
-        (day_ago,),
-    ).fetchone()
+           WHERE {where}"""
 
-    avg_ctx = (row["avg_ctx"] or 4096) if row else 4096
+    row = db.conn.execute(_AGG_SQL.format(where="observed_at > ?"), (day_ago,)).fetchone()
+    requests_today = int(row["total_requests"] or 0) if row else 0
+
+    # The capability cards (KV saved, TTFT, tok/s) describe how well autotune
+    # performs — not how busy the last day was. When there's no traffic in the
+    # last 24 h they would all read 0/— and make the tool look like it does
+    # nothing, even though the lifetime history right below shows real wins.
+    # So fall back to all-time figures for those cards (clearly labelled),
+    # while "requests today" stays honestly scoped to the last 24 h.
+    perf_window = "24h"
+    perf = row
+    if requests_today == 0:
+        all_row = db.conn.execute(_AGG_SQL.format(where="1=1")).fetchone()
+        if all_row and (all_row["total_requests"] or 0) > 0:
+            perf = all_row
+            perf_window = "all-time"
+
+    avg_ctx = (perf["avg_ctx"] if perf and perf["avg_ctx"] is not None else 4096) or 4096
     kv_savings_pct = round((4096 - avg_ctx) / 4096 * 100, 1) if avg_ctx < 4096 else 0.0
 
-    # TTFT percentiles — P50 (median) and P95 from last 24 h
+    # TTFT percentiles — P50 (median) and P95 over the chosen window
+    _ttft_where = "observed_at > ?" if perf_window == "24h" else "1=1"
+    _ttft_args = (day_ago,) if perf_window == "24h" else ()
     ttft_rows = db.conn.execute(
-        "SELECT ttft_ms FROM run_observations WHERE observed_at > ? AND ttft_ms IS NOT NULL ORDER BY ttft_ms",
-        (day_ago,),
+        f"SELECT ttft_ms FROM run_observations WHERE {_ttft_where} AND ttft_ms IS NOT NULL ORDER BY ttft_ms",
+        _ttft_args,
     ).fetchall()
     ttft_vals = [r["ttft_ms"] for r in ttft_rows]
     n = len(ttft_vals)
     p50_ttft = round(ttft_vals[n // 2], 1) if ttft_vals else 0
     p95_ttft = round(ttft_vals[min(int(n * 0.95), n - 1)], 1) if ttft_vals else 0
 
-    # Average total latency (elapsed time = full end-to-end response time)
-    elapsed_row = db.conn.execute(
-        "SELECT AVG(elapsed_sec) AS avg_el FROM run_observations WHERE observed_at > ? AND elapsed_sec IS NOT NULL AND elapsed_sec > 0",
-        (day_ago,),
-    ).fetchone()
-    avg_elapsed_ms = round((elapsed_row["avg_el"] or 0) * 1000, 1) if elapsed_row else 0
+    avg_elapsed_ms = round((perf["avg_elapsed"] or 0) * 1000, 1) if perf and perf["avg_elapsed"] else 0
 
-    # Token breakdown
+    # Token breakdown (always the last-24 h window — this is a "today" figure)
     prompt_tokens = int(row["total_prompt_tokens"] or 0) if row else 0
     comp_tokens   = int(row["total_comp_tokens"] or 0) if row else 0
 
@@ -106,9 +118,10 @@ def get_overview() -> dict[str, Any]:
             "used_pct":    round(vm.percent, 1),
         },
         "running_models":    running_models,
-        "requests_today":    int(row["total_requests"] or 0) if row else 0,
-        "avg_ttft_ms":       round(row["avg_ttft"] or 0, 1) if row else 0,
-        "avg_tps":           round(row["avg_tps"] or 0, 1) if row else 0,
+        "requests_today":    requests_today,
+        "perf_window":       perf_window,
+        "avg_ttft_ms":       round(perf["avg_ttft"] or 0, 1) if perf else 0,
+        "avg_tps":           round(perf["avg_tps"] or 0, 1) if perf else 0,
         "avg_context_len":   round(avg_ctx, 0),
         "kv_savings_pct":    kv_savings_pct,
         "total_tokens_today": prompt_tokens + comp_tokens,
@@ -1270,22 +1283,32 @@ def get_optimization_events(limit: int = 200, model_id: str | None = None) -> li
 
 
 def get_optimization_summary() -> dict:
-    """Return aggregate stats about optimizations in the last 24 hours."""
+    """Return aggregate stats about optimizations.
+
+    Scoped to the last 24 h, but falls back to all-time when the day has had
+    no traffic — otherwise the headline reads "0 optimizations / 0.0% saved"
+    while the event list right below shows real wins, which looks broken.
+    """
     db    = _db()
     since = time.time() - 86400
-    row   = db.conn.execute(
-        """SELECT COUNT(*) AS total_requests,
+    _SQL = """SELECT COUNT(*) AS total_requests,
                COUNT(CASE WHEN context_len IS NOT NULL AND context_len < ? * 0.95 THEN 1 END) AS kv_ctx_opt,
                COUNT(CASE WHEN f16_kv = 0 THEN 1 END)                                          AS kv_q8_count,
                COUNT(CASE WHEN num_keep IS NOT NULL AND num_keep > 0 THEN 1 END)                AS cache_count,
                COUNT(CASE WHEN delta_swap_gb IS NOT NULL AND delta_swap_gb > 0.05 THEN 1 END)   AS swap_count,
                COUNT(CASE WHEN profile_name IS NOT NULL THEN 1 END)                             AS qos_sel,
                AVG(CASE WHEN context_len IS NOT NULL AND context_len < ? * 0.95
-                        THEN (? - context_len) / ? * 100.0 END)                                AS avg_kv_pct,
+                        THEN (? - context_len) * 100.0 / ? END)                                AS avg_kv_pct,
                AVG(ttft_ms) AS avg_ttft
-           FROM run_observations WHERE observed_at > ?""",
-        (_BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX, since),
-    ).fetchone()
+           FROM run_observations WHERE {where}"""
+    base_params = (_BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX, _BASELINE_CTX)
+    row = db.conn.execute(_SQL.format(where="observed_at > ?"), (*base_params, since)).fetchone()
+    window = "24h"
+    if int(row["total_requests"] or 0) == 0:
+        all_row = db.conn.execute(_SQL.format(where="1=1"), base_params).fetchone()
+        if all_row and (all_row["total_requests"] or 0) > 0:
+            row = all_row
+            window = "all-time"
 
     total      = int(row["total_requests"]  or 0)
     kv_ctx     = int(row["kv_ctx_opt"]      or 0)
@@ -1298,6 +1321,7 @@ def get_optimization_summary() -> dict:
     return {
         "total_requests":      total,
         "total_optimizations": total_opt,
+        "window":              window,
         "kv_ctx_optimized":    kv_ctx,
         "kv_q8_count":         kv_q8,
         "sys_prompt_cached":   cache_pins,
@@ -1343,3 +1367,36 @@ def get_key_usage_trend(key_id: str, days: int = 30) -> list[dict]:
             "avg_ttft_ms": round(r["avg_ttft"], 1) if r and r["avg_ttft"] else None,
         })
     return result
+
+
+def get_onboarding_state() -> dict[str, bool]:
+    """Return completion state for the first-run onboarding checklist."""
+    db = _db()
+    conn = db.conn
+
+    has_run = conn.execute(
+        "SELECT 1 FROM run_observations LIMIT 1"
+    ).fetchone() is not None
+
+    has_key = conn.execute(
+        "SELECT 1 FROM api_keys WHERE is_active=1 LIMIT 1"
+    ).fetchone() is not None
+
+    recent_request = conn.execute(
+        "SELECT 1 FROM run_observations WHERE observed_at > ? LIMIT 1",
+        (time.time() - 86400,),
+    ).fetchone() is not None
+
+    try:
+        from autotune.api.local_models import is_ollama_running
+        ollama_ok = is_ollama_running()
+    except Exception:
+        ollama_ok = False
+
+    return {
+        "ollama_connected":    ollama_ok,
+        "model_pulled":        has_run,
+        "key_created":         has_key,
+        "first_request_made":  recent_request,
+        "all_done":            ollama_ok and has_run and has_key and recent_request,
+    }

@@ -44,14 +44,36 @@ def _ollama_running_sync() -> bool:
         return False
 
 
-def _list_models_sync() -> list[str]:
-    """Return Ollama model names sorted by size (smallest first)."""
+# Families that don't do plain text chat — vision-only, embedding, speech,
+# and translation-only models. The streaming/chat roundtrip tests must not
+# pick these as the "smallest model" or they'll yield zero text tokens.
+_NON_CHAT_PATTERNS = (
+    "moondream", "llava", "bakllava", "-vl", ":vl", "vl:", "vision",
+    "embed", "minilm", "bge", "nomic", "mxbai", "clip", "whisper",
+    "reranker", "cross-encoder", "tts", "ocr", "translategemma",
+)
+
+
+def _is_chat_model(name: str) -> bool:
+    low = name.lower()
+    return not any(p in low for p in _NON_CHAT_PATTERNS)
+
+
+def _list_models_sync(chat_only: bool = False) -> list[str]:
+    """Return Ollama model names sorted by size (smallest first).
+
+    When *chat_only* is set, vision/embedding/speech/translation models are
+    excluded so callers reliably get a text chat model.
+    """
     try:
         r = httpx.get(f"{_ollama_url()}/api/tags", timeout=2.0)
         models = r.json().get("models", [])
         # Sort by size ascending so the smallest model is used by default
         models.sort(key=lambda m: m.get("size", 0))
-        return [m["name"] for m in models]
+        names = [m["name"] for m in models]
+        if chat_only:
+            names = [n for n in names if _is_chat_model(n)]
+        return names
     except Exception:
         return []
 
@@ -63,10 +85,15 @@ ollama_running = pytest.fixture(scope="session")(
 
 @pytest.fixture(scope="session")
 def smallest_model(ollama_running) -> str:
-    """Return the smallest locally available Ollama model."""
-    models = _list_models_sync()
+    """Return the smallest locally available Ollama *chat* model.
+
+    Vision/embedding/speech/translation models are skipped — they don't
+    produce text tokens for a plain prompt and would fail the roundtrip
+    assertions for reasons unrelated to autotune.
+    """
+    models = _list_models_sync(chat_only=True)
     if not models:
-        pytest.skip("No models installed in Ollama")
+        pytest.skip("No text chat model installed in Ollama")
     return models[0]
 
 

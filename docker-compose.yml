@@ -29,7 +29,7 @@ services:
     image: autotune:latest
     ports:
       - "8765:8765"   # autotune OpenAI-compatible API
-      - "11434:11434" # Ollama direct access (optional — remove if not needed)
+      # Ollama port intentionally not exposed — access only through autotune on 8765
     volumes:
       - ollama_models:/root/.ollama
     environment:
@@ -47,8 +47,7 @@ services:
   ollama:
     profiles: ["multi"]
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    # No ports: Ollama is internal-only. All access goes through autotune on 8765.
     volumes:
       - ollama_models:/root/.ollama
     environment:
@@ -64,9 +63,7 @@ services:
   # ── Option B: autotune service ───────────────────────────────────────────────
   autotune:
     profiles: ["multi"]
-    build:
-      context: .
-      dockerfile: Dockerfile.autotune  # lightweight Python-only image (no Ollama)
+    image: tanavc1/llm-autotune:latest
     ports:
       - "8765:8765"
     volumes:
@@ -105,9 +102,7 @@ services:
   # ── Option C: autotune (API-key auth enabled) ────────────────────────────────
   autotune-team:
     profiles: ["team"]
-    build:
-      context: .
-      dockerfile: Dockerfile.autotune
+    image: tanavc1/llm-autotune:latest
     env_file:
       - .env
     volumes:

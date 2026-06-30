@@ -75,29 +75,32 @@ POPULAR_MODELS: list[PopularModel] = [
     PopularModel("llama3.2:1b",       "Llama 3.2 1B — ultra-fast on any Mac",           "~1.3 GB"),
     # ── Small (2–5 GB) — 8 GB+ RAM ─────────────────────────────────────
     PopularModel("llama3.2:3b",       "Llama 3.2 3B — excellent small model",           "~2.0 GB"),
-    PopularModel("qwen3:4b",          "Qwen3 4B — hybrid thinking, best 4B available",  "~2.6 GB"),
-    PopularModel("gemma4:e2b",        "Gemma 4 2B — multimodal, 128k context",          "~2.5 GB"),
+    PopularModel("qwen3.5:4b",        "Qwen 3.5 4B — newest small Qwen, 256k context",  "~2.6 GB"),
+    PopularModel("gemma3n:e4b",       "Gemma 3n E4B — on-device multimodal (text+vision+audio)", "~2.5 GB"),
     PopularModel("qwen2.5:3b",        "Qwen 2.5 3B — great multilingual",               "~2.0 GB"),
     # ── Medium (5–12 GB) — 16 GB RAM ───────────────────────────────────
-    PopularModel("qwen3:8b",          "Qwen3 8B — best general model for 16 GB laptops","~5.2 GB"),
-    PopularModel("gemma4:e4b",        "Gemma 4 4B — top compact model, multimodal",     "~5.8 GB"),
+    PopularModel("qwen3.5:9b",        "Qwen 3.5 9B — best overall 8–9B (June 2026)",    "~5.6 GB"),
+    PopularModel("gpt-oss:20b",       "GPT-OSS 20B — OpenAI MoE, ~o3-mini, fits 16 GB", "~14 GB"),
+    PopularModel("gemma4:12b",        "Gemma 4 12B — multimodal w/ native audio",       "~8.1 GB"),
+    PopularModel("qwen3:8b",          "Qwen3 8B — proven general workhorse",            "~5.2 GB"),
     PopularModel("llama3.1:8b",       "Llama 3.1 8B — reliable 128k-context model",     "~4.7 GB"),
-    PopularModel("qwen2.5:7b",        "Qwen 2.5 7B — excellent all-rounder",            "~4.7 GB"),
     PopularModel("qwen2.5-coder:7b",  "Qwen 2.5 Coder 7B — best small coding model",   "~4.7 GB"),
     PopularModel("deepseek-r1:7b",    "DeepSeek R1 7B — chain-of-thought reasoning",    "~4.7 GB"),
-    PopularModel("gemma3:12b",        "Gemma 3 12B — strong multilingual model",        "~8.1 GB"),
     # ── Large (12–20 GB) — 24–32 GB RAM ────────────────────────────────
+    PopularModel("devstral:24b",      "Devstral 24B — agentic coding specialist",       "~14 GB"),
     PopularModel("qwen3:14b",         "Qwen3 14B — frontier-quality for 24 GB+",        "~9.0 GB"),
-    PopularModel("qwen2.5:14b",       "Qwen 2.5 14B — strong all-around",               "~9.0 GB"),
-    PopularModel("qwen2.5-coder:14b", "Qwen 2.5 Coder 14B — top coding model",         "~9.0 GB"),
+    PopularModel("qwen2.5-coder:14b", "Qwen 2.5 Coder 14B — top 14B coding model",     "~9.0 GB"),
     PopularModel("deepseek-r1:14b",   "DeepSeek R1 14B distill — top reasoning",        "~9.0 GB"),
     # ── XL (20–40 GB) — 32+ GB RAM ─────────────────────────────────────
+    PopularModel("qwen3.6:27b",       "Qwen 3.6 27B — ⭐ best overall on consumer HW",  "~17 GB"),
+    PopularModel("qwen3-coder:30b",   "Qwen3-Coder 30B MoE — best open coder (June 26)","~19 GB"),
     PopularModel("qwen3:30b-a3b",     "Qwen3 30B MoE (3.3B active) — near-frontier",   "~17 GB"),
-    PopularModel("qwen3:32b",         "Qwen3 32B dense — top open model",               "~20 GB"),
-    PopularModel("qwen2.5:32b",       "Qwen 2.5 32B — premium quality",                "~20 GB"),
-    PopularModel("qwen2.5-coder:32b", "Qwen 2.5 Coder 32B — best open coding model",   "~20 GB"),
+    PopularModel("gemma4:26b",        "Gemma 4 26B MoE — multimodal, fast, 256k ctx",  "~17 GB"),
     PopularModel("deepseek-r1:32b",   "DeepSeek R1 32B distill — excellent reasoning",  "~20 GB"),
     PopularModel("qwq:32b",           "QwQ 32B — best open maths/science reasoning",    "~20 GB"),
+    # ── Flagship (40 GB+) — 48+ GB unified memory ──────────────────────
+    PopularModel("gpt-oss:120b",      "GPT-OSS 120B MoE — near-o3, self-hostable",      "~65 GB"),
+    PopularModel("llama3.3:70b",      "Llama 3.3 70B — best open dense 70B",            "~40 GB"),
 ]
 
 

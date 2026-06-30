@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "autotune.fullname" . }}
+  labels:
+    {{- include "autotune.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "autotune.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "autotune.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+        - name: autotune
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8765
+              protocol: TCP
+          env:
+            - name: AUTOTUNE_PORT
+              value: "8765"
+            - name: AUTOTUNE_OLLAMA_URL
+              value: {{ .Values.ollama.url | quote }}
+            - name: AUTOTUNE_REQUIRE_API_KEY
+              value: {{ ternary "1" "0" .Values.requireApiKey | quote }}
+            - name: XDG_DATA_HOME
+              value: /data
+            - name: AUTOTUNE_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "autotune.secretName" . }}
+                  key: {{ .Values.existingSecretKey }}
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+        {{- if .Values.ollama.bundled }}
+        - name: ollama
+          image: {{ .Values.ollama.image | quote }}
+          ports:
+            - name: ollama
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0"
+          volumeMounts:
+            {{- if .Values.ollama.modelVolume.enabled }}
+            - name: models
+              mountPath: /root/.ollama
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 15
+        {{- end }}
+
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "autotune.fullname" . }}-data
+        {{- end }}
+        {{- if and .Values.ollama.bundled .Values.ollama.modelVolume.enabled }}
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "autotune.fullname" . }}-models
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

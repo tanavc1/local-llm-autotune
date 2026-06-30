@@ -1,0 +1,36 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "autotune.fullname" . }}-data
+  labels:
+    {{- include "autotune.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+
+{{- if and .Values.ollama.bundled .Values.ollama.modelVolume.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "autotune.fullname" . }}-models
+  labels:
+    {{- include "autotune.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.ollama.modelVolume.size }}
+  {{- if .Values.ollama.modelVolume.storageClass }}
+  storageClassName: {{ .Values.ollama.modelVolume.storageClass }}
+  {{- end }}
+{{- end }}

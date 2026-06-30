@@ -43,7 +43,7 @@ _Q8_BYTES  = 1
 # must come before shorter ones (gemma) to avoid false early matches.
 _ARCH_PREFIXES = [
     "llama", "qwen3", "qwen2", "phi4", "phi3",
-    "gemma4", "gemma3", "gemma2", "gemma",
+    "gemma4", "gemma3n", "gemma3", "gemma2", "gemma",
     "mistral", "falcon", "mpt", "stablelm", "deepseek2",
     "internlm2", "cohere", "command_r", "starcoder",
 ]

@@ -704,6 +704,16 @@ async def _get_model_quant(model_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Prompt-logging gate
+# Set AUTOTUNE_LOG_PROMPTS=0 (the default) to keep prompts/completions out of
+# the local SQLite gateway_log.  Set to 1 to enable conversation history.
+# ---------------------------------------------------------------------------
+
+def _prompts_enabled() -> bool:
+    return os.environ.get("AUTOTUNE_LOG_PROMPTS", "0").strip() not in ("0", "false", "no")
+
+
+# ---------------------------------------------------------------------------
 # Shared run-telemetry helper — called from both streaming and non-streaming
 # ---------------------------------------------------------------------------
 
@@ -1649,7 +1659,7 @@ async def _chat_completions_inner(
                     ttft_ms=ttft_ms, tokens_per_sec=tps, backend=backend_name,
                 )
 
-            if user_text:
+            if user_text and _prompts_enabled():
                 try:
                     conv_mgr.log_gateway_request(
                         model_id=req.model,
@@ -1739,7 +1749,7 @@ async def _chat_completions_inner(
                 collected.append(chunk.content)
             backend_used = chunk.backend
     except (ModelNotAvailableError, AuthError, BackendError) as e:
-        if user_text:
+        if user_text and _prompts_enabled():
             try:
                 conv_mgr.log_gateway_request(
                     model_id=req.model,
@@ -1769,7 +1779,7 @@ async def _chat_completions_inner(
         conv_mgr.add_message(conv_id, "assistant", content_out,
                               ttft_ms=ttft, tokens_per_sec=tps2, backend=backend_used)
 
-    if user_text:
+    if user_text and _prompts_enabled():
         try:
             conv_mgr.log_gateway_request(
                 model_id=req.model,

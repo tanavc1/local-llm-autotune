@@ -129,11 +129,22 @@ _KNOWN_MLX_MAP: dict[str, str] = {
     "gemma3:4b":          "mlx-community/gemma-3-4b-it-4bit",
     "gemma3:12b":         "mlx-community/gemma-3-12b-it-4bit",
     "gemma3":             "mlx-community/gemma-3-4b-it-4bit",
-    # Gemma 4 (April 2025) — multimodal, 128k context
-    "gemma4:e2b":         "mlx-community/gemma-4-2b-it-4bit",
-    "gemma4:e4b":         "mlx-community/gemma-4-4b-it-4bit",
-    "gemma4:26b":         "mlx-community/gemma-4-27b-it-4bit",
-    "gemma4":             "mlx-community/gemma-4-4b-it-4bit",
+    # Gemma 3n — on-device multimodal (E2B/E4B effective-param variants)
+    "gemma3n:e2b":        "mlx-community/gemma-3n-E2B-it-4bit",
+    "gemma3n:e4b":        "mlx-community/gemma-3n-E4B-it-4bit",
+    "gemma3n":            "mlx-community/gemma-3n-E4B-it-4bit",
+    # Gemma 4 (June 2026) — multimodal w/ native audio, real tags 12b/26b/31b
+    "gemma4:12b":         "mlx-community/gemma-4-12b-it-4bit",
+    "gemma4:26b":         "mlx-community/gemma-4-26b-it-4bit",
+    "gemma4":             "mlx-community/gemma-4-12b-it-4bit",
+    # June 2026 releases
+    "qwen3.5:4b":         "mlx-community/Qwen3.5-4B-4bit",
+    "qwen3.5:9b":         "mlx-community/Qwen3.5-9B-4bit",
+    "qwen3.6:27b":        "mlx-community/Qwen3.6-27B-4bit",
+    "qwen3-coder:30b":    "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+    "gpt-oss:20b":        "mlx-community/gpt-oss-20b-MXFP4-Q4",
+    "gpt-oss:120b":       "mlx-community/gpt-oss-120b-MXFP4-Q4",
+    "devstral:24b":       "mlx-community/Devstral-Small-2505-4bit",
     # DeepSeek
     "deepseek-r1:7b":     "mlx-community/DeepSeek-R1-Distill-Qwen-7B-4bit",
     "deepseek-r1:8b":     "mlx-community/DeepSeek-R1-Distill-Llama-8B-4bit",

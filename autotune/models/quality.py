@@ -77,15 +77,15 @@ _QUALITY_DB: dict[str, QualityInfo] = {
     "gemma3:4b":     QualityInfo("C", 59.2, 36.0,  None,  "Gemma 3 4B; multimodal, reasonable language quality"),
     "gemma3:12b":    QualityInfo("A", 72.6, 65.5,  None,  "Gemma 3 12B; strong across English and multilingual tasks"),
     "gemma3:27b":    QualityInfo("S", 79.8, 75.4,  None,  "Gemma 3 27B; Google's previous flagship"),
-    # ── Gemma 4 (April 2025) ──────────────────────────────────────────────────
-    # Benchmark scores from Google's official Gemma 4 release benchmarks.
-    # MMLU = 5-shot; HumanEval = pass@1; note: these are *large* scores for
-    # the parameter count because of the MoE architecture and PLE technique.
-    "gemma4:e2b":    QualityInfo("B", 69.0, 62.0,  None,  "Gemma 4 2B; compact, multimodal, 128k context"),
-    "gemma4:e4b":    QualityInfo("A", 74.0, 68.0,  None,  "Gemma 4 4B; best small model for 16GB laptops"),
-    "gemma4:26b":    QualityInfo("S", 85.2, 89.0,  None,  "Gemma 4 26B MoE (4B active); near-frontier, 256k context"),
+    # ── Gemma 3n (on-device multimodal; E2B/E4B effective-param variants) ─────
+    "gemma3n:e2b":   QualityInfo("C", 57.0, 44.0,  None,  "Gemma 3n E2B; on-device text+vision+audio, ~2GB RAM"),
+    "gemma3n:e4b":   QualityInfo("B", 64.0, 48.0,  None,  "Gemma 3n E4B; on-device multimodal, MatFormer, ~3GB RAM"),
+    # ── Gemma 4 (June 2026; real Ollama tags are 12b / 26b / 31b) ─────────────
+    # MMLU = 5-shot; HumanEval = pass@1. The 26B variant is MoE (~4B active).
+    "gemma4:12b":    QualityInfo("A", 79.0, 72.0,  None,  "Gemma 4 12B; multimodal w/ native audio, runs in 16GB"),
+    "gemma4:26b":    QualityInfo("S", 85.2, 89.0,  None,  "Gemma 4 26B MoE (~4B active); near-frontier, 256k context"),
     "gemma4:31b":    QualityInfo("S", 85.5, 90.0,  None,  "Gemma 4 31B dense; Google's flagship open model"),
-    "gemma4":        QualityInfo("A", 74.0, 68.0,  None,  "Gemma 4 (default tag); multimodal, 128k context"),
+    "gemma4":        QualityInfo("A", 79.0, 72.0,  None,  "Gemma 4 (default tag); multimodal, 128k context"),
 
     # ── Mistral ──────────────────────────────────────────────────────────────
     "mistral:7b":    QualityInfo("B", 62.5, 50.0,  48.0,  "Mistral 7B v0.3; fast and reliable workhorse"),
@@ -132,6 +132,20 @@ _QUALITY_DB: dict[str, QualityInfo] = {
     "qwen3:14b":     QualityInfo("A", 79.0, 78.0,  None,  "Qwen 3 14B; excellent reasoning and instruction following"),
     "qwen3:30b":     QualityInfo("S", 83.0, 84.0,  None,  "Qwen 3 30B MoE; flagship-level at lower inference cost"),
     "qwen3:32b":     QualityInfo("S", 84.0, 85.0,  None,  "Qwen 3 32B dense; top open model in its size class"),
+
+    # ── Qwen 3.5 / 3.6 & coder (June 2026) ───────────────────────────────────
+    "qwen3.5:4b":    QualityInfo("B", 70.0, 62.0,  None,  "Qwen 3.5 4B; newest small Qwen, 256k context"),
+    "qwen3.5:9b":    QualityInfo("A", 77.0, 73.0,  None,  "Qwen 3.5 9B; upgrade over Qwen3 8B, hybrid thinking"),
+    "qwen3.5:35b":   QualityInfo("S", 86.5, 90.0,  None,  "Qwen 3.5 35B dense; frontier-class reasoning at 32GB+"),
+    "qwen3.6:27b":   QualityInfo("S", 86.0, 90.0,  None,  "Qwen 3.6 27B; best overall on consumer hardware, 77.2% SWE-bench"),
+    "qwen3-coder:30b": QualityInfo("S", 82.0, 92.0, None,  "Qwen3-Coder 30B MoE (3.3B active); top open agentic coder"),
+
+    # ── GPT-OSS (OpenAI open weights, June 2026) ─────────────────────────────
+    "gpt-oss:20b":   QualityInfo("S", 83.0, 87.0,  None,  "OpenAI GPT-OSS 20B MoE; ~o3-mini reasoning, fits 16GB"),
+    "gpt-oss:120b":  QualityInfo("S", 88.0, 92.0,  None,  "OpenAI GPT-OSS 120B MoE; near-o3, self-hostable flagship"),
+
+    # ── Devstral (Mistral agentic coder) ─────────────────────────────────────
+    "devstral:24b":  QualityInfo("A", 78.0, 84.0,  None,  "Mistral Devstral 24B; agentic coding, multi-file edits"),
 
     # ── Qwen 3 VL (vision-language) ──────────────────────────────────────────
     "qwen3-vl:3b":   QualityInfo("B", 62.0, None,  None,  "Qwen 3 VL 3B; vision + language, capable for its size"),
