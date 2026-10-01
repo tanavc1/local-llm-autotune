@@ -29,7 +29,7 @@ export function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       aria-label={copied ? "Copied!" : "Copy to clipboard"}
-      className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-white/30 transition-colors hover:text-white/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-violet-500"
+      className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-subtle transition-colors hover:text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-rust-500"
     >
       {copied ? (
         <>

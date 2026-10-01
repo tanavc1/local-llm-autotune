@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { SiteNav } from "../components/SiteNav";
 import type { Metadata } from "next";
 import { CopyButton } from "../components/CopyButton";
 
@@ -14,12 +16,12 @@ export const metadata: Metadata = {
 function Code({ children, block = false }: { children: string; block?: boolean }) {
   if (block) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/50 overflow-hidden mt-3">
-        <div className="flex items-center gap-1.5 border-b border-white/8 px-4 py-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
-          <span className="ml-2 text-xs text-white/30">Terminal</span>
+      <div className="rounded-md border border-line bg-wash overflow-hidden mt-3">
+        <div className="flex items-center gap-1.5 border-b border-line px-4 py-2">
+
+
+
+          <span className="ml-2 text-xs text-subtle">Terminal</span>
           <CopyButton text={children} />
         </div>
         <pre className="overflow-x-auto p-4 text-sm font-mono text-green-300 leading-relaxed">
@@ -29,7 +31,7 @@ function Code({ children, block = false }: { children: string; block?: boolean }
     );
   }
   return (
-    <code className="rounded bg-white/8 px-1.5 py-0.5 text-sm font-mono text-green-300">
+    <code className="rounded bg-paper px-1.5 py-0.5 text-sm font-mono text-green-300">
       {children}
     </code>
   );
@@ -37,7 +39,7 @@ function Code({ children, block = false }: { children: string; block?: boolean }
 
 function Badge({ children, color = "violet" }: { children: string; color?: "violet" | "blue" | "green" | "yellow" | "orange" }) {
   const colors = {
-    violet: "bg-violet-500/15 text-violet-300 border-violet-500/25",
+    violet: "bg-rust-500/15 text-rust-300 border-rust-500/25",
     blue:   "bg-blue-500/15 text-blue-300 border-blue-500/25",
     green:  "bg-green-500/15 text-green-300 border-green-500/25",
     yellow: "bg-yellow-500/15 text-yellow-300 border-yellow-500/25",
@@ -72,25 +74,25 @@ function CommandCard({
   flags,
 }: CommandCardProps) {
   return (
-    <div id={name} className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+    <div id={name} className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <code className="text-lg font-bold text-white font-mono">autotune {name}</code>
+          <code className="text-lg font-bold text-ink font-mono">autotune {name}</code>
           {badge && <Badge color={badgeColor}>{badge}</Badge>}
         </div>
-        <span className="text-sm text-white/40">{tagline}</span>
+        <span className="text-sm text-subtle">{tagline}</span>
       </div>
-      <p className="text-sm text-white/60 mb-4 leading-relaxed">{description}</p>
+      <p className="text-sm text-muted mb-4 leading-relaxed">{description}</p>
       <div className="mb-1">
-        <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
         <Code block>{usage}</Code>
       </div>
       {examples && examples.length > 0 && (
         <div className="mt-4">
-          <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
           {examples.map((ex, i) => (
             <div key={i}>
-              {ex.label && <div className="text-xs text-white/40 mt-3 mb-1">{ex.label}</div>}
+              {ex.label && <div className="text-xs text-subtle mt-3 mb-1">{ex.label}</div>}
               <Code block>{ex.code}</Code>
             </div>
           ))}
@@ -98,14 +100,14 @@ function CommandCard({
       )}
       {flags && flags.length > 0 && (
         <div className="mt-4">
-          <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Flags</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Flags</span>
           <div className="mt-2 flex flex-col gap-1.5">
             {flags.map((f) => (
               <div key={f.flag} className="flex items-start gap-3 text-sm">
-                <code className="shrink-0 rounded bg-white/6 px-2 py-0.5 text-xs font-mono text-green-300/80">
+                <code className="shrink-0 rounded bg-paper px-2 py-0.5 text-xs font-mono text-green-300/80">
                   {f.flag}
                 </code>
-                <span className="text-white/50">{f.desc}</span>
+                <span className="text-muted">{f.desc}</span>
               </div>
             ))}
           </div>
@@ -119,34 +121,18 @@ function CommandCard({
 
 export default function CommandsPage() {
   return (
-    <div className="min-h-screen bg-[#09090f] text-[#e8e8f0]">
+    <div className="min-h-screen bg-canvas text-ink">
       {/* Nav */}
-      <nav className="border-b border-white/5 bg-[#09090f]/90 backdrop-blur sticky top-0 z-50">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <a href="/" className="text-lg font-bold text-white">autotune</a>
-          <div className="flex items-center gap-4 text-sm text-white/60">
-            <a href="/install" className="hover:text-white transition-colors">Install</a>
-            <a href="/commands" className="text-violet-300 font-medium">Commands</a>
-            <a
-              href="https://github.com/tanavc1/local-llm-autotune"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-white transition-colors"
-            >
-              GitHub
-            </a>
-          </div>
-        </div>
-      </nav>
+      <SiteNav />
 
       <div className="mx-auto max-w-5xl px-6 py-16">
         {/* Header */}
         <div className="mb-12">
-          <p className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-3">
             Command reference
           </p>
-          <h1 className="text-4xl font-bold text-white mb-4">All autotune commands</h1>
-          <p className="text-white/55 text-lg max-w-2xl">
+          <h1 className="text-4xl font-bold text-ink mb-4">All autotune commands</h1>
+          <p className="text-muted text-lg max-w-2xl">
             Every command listed with examples and flags. New? Run{" "}
             <Code>autotune start</Code> first — it sets up the best model for your
             hardware and unlocks the rest of the CLI. Then <Code>autotune chat</Code> to
@@ -155,8 +141,8 @@ export default function CommandsPage() {
         </div>
 
         {/* Quick nav */}
-        <div className="mb-12 rounded-2xl border border-white/8 bg-white/2 p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-4">Jump to</p>
+        <div className="mb-12 rounded-lg border border-line bg-paper p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-subtle mb-4">Jump to</p>
           <div className="flex flex-wrap gap-2">
             {[
               "start", "chat", "run", "hardware",
@@ -171,7 +157,7 @@ export default function CommandsPage() {
               <a
                 key={cmd}
                 href={`#${cmd}`}
-                className="rounded-lg border border-white/10 bg-white/4 px-3 py-1.5 text-xs font-mono text-green-300 hover:border-white/20 hover:bg-white/8 transition-colors"
+                className="rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-mono text-green-300 hover:border-line hover:bg-paper transition-colors"
               >
                 {cmd}
               </a>
@@ -181,7 +167,7 @@ export default function CommandsPage() {
 
         {/* ── Section: Get started ─────────────────────────────────────────── */}
         <div className="mb-4">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Get started
           </h2>
           <div className="flex flex-col gap-6">
@@ -282,7 +268,7 @@ export default function CommandsPage() {
 
         {/* ── Section: Manage models ───────────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Manage models
           </h2>
           <div className="flex flex-col gap-6">
@@ -349,7 +335,7 @@ export default function CommandsPage() {
 
         {/* ── Section: Deploy & integrate ──────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Deploy &amp; integrate
           </h2>
           <div className="flex flex-col gap-6">
@@ -399,10 +385,10 @@ export default function CommandsPage() {
 
         {/* ── Section: Benchmarking & Proof ────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Benchmarking &amp; proof
           </h2>
-          <p className="text-sm text-white/40 mb-6 -mt-2">
+          <p className="text-sm text-subtle mb-6 -mt-2">
             Verify that autotune is actually helping on your specific machine. All timings come from Ollama&apos;s own Go nanosecond timers — nothing estimated.
           </p>
           <div className="flex flex-col gap-6">
@@ -525,30 +511,30 @@ export default function CommandsPage() {
 
         {/* ── Section: Conversation memory ─────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Conversation memory
           </h2>
-          <p className="text-sm text-white/40 mb-6 -mt-2">
+          <p className="text-sm text-subtle mb-6 -mt-2">
             autotune stores past conversations locally (SQLite + optional vector embeddings) so future chat sessions can surface relevant context automatically.
           </p>
           <div className="flex flex-col gap-6">
 
-            <div id="memory-search" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="memory-search" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune memory search</code>
-                <span className="text-sm text-white/40">Search past conversations</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune memory search</code>
+                <span className="text-sm text-subtle">Search past conversations</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 Search your conversation history by semantic meaning or keywords. Uses vector search (cosine similarity) when an embedding model is available, otherwise falls back to FTS5 full-text keyword search.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune memory search "your query here"`}</Code>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
                 <Code block>{`autotune memory search "postgres migration"\nautotune memory search "FastAPI authentication" --top 10\nautotune memory search "React hooks" --min-score 0.4`}</Code>
               </div>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Flags</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Flags</span>
                 <div className="mt-2 flex flex-col gap-1.5">
                   {[
                     { flag: "QUERY", desc: "Search query (required)." },
@@ -556,30 +542,30 @@ export default function CommandsPage() {
                     { flag: "--min-score", desc: "Minimum similarity score (0–1). Ignored for FTS5 fallback. Default: 0.20." },
                   ].map((f) => (
                     <div key={f.flag} className="flex items-start gap-3 text-sm">
-                      <code className="shrink-0 rounded bg-white/6 px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
-                      <span className="text-white/50">{f.desc}</span>
+                      <code className="shrink-0 rounded bg-paper px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
+                      <span className="text-muted">{f.desc}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div id="memory-list" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="memory-list" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune memory list</code>
-                <span className="text-sm text-white/40">Browse stored memories</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune memory list</code>
+                <span className="text-sm text-subtle">Browse stored memories</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 List recently stored conversation memories with timestamps, model names, and a preview of each chunk. Use this to find a memory ID before deleting it.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune memory list`}</Code>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
                 <Code block>{`autotune memory list\nautotune memory list --days 7\nautotune memory list --model qwen3:8b --limit 50`}</Code>
               </div>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Flags</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Flags</span>
                 <div className="mt-2 flex flex-col gap-1.5">
                   {[
                     { flag: "--limit, -n", desc: "Number of memories to show. Default: 20." },
@@ -587,42 +573,42 @@ export default function CommandsPage() {
                     { flag: "--model", desc: "Filter by model (e.g. qwen3:8b)." },
                   ].map((f) => (
                     <div key={f.flag} className="flex items-start gap-3 text-sm">
-                      <code className="shrink-0 rounded bg-white/6 px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
-                      <span className="text-white/50">{f.desc}</span>
+                      <code className="shrink-0 rounded bg-paper px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
+                      <span className="text-muted">{f.desc}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div id="memory-stats" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="memory-stats" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune memory stats</code>
-                <span className="text-sm text-white/40">Memory store statistics</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune memory stats</code>
+                <span className="text-sm text-subtle">Memory store statistics</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 Show statistics about the local memory store: total chunks, how many have vector embeddings, database size, date range, breakdown by model, and whether semantic search is active.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune memory stats`}</Code>
             </div>
 
-            <div id="memory-forget" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="memory-forget" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune memory forget</code>
-                <span className="text-sm text-white/40">Delete memories</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune memory forget</code>
+                <span className="text-sm text-subtle">Delete memories</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 Delete one memory chunk, all memories for a specific conversation, or wipe the entire store. Use <Code>autotune memory list</Code> first to find the memory ID.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune memory forget <memory-id>`}</Code>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
                 <Code block>{`autotune memory forget 42\nautotune memory forget --conv-id abc123\nautotune memory forget --all\nautotune memory forget --all --yes   # skip confirmation`}</Code>
               </div>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Flags</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Flags</span>
                 <div className="mt-2 flex flex-col gap-1.5">
                   {[
                     { flag: "MEMORY_ID", desc: "ID of the specific memory chunk to delete (see autotune memory list)." },
@@ -631,23 +617,23 @@ export default function CommandsPage() {
                     { flag: "--yes, -y", desc: "Skip confirmation prompt." },
                   ].map((f) => (
                     <div key={f.flag} className="flex items-start gap-3 text-sm">
-                      <code className="shrink-0 rounded bg-white/6 px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
-                      <span className="text-white/50">{f.desc}</span>
+                      <code className="shrink-0 rounded bg-paper px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
+                      <span className="text-muted">{f.desc}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div id="memory-setup" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="memory-setup" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune memory setup</code>
-                <span className="text-sm text-white/40">Enable semantic search</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune memory setup</code>
+                <span className="text-sm text-subtle">Enable semantic search</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
-                Pull <code className="text-green-300/80 text-xs bg-white/6 px-1.5 py-0.5 rounded">nomic-embed-text</code> from Ollama (~274 MB) to enable semantic vector search across your conversation history. Without this, autotune uses FTS5 keyword search instead.
+              <p className="text-sm text-muted mb-4 leading-relaxed">
+                Pull <code className="text-green-300/80 text-xs bg-paper px-1.5 py-0.5 rounded">nomic-embed-text</code> from Ollama (~274 MB) to enable semantic vector search across your conversation history. Without this, autotune uses FTS5 keyword search instead.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune memory setup`}</Code>
             </div>
           </div>
@@ -655,68 +641,68 @@ export default function CommandsPage() {
 
         {/* ── Section: Apple Silicon / MLX ─────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Apple Silicon (MLX)
           </h2>
-          <p className="text-sm text-white/40 mb-6 -mt-2">
+          <p className="text-sm text-subtle mb-6 -mt-2">
             MLX runs LLMs entirely on-chip using Apple&apos;s unified memory and Metal GPU kernels — typically 10–40% faster than Ollama on the same model. Requires an Apple Silicon Mac (M1/M2/M3/M4).
           </p>
           <div className="flex flex-col gap-6">
 
-            <div id="mlx-list" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="mlx-list" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune mlx list</code>
-                <span className="text-sm text-white/40">Show cached MLX models</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune mlx list</code>
+                <span className="text-sm text-subtle">Show cached MLX models</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 List all MLX-format models already downloaded locally, with size on disk.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune mlx list`}</Code>
             </div>
 
-            <div id="mlx-pull" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="mlx-pull" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune mlx pull</code>
-                <span className="text-sm text-white/40">Download an MLX model</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune mlx pull</code>
+                <span className="text-sm text-subtle">Download an MLX model</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 Download an MLX-quantized model from the mlx-community on HuggingFace. You can use an Ollama model name (e.g. <Code>qwen3:8b</Code>) and autotune will resolve the correct MLX variant automatically.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune mlx pull <model>`}</Code>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
                 <Code block>{`autotune mlx pull qwen3:8b\nautotune mlx pull llama3.2:3b\nautotune mlx pull qwen2.5-coder:14b --quant 8bit`}</Code>
               </div>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Flags</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Flags</span>
                 <div className="mt-2 flex flex-col gap-1.5">
                   {[
                     { flag: "MODEL", desc: "Model name (required). Ollama name (e.g. qwen3:8b) or full HuggingFace ID." },
                     { flag: "--quant, -q", desc: "Quantization level: 4bit / 8bit / bf16. Default: 4bit." },
                   ].map((f) => (
                     <div key={f.flag} className="flex items-start gap-3 text-sm">
-                      <code className="shrink-0 rounded bg-white/6 px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
-                      <span className="text-white/50">{f.desc}</span>
+                      <code className="shrink-0 rounded bg-paper px-2 py-0.5 text-xs font-mono text-green-300/80">{f.flag}</code>
+                      <span className="text-muted">{f.desc}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div id="mlx-resolve" className="rounded-2xl border border-white/8 bg-white/2 p-6 scroll-mt-24">
+            <div id="mlx-resolve" className="rounded-lg border border-line bg-paper p-6 scroll-mt-24">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <code className="text-lg font-bold text-white font-mono">autotune mlx resolve</code>
-                <span className="text-sm text-white/40">Look up the MLX model ID</span>
+                <code className="text-lg font-bold text-ink font-mono">autotune mlx resolve</code>
+                <span className="text-sm text-subtle">Look up the MLX model ID</span>
               </div>
-              <p className="text-sm text-white/60 mb-4 leading-relaxed">
+              <p className="text-sm text-muted mb-4 leading-relaxed">
                 Show which MLX HuggingFace model ID would be used for a given Ollama model name. Useful to check before pulling.
               </p>
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Usage</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Usage</span>
               <Code block>{`autotune mlx resolve <model>`}</Code>
               <div className="mt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/30">Examples</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-subtle">Examples</span>
                 <Code block>{`autotune mlx resolve qwen3:8b\nautotune mlx resolve llama3.2`}</Code>
               </div>
             </div>
@@ -725,7 +711,7 @@ export default function CommandsPage() {
 
         {/* ── Section: Settings ────────────────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Settings
           </h2>
           <div className="flex flex-col gap-6">
@@ -769,7 +755,7 @@ export default function CommandsPage() {
 
         {/* ── Section: Diagnose ────────────────────────────────────────────── */}
         <div className="mb-4 mt-14">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-6">
             Diagnose
           </h2>
           <div className="flex flex-col gap-6">
@@ -791,9 +777,9 @@ export default function CommandsPage() {
         </div>
 
         {/* ── Ollama quick reference ────────────────────────────────────────── */}
-        <div className="mt-16 rounded-2xl border border-white/8 bg-white/2 p-6">
-          <h2 className="text-lg font-bold text-white mb-2">Ollama commands you&apos;ll use</h2>
-          <p className="text-sm text-white/50 mb-5">
+        <div className="mt-16 rounded-lg border border-line bg-paper p-6">
+          <h2 className="text-lg font-bold text-ink mb-2">Ollama commands you&apos;ll use</h2>
+          <p className="text-sm text-muted mb-5">
             autotune runs on top of Ollama. Here are the Ollama commands that pair with autotune.
           </p>
           <div className="flex flex-col gap-3 text-sm">
@@ -806,25 +792,25 @@ export default function CommandsPage() {
               { cmd: "ollama --version",        desc: "Confirm Ollama is installed" },
             ].map((row) => (
               <div key={row.cmd} className="flex items-start gap-4">
-                <div className="shrink-0 flex items-center gap-1 rounded bg-white/6 px-2 py-1">
+                <div className="shrink-0 flex items-center gap-1 rounded bg-paper px-2 py-1">
                   <code className="text-xs font-mono text-green-300/80">{row.cmd}</code>
                   <CopyButton text={row.cmd} />
                 </div>
-                <span className="text-white/50 text-xs pt-1">{row.desc}</span>
+                <span className="text-muted text-xs pt-1">{row.desc}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
-        <div className="mt-12 rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="mt-12 rounded-lg border border-rust-500/20 bg-rust-500/5 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-white mb-1">New to autotune?</h2>
-            <p className="text-sm text-white/55">Follow the install guide to get running in 5 minutes.</p>
+            <h2 className="text-base font-bold text-ink mb-1">New to autotune?</h2>
+            <p className="text-sm text-muted">Follow the install guide to get running in 5 minutes.</p>
           </div>
           <a
             href="/install"
-            className="shrink-0 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 transition-colors"
+            className="shrink-0 rounded-md bg-rust-600 px-5 py-2.5 text-sm font-semibold text-ink hover:bg-rust-500 transition-colors"
           >
             Install guide →
           </a>
@@ -832,17 +818,17 @@ export default function CommandsPage() {
       </div>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 px-6 py-8 mt-4">
-        <div className="mx-auto max-w-5xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
+      <footer className="border-t border-line px-6 py-8 mt-4">
+        <div className="mx-auto max-w-5xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-subtle">
           <div className="flex flex-col items-center sm:items-start gap-1">
             <span>autotune v1.6.0 — MIT License</span>
-            <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
+            <a href="mailto:autotunellm@gmail.com" className="hover:text-muted transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex gap-5">
-            <a href="/" className="hover:text-white/60 transition-colors">Home</a>
-            <a href="/install" className="hover:text-white/60 transition-colors">Install</a>
-            <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>
-            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
+            <Link href="/" className="hover:text-muted transition-colors">Home</Link>
+            <a href="/install" className="hover:text-muted transition-colors">Install</a>
+            <a href="/what-we-do" className="hover:text-muted transition-colors">All we do</a>
+            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-muted transition-colors">GitHub</a>
           </div>
         </div>
       </footer>

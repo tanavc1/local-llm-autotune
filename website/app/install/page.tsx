@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { SiteNav } from "../components/SiteNav";
 import type { Metadata } from "next";
 import { CopyButton } from "../components/CopyButton";
 
@@ -22,11 +24,11 @@ function Step({
 }) {
   return (
     <div className="flex gap-5">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-500/40 bg-violet-500/10 text-sm font-bold text-violet-300 mt-0.5">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rust-500/40 bg-rust-500/10 text-sm font-bold text-rust-300 mt-0.5">
         {n}
       </div>
       <div className="flex-1">
-        <h3 className="text-base font-semibold text-white mb-2">{title}</h3>
+        <h3 className="text-base font-semibold text-ink mb-2">{title}</h3>
         {children}
       </div>
     </div>
@@ -36,12 +38,12 @@ function Step({
 function Code({ children, block = false }: { children: string; block?: boolean }) {
   if (block) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/50 overflow-hidden mt-3">
-        <div className="flex items-center gap-1.5 border-b border-white/8 px-4 py-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
-          <span className="ml-2 text-xs text-white/30">Terminal</span>
+      <div className="rounded-md border border-line bg-wash overflow-hidden mt-3">
+        <div className="flex items-center gap-1.5 border-b border-line px-4 py-2">
+
+
+
+          <span className="ml-2 text-xs text-subtle">Terminal</span>
           <CopyButton text={children} />
         </div>
         <pre className="overflow-x-auto p-4 text-sm font-mono text-green-300 leading-relaxed">
@@ -51,7 +53,7 @@ function Code({ children, block = false }: { children: string; block?: boolean }
     );
   }
   return (
-    <code className="rounded bg-white/8 px-1.5 py-0.5 text-sm font-mono text-green-300">
+    <code className="rounded bg-paper px-1.5 py-0.5 text-sm font-mono text-green-300">
       {children}
     </code>
   );
@@ -71,7 +73,7 @@ function Callout({
   };
   const icons = { tip: "💡", warning: "⚠️", info: "ℹ️" };
   return (
-    <div className={`rounded-xl border p-4 ${styles[type]} mt-4`}>
+    <div className={`rounded-md border p-4 ${styles[type]} mt-4`}>
       <p className="text-sm">
         <span className="mr-2">{icons[type]}</span>
         {children}
@@ -84,47 +86,29 @@ function Callout({
 
 export default function InstallPage() {
   return (
-    <div className="min-h-screen bg-[#09090f] text-[#e8e8f0]">
+    <div className="min-h-screen bg-canvas text-ink">
       {/* Nav */}
-      <nav className="border-b border-white/5 bg-[#09090f]/90 backdrop-blur sticky top-0 z-50">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <a href="/" className="text-lg font-bold text-white">
-            autotune
-          </a>
-          <div className="flex items-center gap-4 text-sm text-white/60">
-            <a href="/install" className="text-violet-300 font-medium">Install</a>
-            <a href="/commands" className="hover:text-white transition-colors">Commands</a>
-            <a
-              href="https://github.com/tanavc1/local-llm-autotune"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-white transition-colors"
-            >
-              GitHub
-            </a>
-          </div>
-        </div>
-      </nav>
+      <SiteNav />
 
       <div className="mx-auto max-w-3xl px-6 py-16">
         <div className="mb-12">
-          <p className="text-xs font-semibold uppercase tracking-widest text-violet-400 mb-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-3">
             Complete install guide
           </p>
-          <h1 className="text-4xl font-bold text-white mb-4">
+          <h1 className="text-4xl font-bold text-ink mb-4">
             Get autotune running in 5 minutes
           </h1>
-          <p className="text-white/55 text-lg">
+          <p className="text-muted text-lg">
             No experience with AI or command lines needed. Follow each step in order.
           </p>
         </div>
 
         {/* OS tabs note */}
-        <div className="mb-10 rounded-2xl border border-white/8 bg-white/3 p-5">
-          <p className="text-sm text-white/60">
-            These instructions work on <strong className="text-white">Mac</strong>,{" "}
-            <strong className="text-white">Windows</strong>, and{" "}
-            <strong className="text-white">Linux</strong>. Windows users: use the
+        <div className="mb-10 rounded-lg border border-line bg-paper p-5">
+          <p className="text-sm text-muted">
+            These instructions work on <strong className="text-ink">Mac</strong>,{" "}
+            <strong className="text-ink">Windows</strong>, and{" "}
+            <strong className="text-ink">Linux</strong>. Windows users: use the
             Terminal app (search for &ldquo;Terminal&rdquo; in Start) or PowerShell.
           </p>
         </div>
@@ -134,7 +118,7 @@ export default function InstallPage() {
 
           {/* Step 1 */}
           <Step n="1" title="Open a terminal">
-            <p className="text-sm text-white/60 mb-3">
+            <p className="text-sm text-muted mb-3">
               A terminal lets you type commands directly to your computer.
             </p>
             <div className="grid gap-3 sm:grid-cols-3 text-sm">
@@ -143,9 +127,9 @@ export default function InstallPage() {
                 { os: "Windows", how: "Press Win, type Terminal or PowerShell, press Enter" },
                 { os: "Linux", how: "Press Ctrl + Alt + T" },
               ].map((o) => (
-                <div key={o.os} className="rounded-xl border border-white/8 bg-white/3 p-3">
-                  <div className="font-semibold text-white mb-1">{o.os}</div>
-                  <div className="text-xs text-white/50">{o.how}</div>
+                <div key={o.os} className="rounded-md border border-line bg-paper p-3">
+                  <div className="font-semibold text-ink mb-1">{o.os}</div>
+                  <div className="text-xs text-muted">{o.how}</div>
                 </div>
               ))}
             </div>
@@ -153,24 +137,24 @@ export default function InstallPage() {
 
           {/* Step 2 */}
           <Step n="2" title="Install Ollama (the AI engine)">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               Ollama runs AI models on your computer. autotune makes it faster.
             </p>
             <div className="flex flex-col gap-4 mt-4">
               <div>
-                <div className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Mac (easiest)</div>
+                <div className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Mac (easiest)</div>
                 <Code block>{`# Download the Mac installer from https://ollama.com/download
 # Double-click the downloaded file and follow the instructions.
 # Then verify it's working:
 ollama --version`}</Code>
               </div>
               <div>
-                <div className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Linux (one command)</div>
+                <div className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Linux (one command)</div>
                 <Code block>{`curl -fsSL https://ollama.com/install.sh | sh
 ollama --version`}</Code>
               </div>
               <div>
-                <div className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Windows</div>
+                <div className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Windows</div>
                 <Code block>{`# Download OllamaSetup.exe from https://ollama.com/download
 # Run the installer. Then in PowerShell:
 ollama --version`}</Code>
@@ -184,7 +168,7 @@ ollama --version`}</Code>
 
           {/* Step 3 */}
           <Step n="3" title="Install Python (if you don't have it)">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               autotune is a Python tool. You need Python 3.10 or newer.
             </p>
             <Code block>{`# Check if Python is already installed:
@@ -211,7 +195,7 @@ pip install "llm-autotune[mlx]"`}</Code>
 
           {/* Step 5 */}
           <Step n="5" title="Run the guided setup (run this first)">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               This is the one command to run after installing. It verifies Ollama, scans your
               CPU, RAM, and GPU, picks and pulls the best model for your hardware, and proves the
               speedup — all in about 2 minutes. Every other command is locked until this finishes once.
@@ -226,14 +210,14 @@ pip install "llm-autotune[mlx]"`}</Code>
 
           {/* Step 6 */}
           <Step n="6" title="Add another model (optional)">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               <Code>{`autotune start`}</Code> already pulled a model for you. To add a different one later,
               pick from the table below — autotune starts Ollama automatically, no separate <Code>{`ollama serve`}</Code> needed.
             </p>
-            <div className="mt-4 overflow-hidden rounded-xl border border-white/8">
-              <table className="w-full text-sm">
+            <div className="mt-4 overflow-hidden rounded-md border border-line">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/8 bg-white/4 text-left text-xs font-semibold uppercase tracking-wider text-white/50">
+                  <tr className="border-b border-line bg-paper text-left text-xs font-semibold uppercase tracking-wider text-muted">
                     <th className="px-4 py-3">Your RAM</th>
                     <th className="px-4 py-3">Run this</th>
                     <th className="px-4 py-3 hidden sm:table-cell">Size</th>
@@ -246,24 +230,24 @@ pip install "llm-autotune[mlx]"`}</Code>
                     { ram: "24 GB", cmd: "autotune pull qwen3:14b", size: "9.0 GB" },
                     { ram: "32 GB+", cmd: "autotune pull qwen3:30b-a3b", size: "17 GB" },
                   ].map((r) => (
-                    <tr key={r.ram} className="border-b border-white/5">
-                      <td className="px-4 py-3 text-xs font-medium text-white/60">{r.ram}</td>
+                    <tr key={r.ram} className="border-b border-line">
+                      <td className="px-4 py-3 text-xs font-medium text-muted">{r.ram}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs text-green-300">{r.cmd}</span>
                           {r.recommended && (
-                            <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-300">
+                            <span className="rounded-full bg-rust-500/20 px-2 py-0.5 text-xs text-rust-300">
                               recommended
                             </span>
                           )}
                           <CopyButton text={r.cmd} />
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-xs text-white/40 hidden sm:table-cell">{r.size}</td>
+                      <td className="px-4 py-3 text-xs text-subtle hidden sm:table-cell">{r.size}</td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
             <Code block>{`# For most people (16 GB RAM):
 autotune pull qwen3:8b
@@ -277,7 +261,7 @@ autotune pull qwen3:8b
 
           {/* Step 7 */}
           <Step n="7" title="Start chatting!">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               That&apos;s it. autotune handles all the optimization automatically.
             </p>
             <Code block>{`# Replace qwen3:8b with whatever model you downloaded:
@@ -293,7 +277,7 @@ autotune chat --model qwen3:8b
 
           {/* Step 8 */}
           <Step n="8" title="Prove it on your hardware (optional)">
-            <p className="text-sm text-white/60 mb-1">
+            <p className="text-sm text-muted mb-1">
               Run a 30-second benchmark using Ollama&apos;s own internal timers to see exactly how much faster autotune is on your machine.
             </p>
             <Code block>{`autotune proof -m qwen3:8b
@@ -303,20 +287,20 @@ autotune chat --model qwen3:8b
         </div>
 
         {/* Upgrading */}
-        <div className="mt-16 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6">
-          <h2 className="text-lg font-bold text-white mb-2">Keeping autotune up to date</h2>
-          <p className="text-sm text-white/60 mb-4">
+        <div className="mt-16 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-6">
+          <h2 className="text-lg font-bold text-ink mb-2">Keeping autotune up to date</h2>
+          <p className="text-sm text-muted mb-4">
             autotune is updated frequently. Run this any time to check for a new version and upgrade:
           </p>
           <Code block>{`autotune upgrade`}</Code>
-          <p className="text-sm text-white/50 mt-3">
+          <p className="text-sm text-muted mt-3">
             Or upgrade directly with pip: <code className="text-cyan-300">pip install --upgrade llm-autotune</code>
           </p>
         </div>
 
         {/* Troubleshooting */}
         <div className="mt-16">
-          <h2 className="text-2xl font-bold text-white mb-6">Something went wrong?</h2>
+          <h2 className="text-2xl font-bold text-ink mb-6">Something went wrong?</h2>
           <div className="flex flex-col gap-4">
             {[
               {
@@ -340,18 +324,18 @@ autotune chat --model qwen3:8b
                 a: `Try a smaller model. For 8 GB RAM, use qwen3:4b instead of qwen3:8b`,
               },
             ].map((item) => (
-              <div key={item.q} className="rounded-xl border border-white/8 bg-white/3 p-5">
-                <div className="text-sm font-semibold text-white mb-2 font-mono">{item.q}</div>
-                <div className="text-sm text-white/60">{item.a}</div>
+              <div key={item.q} className="rounded-md border border-line bg-paper p-5">
+                <div className="text-sm font-semibold text-ink mb-2 font-mono">{item.q}</div>
+                <div className="text-sm text-muted">{item.a}</div>
               </div>
             ))}
           </div>
         </div>
 
         {/* Next steps */}
-        <div className="mt-16 rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6">
-          <h2 className="text-lg font-bold text-white mb-4">Next steps</h2>
-          <div className="flex flex-col gap-3 text-sm text-white/60">
+        <div className="mt-16 rounded-lg border border-rust-500/20 bg-rust-500/5 p-6">
+          <h2 className="text-lg font-bold text-ink mb-4">Next steps</h2>
+          <div className="flex flex-col gap-3 text-sm text-muted">
             <div>
               <code className="text-green-300">autotune ls</code>
               <span className="ml-3">See all your models and how well they fit your hardware</span>
@@ -365,7 +349,7 @@ autotune chat --model qwen3:8b
               <span className="ml-3">Start an API server (works with any app that uses OpenAI)</span>
             </div>
             <div>
-              <a href="/commands" className="text-violet-300 hover:text-violet-200 transition-colors">
+              <a href="/commands" className="text-rust-300 hover:text-rust-200 transition-colors">
                 → Full command reference
               </a>
             </div>
@@ -374,17 +358,17 @@ autotune chat --model qwen3:8b
       </div>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 px-6 py-8 mt-4">
-        <div className="mx-auto max-w-4xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-white/30">
+      <footer className="border-t border-line px-6 py-8 mt-4">
+        <div className="mx-auto max-w-4xl flex flex-col items-center gap-2 sm:flex-row sm:justify-between text-xs text-subtle">
           <div className="flex flex-col items-center sm:items-start gap-1">
             <span>autotune v1.6.0 — MIT License</span>
-            <a href="mailto:autotunellm@gmail.com" className="hover:text-white/60 transition-colors">autotunellm@gmail.com</a>
+            <a href="mailto:autotunellm@gmail.com" className="hover:text-muted transition-colors">autotunellm@gmail.com</a>
           </div>
           <div className="flex gap-5">
-            <a href="/" className="hover:text-white/60 transition-colors">Home</a>
-            <a href="/commands" className="hover:text-white/60 transition-colors">Commands</a>
-            <a href="/what-we-do" className="hover:text-white/60 transition-colors">All we do</a>
-            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
+            <Link href="/" className="hover:text-muted transition-colors">Home</Link>
+            <a href="/commands" className="hover:text-muted transition-colors">Commands</a>
+            <a href="/what-we-do" className="hover:text-muted transition-colors">All we do</a>
+            <a href="https://github.com/tanavc1/local-llm-autotune" target="_blank" rel="noopener noreferrer" className="hover:text-muted transition-colors">GitHub</a>
           </div>
         </div>
       </footer>
