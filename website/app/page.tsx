@@ -199,7 +199,7 @@ export default function Home() {
                 alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
                 width="250"
                 height="54"
-                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=dark&t=1777947695225"
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
               />
             </a>
           </div>
@@ -1142,7 +1142,7 @@ autotune serve
               alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
               width="250"
               height="54"
-              src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=dark&t=1777947695225"
+              src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
             />
           </a>
 
