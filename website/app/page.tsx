@@ -1,6 +1,7 @@
 import { SiteNav } from "./components/SiteNav";
 import type { Metadata } from "next";
 import { CopyButton } from "./components/CopyButton";
+import { StatCarousel } from "./components/StatCarousel";
 
 export const dynamic = "force-static";
 
@@ -17,29 +18,6 @@ export const metadata: Metadata = {
 };
 
 // ─── Real benchmark data (proof_suite v2, Apple M2 16 GB, Ollama Go timers) ──
-
-const stats = [
-  {
-    value: "381 MB",
-    label: "RAM freed per request",
-    sub: "on qwen3:8b — back to your browser",
-  },
-  {
-    value: "53%",
-    label: "Faster first word",
-    sub: "on qwen3:8b; 39% avg across 3 models",
-  },
-  {
-    value: "67%",
-    label: "Less KV cache",
-    sub: "Ollama reserves 3× less memory",
-  },
-  {
-    value: "0",
-    label: "Swap events",
-    sub: "across all 45 benchmark runs",
-  },
-];
 
 // KV freed = raw_kv_mb − tuned_kv_mb from proof_suite
 const benchmarks = [
@@ -129,16 +107,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function StatCard({ value, label, sub }: { value: string; label: string; sub: string }) {
-  return (
-    <div className="stat-item">
-      <div>{value}</div>
-      <div className="mt-1 text-sm font-medium text-ink">{label}</div>
-      <div className="mt-0.5 text-xs text-subtle">{sub}</div>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -205,21 +173,7 @@ export default function Home() {
           </div>
         </div>
 
-        <aside className="hero-measurement" aria-label="Measured KV cache comparison for qwen3:8b">
-          <div className="measurement-heading"><span>KV cache per request</span><span>measured</span></div>
-          <p className="measurement-model">qwen3:8b <span>Apple M2 · 16 GB</span></p>
-          <div className="memory-bar raw"><span>Raw Ollama</span><strong>576 <small>MB</small></strong></div>
-          <div className="memory-bar tuned"><span>With autotune</span><strong>195 <small>MB</small></strong></div>
-          <div className="measurement-result"><strong>381 MB</strong><span>returned to your system<br />per typical chat request</span></div>
-          <a href="#benchmarks">See the full benchmarks →</a>
-        </aside>
-
-        {/* Stats row */}
-        <div className="hero-stats">
-          {stats.map((s) => (
-            <StatCard key={s.label} {...s} />
-          ))}
-        </div>
+        <StatCarousel />
       </section>
 
       {/* ── How it works ── */}

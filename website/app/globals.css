@@ -114,9 +114,49 @@ tbody tr:hover { background: #ffffff05 !important; }
 .stat-item > div:first-child { font-size: 34px; font-weight: 600; letter-spacing: -0.04em; color: #fff; }
 .stat-item > div:last-child { margin-top: 4px; line-height: 1.5; }
 
-.home-hero { padding-bottom: 8px; }
+.home-hero { padding-bottom: 104px; }
 .max-w-5xl { max-width: 1136px; }
 .memory-bar.tuned span { white-space: nowrap; }
+
+
+/* ── Hero stat carousel ── */
+.stat-carousel { display: flex; flex-direction: column; min-height: 470px; touch-action: pan-y; user-select: none; }
+.carousel-viewport { position: relative; flex: 1; display: grid; margin-top: 24px; }
+.carousel-slide { grid-area: 1 / 1; display: flex; flex-direction: column; opacity: 0; transform: translateX(16px); transition: opacity .5s ease, transform .5s ease; pointer-events: none; visibility: hidden; transition-property: opacity, transform, visibility; }
+.carousel-slide.is-active { opacity: 1; transform: none; pointer-events: auto; visibility: visible; }
+.carousel-eyebrow { font-size: 13px; color: #a1a1a1; }
+.carousel-value { font-size: clamp(56px, 6vw, 76px); font-weight: 600; letter-spacing: -0.05em; line-height: 1; color: var(--accent); margin-top: 10px; }
+.carousel-label { font-size: 15px; color: #ededed; margin-top: 12px; max-width: 340px; line-height: 1.5; }
+.carousel-visual { margin-top: auto; padding-top: 26px; }
+.carousel-sub { margin-top: 14px; font-family: var(--font-geist-mono), monospace; font-size: 11.5px; color: #737373; }
+.carousel-memory .memory-bar + .memory-bar { margin-top: 10px; }
+.carousel-bars, .carousel-list { display: flex; flex-direction: column; gap: 14px; }
+.carousel-bar-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 12px; font-size: 12px; }
+.carousel-bar-name { font-family: var(--font-geist-mono), monospace; color: #a1a1a1; }
+.carousel-bar-track { position: relative; height: 10px; }
+.carousel-bar { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; }
+.carousel-bar.raw { background: #2a2a2a; }
+.carousel-bar.tuned { background: #34d399; }
+.carousel-slide.is-active .carousel-bar.tuned { animation: bar-grow .9s cubic-bezier(.2,.7,.2,1) both; transform-origin: left; }
+@keyframes bar-grow { from { transform: scaleX(0); } }
+.carousel-bar-val { font-family: var(--font-geist-mono), monospace; color: #d4d4d4; white-space: nowrap; }
+.carousel-bar-val.accent { color: var(--accent); }
+.carousel-grid { display: grid; grid-template-columns: repeat(15, 1fr); gap: 6px; }
+.carousel-grid span { aspect-ratio: 1; border-radius: 3px; background: #34d39933; border: 1px solid #34d39966; }
+.carousel-slide.is-active .carousel-grid span { animation: cell-in .4s ease both; }
+@keyframes cell-in { from { opacity: 0; transform: scale(.6); } }
+.carousel-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; padding-top: 18px; border-top: 1px solid #222; }
+.carousel-dots { display: flex; gap: 6px; }
+.carousel-dots button { width: 28px; height: 20px; display: flex; align-items: center; cursor: pointer; }
+.carousel-dots button span { display: block; width: 100%; height: 3px; border-radius: 2px; background: #2e2e2e; position: relative; overflow: hidden; }
+.carousel-dots button.is-active span { background: #3a3a3a; }
+.carousel-dots button.is-active span::after { content: ""; position: absolute; inset: 0; background: #ededed; }
+.carousel-dots button.is-active span.is-running::after { animation: dot-progress linear both; animation-duration: inherit; transform-origin: left; }
+@keyframes dot-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.carousel-dots button:hover span { background: #525252; }
+.carousel-arrows { display: flex; gap: 8px; }
+.carousel-arrows button { width: 34px; height: 34px; border: 1px solid #2e2e2e; border-radius: 8px; color: #d4d4d4; font-size: 14px; cursor: pointer; transition: border-color .15s, background .15s; }
+.carousel-arrows button:hover { border-color: #525252; background: #ffffff08; }
 
 /* Section headings */
 .section-label { font-family: var(--font-geist-mono), monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
@@ -135,6 +175,8 @@ tbody tr:hover { background: #ffffff05 !important; }
   .home-hero { padding: 56px 20px 0; grid-template-columns: 1fr; }
   .hero-title { font-size: clamp(40px, 10vw, 60px); }
   .hero-measurement { margin-top: 48px; padding: 22px; }
+  .home-hero { padding-bottom: 64px; }
+  .stat-carousel { min-height: 440px; }
   .hero-stats { grid-template-columns: repeat(2, 1fr); margin-top: 48px; }
   .stat-item { padding: 22px; }
   .stat-item:nth-child(3) { border-left: 0; }
