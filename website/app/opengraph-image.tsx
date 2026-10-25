@@ -13,7 +13,7 @@ export default function Image() {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          backgroundColor: "#f7f5ef",
+          backgroundColor: "#0a0a0a",
           padding: "64px 72px",
           fontFamily: "sans-serif",
         }}
@@ -27,14 +27,14 @@ export default function Image() {
                 width: "6px",
                 height: "56px",
                 borderRadius: "3px",
-                background: "#963d24",
+                background: "#6ee7b7",
               }}
             />
             <span
               style={{
                 fontSize: "72px",
                 fontWeight: "800",
-                color: "#262b27",
+                color: "#ffffff",
                 letterSpacing: "-2px",
                 lineHeight: 1,
               }}
@@ -45,7 +45,7 @@ export default function Image() {
           <span
             style={{
               fontSize: "28px",
-              color: "#575e56",
+              color: "#a1a1a1",
               letterSpacing: "-0.3px",
               marginLeft: "22px",
             }}
@@ -57,9 +57,9 @@ export default function Image() {
         {/* Middle: stat cards */}
         <div style={{ display: "flex", gap: "20px", marginLeft: "22px" }}>
           {[
-            { value: "−39%", label: "faster TTFT", color: "#963d24", bg: "#eeece4", border: "#dcded2" },
-            { value: "−67%", label: "KV cache RAM", color: "#3f6074", bg: "#eeece4", border: "#dcded2" },
-            { value: "zero", label: "config changes", color: "#38614b", bg: "#eeece4", border: "#dcded2" },
+            { value: "−39%", label: "faster TTFT", color: "#6ee7b7", bg: "#141414", border: "#262626" },
+            { value: "−67%", label: "KV cache RAM", color: "#ededed", bg: "#141414", border: "#262626" },
+            { value: "zero", label: "config changes", color: "#6ee7b7", bg: "#141414", border: "#262626" },
           ].map((stat) => (
             <div
               key={stat.label}
@@ -77,7 +77,7 @@ export default function Image() {
               <span style={{ fontSize: "48px", fontWeight: "800", color: stat.color, lineHeight: 1, letterSpacing: "-1px" }}>
                 {stat.value}
               </span>
-              <span style={{ fontSize: "18px", color: "#575e56", letterSpacing: "0px" }}>
+              <span style={{ fontSize: "18px", color: "#a1a1a1", letterSpacing: "0px" }}>
                 {stat.label}
               </span>
             </div>
@@ -91,14 +91,14 @@ export default function Image() {
               display: "flex",
               alignItems: "center",
               gap: "12px",
-              backgroundColor: "#dcded2",
-              border: "1px solid #dcded2",
+              backgroundColor: "#262626",
+              border: "1px solid #262626",
               borderRadius: "12px",
               padding: "14px 24px",
             }}
           >
-            <span style={{ fontSize: "18px", color: "#575e56", fontFamily: "monospace" }}>$</span>
-            <span style={{ fontSize: "22px", color: "#38614b", fontFamily: "monospace", letterSpacing: "-0.3px" }}>
+            <span style={{ fontSize: "18px", color: "#a1a1a1", fontFamily: "monospace" }}>$</span>
+            <span style={{ fontSize: "22px", color: "#6ee7b7", fontFamily: "monospace", letterSpacing: "-0.3px" }}>
               pip install llm-autotune
             </span>
           </div>
@@ -108,9 +108,9 @@ export default function Image() {
                 key={name}
                 style={{
                   fontSize: "16px",
-                  color: "#575e56",
-                  backgroundColor: "#dcded2",
-                  border: "1px solid #dcded2",
+                  color: "#a1a1a1",
+                  backgroundColor: "#262626",
+                  border: "1px solid #262626",
                   borderRadius: "8px",
                   padding: "8px 16px",
                 }}

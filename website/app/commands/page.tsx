@@ -121,7 +121,7 @@ function CommandCard({
 
 export default function CommandsPage() {
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="min-h-screen text-ink">
       {/* Nav */}
       <SiteNav />
 
@@ -803,7 +803,7 @@ export default function CommandsPage() {
         </div>
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
-        <div className="mt-12 rounded-lg border border-rust-500/20 bg-rust-500/5 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="mt-12 rounded-lg border border-line bg-paper p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-base font-bold text-ink mb-1">New to autotune?</h2>
             <p className="text-sm text-muted">Follow the install guide to get running in 5 minutes.</p>

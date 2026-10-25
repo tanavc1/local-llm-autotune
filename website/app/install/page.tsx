@@ -68,14 +68,14 @@ function Callout({
 }) {
   const styles = {
     tip:     "border-green-500/25 bg-green-500/8 text-green-300",
-    warning: "border-yellow-500/25 bg-yellow-500/8 text-yellow-300",
-    info:    "border-blue-500/25 bg-blue-500/8 text-blue-300",
+    warning: "border-line bg-paper text-yellow-300",
+    info:    "border-line bg-paper text-blue-300",
   };
-  const icons = { tip: "💡", warning: "⚠️", info: "ℹ️" };
+  const labels = { tip: "Tip", warning: "Heads up", info: "Note" };
   return (
     <div className={`rounded-md border p-4 ${styles[type]} mt-4`}>
       <p className="text-sm">
-        <span className="mr-2">{icons[type]}</span>
+        <span className="mr-2 font-semibold">{labels[type]}:</span>
         {children}
       </p>
     </div>
@@ -86,7 +86,7 @@ function Callout({
 
 export default function InstallPage() {
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="min-h-screen text-ink">
       {/* Nav */}
       <SiteNav />
 
@@ -287,7 +287,7 @@ autotune chat --model qwen3:8b
         </div>
 
         {/* Upgrading */}
-        <div className="mt-16 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-6">
+        <div className="mt-16 rounded-lg border border-line bg-paper p-6">
           <h2 className="text-lg font-bold text-ink mb-2">Keeping autotune up to date</h2>
           <p className="text-sm text-muted mb-4">
             autotune is updated frequently. Run this any time to check for a new version and upgrade:
@@ -333,7 +333,7 @@ autotune chat --model qwen3:8b
         </div>
 
         {/* Next steps */}
-        <div className="mt-16 rounded-lg border border-rust-500/20 bg-rust-500/5 p-6">
+        <div className="mt-16 rounded-lg border border-line bg-paper p-6">
           <h2 className="text-lg font-bold text-ink mb-4">Next steps</h2>
           <div className="flex flex-col gap-3 text-sm text-muted">
             <div>

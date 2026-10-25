@@ -34,10 +34,10 @@ function Callout({
   children: React.ReactNode;
 }) {
   const styles: Record<string, string> = {
-    violet: "border-rust-500/25 bg-rust-500/8",
-    blue:   "border-blue-500/25 bg-blue-500/8",
+    violet: "border-line bg-paper",
+    blue:   "border-line bg-paper",
     green:  "border-green-500/25 bg-green-500/8",
-    orange: "border-orange-500/25 bg-orange-500/8",
+    orange: "border-line bg-paper",
     red:    "border-red-500/25 bg-red-500/8",
   };
   return (
@@ -89,32 +89,29 @@ function OptimizationCard({
   title,
   tag,
   tagColor = "violet",
-  icon,
   children,
 }: {
   number: string;
   title: string;
   tag: string;
   tagColor?: "violet" | "blue" | "green" | "orange" | "red";
-  icon: string;
   children: React.ReactNode;
 }) {
   const tagStyles: Record<string, string> = {
-    violet: "border-rust-500/30 bg-rust-500/10 text-rust-300",
-    blue:   "border-blue-500/30 bg-blue-500/10 text-blue-300",
+    violet: "border-line bg-paper text-rust-300",
+    blue:   "border-line bg-paper text-blue-300",
     green:  "border-green-500/30 bg-green-500/10 text-green-300",
-    orange: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+    orange: "border-line bg-paper text-orange-300",
     red:    "border-red-500/30 bg-red-500/10 text-red-300",
   };
   return (
     <div id={`optimization-${number}`} className="rounded-lg border border-line bg-paper overflow-hidden scroll-mt-24">
       <div className="flex items-start gap-4 p-6 pb-0">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-paper text-xl">
-          {icon}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-wash font-mono text-xs text-muted">
+          {number}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1">
-            <span className="text-xs font-bold text-subtle">#{number}</span>
             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${tagStyles[tagColor]}`}>
               {tag}
             </span>
@@ -151,7 +148,7 @@ const ALL_OPTIMIZATIONS = [
 const impactBadge: Record<string, string> = {
   "Highest":   "border-rust-500/40 bg-rust-500/15 text-rust-300",
   "High":      "border-green-500/30 bg-green-500/10 text-green-300",
-  "Medium":    "border-blue-500/30 bg-blue-500/10 text-blue-300",
+  "Medium":    "border-line bg-paper text-blue-300",
   "Moderate":  "border-line bg-paper text-muted",
   "Selective": "border-line bg-paper text-muted",
 };
@@ -364,7 +361,6 @@ export default function WhatWeDo() {
               title="Precise KV allocation — dynamic context sizing"
               tag="Highest impact · Every request"
               tagColor="violet"
-              icon="📐"
             >
               <p>
                 Ollama allocates the full KV cache before generating the first token. With the
@@ -399,7 +395,6 @@ export default function WhatWeDo() {
               title="Live memory pressure response — proactive RAM tier system"
               tag="Highest impact · Every request"
               tagColor="orange"
-              icon="📊"
             >
               <p>
                 Live pressure is autotune&apos;s proactive, heuristic RAM management system. Before every
@@ -460,7 +455,6 @@ export default function WhatWeDo() {
               title="KV cache precision control"
               tag="High impact · Profile-aware"
               tagColor="blue"
-              icon="🎚️"
             >
               <p>
                 Beyond the live pressure response above, each profile has a deliberate default KV
@@ -497,7 +491,6 @@ export default function WhatWeDo() {
               title="NoSwapGuard — exact-math pre-flight guarantee"
               tag="Safety · Every request"
               tagColor="orange"
-              icon="🛡️"
             >
               <p>
                 NoSwapGuard is autotune&apos;s exact-math hard guarantee — completely different in
@@ -564,7 +557,6 @@ export default function WhatWeDo() {
               title="Pre-flight model fit analysis"
               tag="Safety · Before loading"
               tagColor="blue"
-              icon="🔍"
             >
               <p>
                 Before a model is loaded into memory, autotune runs a complete RAM analysis: will this
@@ -621,7 +613,6 @@ export default function WhatWeDo() {
               title="System prompt prefix caching"
               tag="High impact · Multi-turn"
               tagColor="blue"
-              icon="📌"
             >
               <p>
                 In any multi-turn conversation, the system prompt — &ldquo;You are a helpful assistant.
@@ -667,7 +658,6 @@ export default function WhatWeDo() {
               title="Model keep-alive"
               tag="High impact · Session start"
               tagColor="green"
-              icon="♾️"
             >
               <p>
                 By default, Ollama unloads a model from RAM after 5 minutes of idle. The next time
@@ -694,7 +684,6 @@ export default function WhatWeDo() {
               title="Context bucket snapping"
               tag="High impact · Every request"
               tagColor="violet"
-              icon="🎯"
             >
               <p>
                 After computing the minimum context size needed, autotune rounds it up to the nearest
@@ -722,7 +711,6 @@ export default function WhatWeDo() {
               title="Flash attention"
               tag="Medium impact · Every request"
               tagColor="violet"
-              icon="⚡"
             >
               <p>
                 Standard attention computes the full attention matrix in memory. For a context window
@@ -748,7 +736,6 @@ export default function WhatWeDo() {
               title="Larger prefill batch size"
               tag="Medium impact · Long prompts"
               tagColor="blue"
-              icon="🚀"
             >
               <p>
                 During &ldquo;prefill&rdquo; — when the model processes your entire prompt before
@@ -795,7 +782,6 @@ export default function WhatWeDo() {
               title="Hardware tuner — OS-level scheduling"
               tag="Moderate impact · During inference"
               tagColor="orange"
-              icon="🔧"
             >
               <p>
                 Before each inference call, autotune makes real changes to how your operating system
@@ -850,7 +836,6 @@ export default function WhatWeDo() {
               title="Adaptive session advisor"
               tag="Moderate impact · Live monitoring"
               tagColor="red"
-              icon="🧠"
             >
               <p>
                 During a session, the adaptive advisor continuously watches RAM usage, swap activity,
@@ -924,7 +909,6 @@ export default function WhatWeDo() {
               title="Context compressor"
               tag="Moderate impact · Long sessions"
               tagColor="violet"
-              icon="🗜️"
             >
               <p>
                 As conversation history grows and approaches the context limit, autotune selectively
@@ -970,7 +954,6 @@ export default function WhatWeDo() {
               title="Conversation memory &amp; recall"
               tag="Selective impact · Across sessions"
               tagColor="blue"
-              icon="💾"
             >
               <p>
                 Every conversation you have is automatically saved to a local SQLite database on your

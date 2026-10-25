@@ -102,7 +102,8 @@ response = client.chat.completions.create(
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-rust-500/40 bg-rust-500/10 px-3 py-1 text-xs font-medium text-rust-300">
+    <span className="hero-eyebrow">
+      <i aria-hidden="true" />
       {children}
     </span>
   );
@@ -110,15 +111,12 @@ function Badge({ children }: { children: React.ReactNode }) {
 
 function CodeBlock({ code, language = "bash" }: { code: string; language?: string }) {
   return (
-    <div className="rounded-md border border-line bg-paper  overflow-hidden">
-      <div className="flex items-center gap-1.5 border-b border-line px-4 py-2.5">
-
-
-
-        <span className="ml-3 text-xs text-subtle">{language}</span>
+    <div className="rounded-md border border-line bg-paper overflow-hidden">
+      <div className="flex items-center gap-1.5 border-b border-line px-4 py-2">
+        <span className="font-mono text-[11px] text-subtle">{language}</span>
         <CopyButton text={code} />
       </div>
-      <pre className="overflow-x-auto p-5 text-sm leading-relaxed text-green-300 font-mono">
+      <pre className="overflow-x-auto p-5 text-[13px] leading-relaxed text-ink font-mono">
         <code>{code}</code>
       </pre>
     </div>
@@ -127,16 +125,14 @@ function CodeBlock({ code, language = "bash" }: { code: string; language?: strin
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-xs font-semibold uppercase tracking-widest text-rust-400 mb-3">
-      {children}
-    </p>
+    <p className="section-label">{children}</p>
   );
 }
 
 function StatCard({ value, label, sub }: { value: string; label: string; sub: string }) {
   return (
     <div className="stat-item">
-      <div className="text-3xl font-bold text-rust-300">{value}</div>
+      <div>{value}</div>
       <div className="mt-1 text-sm font-medium text-ink">{label}</div>
       <div className="mt-0.5 text-xs text-subtle">{sub}</div>
     </div>
@@ -161,17 +157,15 @@ export default function Home() {
 
           <h1 className="hero-title">
             Your local AI,{" "}
-            <span className="text-rust-600">
-              actually fast.
-            </span>
+            <span>actually fast.</span>
           </h1>
 
           <p className="hero-description">
             autotune sits between your code and Ollama and applies automatic optimizations:
             right-sized KV buffers, KV precision tuning, system prompt caching,
             intelligent context management, and model keep-alive.
-            The result: <strong className="text-ink">300+ MB freed</strong> per
-            request, first word up to <strong className="text-ink">53% faster</strong>,
+            The result: <strong>300+ MB freed</strong> per
+            request, first word up to <strong>53% faster</strong>,
             and your computer stays responsive.
             No config changes. Your code stays exactly the same.
           </p>
@@ -183,13 +177,13 @@ export default function Home() {
           <div className="hero-actions">
             <a
               href="#quickstart"
-              className="rounded-md bg-rust-600 px-6 py-3 text-sm font-semibold text-ink  transition hover:bg-rust-500"
+              className="btn-primary"
             >
-              Get started →
+              Get started
             </a>
             <a
               href="#proof"
-              className="rounded-md border border-line bg-paper px-6 py-3 text-sm font-medium text-ink  transition hover:border-rust-500/40 hover:bg-rust-500/10 hover:text-ink"
+              className="btn-secondary"
             >
               Prove it on your machine
             </a>
@@ -205,19 +199,19 @@ export default function Home() {
                 alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
                 width="250"
                 height="54"
-                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=light&t=1777947695225"
+                src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=dark&t=1777947695225"
               />
             </a>
           </div>
         </div>
 
         <aside className="hero-measurement" aria-label="Measured KV cache comparison for qwen3:8b">
-          <div className="measurement-heading"><span>LESS MEMORY. MORE ROOM.</span><span>01 / KV CACHE</span></div>
+          <div className="measurement-heading"><span>KV cache per request</span><span>measured</span></div>
           <p className="measurement-model">qwen3:8b <span>Apple M2 · 16 GB</span></p>
           <div className="memory-bar raw"><span>Raw Ollama</span><strong>576 <small>MB</small></strong></div>
           <div className="memory-bar tuned"><span>With autotune</span><strong>195 <small>MB</small></strong></div>
           <div className="measurement-result"><strong>381 MB</strong><span>returned to your system<br />per typical chat request</span></div>
-          <a href="#benchmarks">Read the benchmark methodology ↗</a>
+          <a href="#benchmarks">See the full benchmarks →</a>
         </aside>
 
         {/* Stats row */}
@@ -243,9 +237,9 @@ export default function Home() {
           </p>
 
           {/* 1 — Precise KV cache allocation */}
-          <div className="rounded-lg border border-rust-500/20 bg-rust-500/5 p-6 mb-5">
+          <div className="rounded-lg border border-line bg-paper p-6 mb-5">
             <div className="flex items-center gap-2 mb-3">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-rust-500/20 text-xs font-bold text-rust-300">1</span>
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-ink">1</span>
               <span className="text-sm font-semibold text-ink">Precise KV cache allocation — every single request</span>
             </div>
             <p className="text-sm text-muted mb-5">
@@ -287,9 +281,9 @@ export default function Home() {
           </div>
 
           {/* 2 — Live memory pressure management */}
-          <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-6 mb-5">
+          <div className="rounded-lg border border-line bg-paper p-6 mb-5">
             <div className="flex items-center gap-2 mb-3">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/20 text-xs font-bold text-orange-300">2</span>
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-ink">2</span>
               <span className="text-sm font-semibold text-ink">Live pressure management — proactive RAM tier system</span>
             </div>
             <p className="text-sm text-muted mb-5">
@@ -367,9 +361,9 @@ export default function Home() {
           <div className="grid gap-5 sm:grid-cols-2">
 
             {/* 3 — System prompt caching */}
-            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-6">
+            <div className="rounded-lg border border-line bg-paper p-6">
               <div className="flex items-center gap-2 mb-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-300">3</span>
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-ink">3</span>
                 <span className="text-sm font-semibold text-ink">System prompt prefix caching</span>
               </div>
               <p className="text-sm text-muted mb-4">
@@ -393,7 +387,7 @@ export default function Home() {
             {/* 4 — Keep-alive */}
             <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-6">
               <div className="flex items-center gap-2 mb-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-500/20 text-xs font-bold text-green-300">4</span>
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-ink">4</span>
                 <span className="text-sm font-semibold text-ink">Model keep-alive</span>
               </div>
               <p className="text-sm text-muted mb-4">
@@ -426,7 +420,7 @@ export default function Home() {
             </p>
             <a
               href="/what-we-do"
-              className="shrink-0 rounded-lg border border-rust-500/30 bg-rust-500/8 px-4 py-2 text-xs font-medium text-rust-300 transition hover:border-rust-500/50 hover:bg-rust-500/15 hover:text-rust-200"
+              className="btn-secondary shrink-0"
             >
               All 14 optimizations explained →
             </a>
@@ -454,10 +448,10 @@ export default function Home() {
           <div className="rounded-lg border border-line bg-wash overflow-hidden ">
             {/* fake browser bar */}
             <div className="flex items-center gap-2 border-b border-line bg-paper px-4 py-2.5">
-              <div className="flex gap-1.5">
-
-
-
+              <div className="flex gap-1.5" aria-hidden="true">
+                <span className="h-2.5 w-2.5 rounded-full bg-neutral-700" />
+                <span className="h-2.5 w-2.5 rounded-full bg-neutral-700" />
+                <span className="h-2.5 w-2.5 rounded-full bg-neutral-700" />
               </div>
               <div className="ml-3 flex-1 rounded-md bg-wash px-3 py-1 text-[11px] font-mono text-subtle">
                 localhost:8765/dashboard
@@ -493,7 +487,7 @@ export default function Home() {
                   <div className="text-[10px] uppercase tracking-wider text-subtle mb-3">Requests · last 24h</div>
                   <div className="flex h-20 items-end gap-1">
                     {[18, 26, 31, 22, 40, 55, 48, 62, 71, 58, 80, 67, 90, 76, 61, 49, 57, 44, 33, 41, 52, 38, 29, 24].map((h, i) => (
-                      <div key={i} className="flex-1 rounded-sm bg-rust-500/40" style={{ height: `${h}%` }} />
+                      <div key={i} className="flex-1 rounded-sm bg-emerald-400/50" style={{ height: `${h}%` }} />
                     ))}
                   </div>
                 </div>
@@ -588,7 +582,7 @@ export default function Home() {
 
           {/* Launch + security */}
           <div className="mt-8 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-lg border border-rust-500/20 bg-rust-500/5 p-5">
+            <div className="rounded-lg border border-line bg-paper p-5">
               <div className="text-xs font-semibold text-rust-300 mb-2">Launch it in one command</div>
               <CodeBlock code={`export AUTOTUNE_ADMIN_KEY="your-secret-key"
 autotune serve
@@ -745,7 +739,7 @@ autotune serve
 
             {/* Explanation cards */}
             <div className="flex flex-col gap-4">
-              <div className="rounded-lg border border-rust-500/20 bg-rust-500/5 p-5">
+              <div className="rounded-lg border border-line bg-paper p-5">
                 <div className="text-sm font-semibold text-ink mb-2">
                   TTFT falls as the session grows
                 </div>
@@ -823,7 +817,7 @@ autotune serve
             </div>
             <div>
               <CodeBlock code={proofSnippet} language="bash" />
-              <div className="mt-4 rounded-md border border-rust-500/20 bg-rust-500/5 p-4 text-sm text-muted">
+              <div className="mt-4 rounded-md border border-line bg-paper p-4 text-sm text-muted">
                 <span className="text-rust-300 font-medium">Tip:</span> Run{" "}
                 <code className="text-green-300/80">autotune proof --list-models</code> to see
                 which Ollama models are available on your machine.
@@ -878,7 +872,7 @@ autotune serve
                       <div className="text-sm font-semibold text-ink mb-1">{step.title}</div>
                       <div className="text-xs text-muted mb-2">{step.body}</div>
                       <div className="flex items-center justify-between rounded-lg border border-line bg-wash px-3 py-1.5 gap-2">
-                        <code className="text-xs font-mono text-green-300 overflow-x-auto">{step.code}</code>
+                        <code className="text-xs font-mono text-ink overflow-x-auto">{step.code}</code>
                         <CopyButton text={step.code} />
                       </div>
                     </div>
@@ -886,7 +880,7 @@ autotune serve
                 ))}
               </ol>
 
-              <div className="mt-8 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+              <div className="mt-8 rounded-lg border border-line bg-paper p-4">
                 <div className="text-xs font-semibold text-blue-300 mb-1">Apple Silicon (M1/M2/M3/M4)</div>
                 <div className="text-xs text-muted mb-2">
                   Native Metal GPU kernels via MLX — 10–40% faster generation throughput.
@@ -960,7 +954,7 @@ autotune serve
             </div>
 
             <div className="flex flex-col gap-4">
-              <div className="rounded-lg border border-rust-500/20 bg-rust-500/5 p-5">
+              <div className="rounded-lg border border-line bg-paper p-5">
                 <div className="text-sm font-semibold text-ink mb-2">docker-compose — two options</div>
                 <div className="space-y-2 text-xs text-muted">
                   <div className="flex gap-2">
@@ -1016,45 +1010,38 @@ autotune serve
             {[
               {
                 title: "Dynamic KV sizing",
-                icon: "⚡",
                 desc: "Computes the exact context window each request needs. Typical chat message: 4,096 → 1,400 tokens. Frees 60–70% of the KV buffer back to your system.",
               },
               {
                 title: "System prompt caching",
-                icon: "🔒",
                 desc: "Pins your system prompt in Ollama's KV so it's never re-evaluated on follow-up messages. Pure latency win with no quality cost.",
               },
               {
                 title: "Adaptive KV precision",
-                icon: "🧠",
                 desc: "Switches from F16 to Q8 KV under memory pressure — halves KV memory at three automatic thresholds with no quality impact.",
               },
               {
                 title: "Keep-alive management",
-                icon: "♾️",
                 desc: "Holds the model in memory between messages. Eliminates the 1–3s cold-reload cost you'd otherwise pay every time a session goes idle.",
               },
               {
                 title: "OpenAI-compatible API",
-                icon: "🔌",
                 desc: "Drop-in server at localhost:8765/v1. Works with any OpenAI SDK, LangChain, LlamaIndex, or agent framework without code changes.",
               },
               {
                 title: "MLX backend (Apple Silicon)",
-                icon: "🍎",
                 desc: "Routes inference to MLX-LM on M-series Macs for native Metal GPU kernels — 10–40% faster generation throughput over Ollama.",
               },
               {
                 title: "Docker — Ollama bundled",
-                icon: "🐳",
                 desc: "Single container with Ollama + autotune. Mount a volume for models, set OLLAMA_MODEL to auto-pull on first boot, and your OpenAI-compatible API is ready on :8765.",
               },
-            ].map((f) => (
+            ].map((f, i) => (
               <div
                 key={f.title}
-                className="rounded-lg border border-line bg-paper p-5 transition hover:border-rust-500/30 hover:bg-rust-500/5"
+                className="rounded-lg border border-line bg-paper p-5 transition hover:border-neutral-600"
               >
-                <div className="text-2xl mb-3">{f.icon}</div>
+                <div className="font-mono text-[11px] text-subtle mb-4">{String(i + 1).padStart(2, "0")}</div>
                 <div className="text-sm font-semibold text-ink mb-2">{f.title}</div>
                 <div className="text-xs text-muted leading-relaxed">{f.desc}</div>
               </div>
@@ -1116,9 +1103,6 @@ autotune serve
       {/* ── CTA ── */}
       <section className="py-28 px-6 bg-paper border-t border-line">
         <div className="mx-auto max-w-3xl text-center">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-rust-500/20 text-2xl mb-6">
-            ⚡
-          </div>
           <h2 className="text-3xl font-bold text-ink sm:text-4xl mb-4">
             Try it in 60 seconds.
           </h2>
@@ -1135,19 +1119,32 @@ autotune serve
               href="https://github.com/tanavc1/local-llm-autotune"
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded-md bg-rust-600 px-6 py-3 text-sm font-semibold text-ink  transition hover:bg-rust-500"
+              className="btn-primary"
             >
-              View on GitHub →
+              View on GitHub
             </a>
             <a
               href="https://pypi.org/project/llm-autotune/"
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded-md border border-line bg-paper px-6 py-3 text-sm font-medium text-ink  transition hover:border-rust-500/40 hover:bg-rust-500/10 hover:text-ink"
+              className="btn-secondary"
             >
               PyPI page
             </a>
           </div>
+          <a
+            className="mt-10 inline-block"
+            href="https://www.producthunt.com/products/autotune-llm?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-autotune-2"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <img
+              alt="Autotune - Allows local LLMs to run faster and smoother on your device. | Product Hunt"
+              width="250"
+              height="54"
+              src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1134681&theme=dark&t=1777947695225"
+            />
+          </a>
 
         </div>
       </section>
